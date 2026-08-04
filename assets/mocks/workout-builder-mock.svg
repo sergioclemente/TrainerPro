@@ -1,0 +1,270 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1460 1115" width="1460" height="1115" font-family="-apple-system, 'SF Pro Text', 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <filter id="drop" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+    <style>
+      .lbl   { font-size:10px; fill:#8b949e; letter-spacing:.08em; }
+      .val   { font-size:15px; fill:#e6edf3; }
+      .mut   { font-size:13px; fill:#8b949e; }
+      .badge { font-size:11px; fill:#8b949e; letter-spacing:.06em; font-weight:600; }
+      .n     { font-size:13px; font-weight:700; fill:#0d1117; text-anchor:middle; }
+      .stat  { font-size:26px; font-weight:700; fill:#e6edf3; }
+    </style>
+  </defs>
+
+  <rect width="1460" height="1115" fill="#0d1117"/>
+
+  <!-- HEADER BAR -->
+  <line x1="0" y1="64" x2="1460" y2="64" stroke="#30363d"/>
+  <text x="32" y="38" font-size="15" fill="#8b949e">&#8249;</text>
+  <text x="52" y="38" font-size="16" font-weight="700" fill="#e6edf3">Build a Workout</text>
+  <rect x="230" y="16" width="300" height="32" rx="8" fill="#0d1117" stroke="#30363d"/>
+  <text x="244" y="37" class="val">Sweet Spot Builder</text>
+  <rect x="1180" y="16" width="108" height="32" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="1234" y="37" font-size="13" fill="#e6edf3" text-anchor="middle">Save</text>
+  <rect x="1300" y="16" width="128" height="32" rx="8" fill="#238636" stroke="#3fb950"/>
+  <text x="1364" y="37" font-size="13" font-weight="600" fill="#e6edf3" text-anchor="middle">&#9654; Ride</text>
+
+  <!-- PALETTE + STATS BAND -->
+  <line x1="0" y1="164" x2="1460" y2="164" stroke="#30363d"/>
+  <text x="32" y="84" class="lbl">INTERVAL PALETTE &#8212; DRAG ONTO THE CANVAS</text>
+
+  <rect x="32" y="104" width="132" height="44" rx="10" fill="#161b22" stroke="#30363d"/>
+  <rect x="46" y="118" width="20" height="16" rx="2" fill="#388bfd"/>
+  <text x="76" y="131" font-size="13" font-weight="600" fill="#e6edf3">Simple</text>
+
+  <rect x="176" y="104" width="132" height="44" rx="10" fill="#161b22" stroke="#30363d"/>
+  <rect x="190" y="118" width="8" height="16" rx="2" fill="#d29922"/>
+  <rect x="201" y="122" width="6" height="12" rx="2" fill="#388bfd"/>
+  <rect x="210" y="118" width="8" height="16" rx="2" fill="#d29922"/>
+  <text x="226" y="131" font-size="13" font-weight="600" fill="#e6edf3">Repeat</text>
+
+  <rect x="320" y="104" width="132" height="44" rx="10" fill="#161b22" stroke="#30363d"/>
+  <path d="M334 134 L354 118 L354 134 Z" fill="#388bfd"/>
+  <text x="364" y="131" font-size="13" font-weight="600" fill="#e6edf3">Ramp</text>
+
+  <text x="1060" y="130" class="stat">19:30</text>
+  <text x="1060" y="148" class="lbl">DURATION</text>
+  <text x="1224" y="130" class="stat">17</text>
+  <text x="1224" y="148" class="lbl">TSS</text>
+  <text x="1338" y="130" class="stat">0.72</text>
+  <text x="1338" y="148" class="lbl">IF</text>
+
+  <!-- MAIN CANVAS -->
+  <rect x="32" y="184" width="1396" height="572" rx="12" fill="#0b0f15" stroke="#21262d" stroke-dasharray="4 4"/>
+
+  <!-- Row 1: RAMP, selected, inline edit -->
+  <rect x="88" y="212" width="1308" height="84" rx="10" fill="#161b22" stroke="#388bfd" stroke-width="2"/>
+  <rect x="90" y="222" width="4" height="64" rx="2" fill="#388bfd"/>
+  <g fill="#8b949e">
+    <circle cx="107" cy="246" r="1.6"/><circle cx="113" cy="246" r="1.6"/>
+    <circle cx="107" cy="254" r="1.6"/><circle cx="113" cy="254" r="1.6"/>
+    <circle cx="107" cy="262" r="1.6"/><circle cx="113" cy="262" r="1.6"/>
+  </g>
+  <rect x="130" y="242" width="62" height="24" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <text x="161" y="258" class="badge" text-anchor="middle">RAMP</text>
+
+  <text x="224" y="230" class="lbl">DURATION</text>
+  <rect x="224" y="238" width="112" height="32" rx="6" fill="#0d1117" stroke="#388bfd"/>
+  <text x="236" y="259" class="val">10:00</text>
+  <path d="M318 250 l5 -5 l5 5 Z" fill="#8b949e"/>
+  <path d="M318 258 l5 5 l5 -5 Z" fill="#8b949e"/>
+
+  <text x="364" y="230" class="lbl">FROM</text>
+  <rect x="364" y="238" width="88" height="32" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="376" y="259" class="val">55%</text>
+  <text x="464" y="260" font-size="15" fill="#8b949e">&#8594;</text>
+  <text x="488" y="230" class="lbl">TO</text>
+  <rect x="488" y="238" width="88" height="32" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="500" y="259" class="val">75%</text>
+
+  <text x="1320" y="259" class="mut">10:00</text>
+  <text x="1372" y="260" font-size="16" fill="#8b949e" text-anchor="middle">&#215;</text>
+
+  <!-- Row 2: REPEAT container, expanded inline -->
+  <rect x="88" y="328" width="1308" height="240" rx="10" fill="#12171f" stroke="#30363d"/>
+  <path d="M102 350 l7 8 l7 -8" fill="none" stroke="#8b949e" stroke-width="1.8" stroke-linecap="round"/>
+  <rect x="130" y="344" width="72" height="24" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <text x="166" y="360" class="badge" text-anchor="middle">REPEAT</text>
+  <rect x="224" y="343" width="72" height="26" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="238" y="362" class="val">3 &#215;</text>
+  <path d="M280 353 l5 -5 l5 5 Z" fill="#8b949e"/>
+  <path d="M280 361 l5 5 l5 -5 Z" fill="#8b949e"/>
+  <text x="314" y="362" class="mut">(1:00 @ 100% &#183; 0:30 @ 55%)</text>
+  <text x="1320" y="362" class="mut">4:30</text>
+  <text x="1372" y="363" font-size="16" fill="#8b949e" text-anchor="middle">&#215;</text>
+
+  <line x1="112" y1="388" x2="112" y2="556" stroke="#30363d" stroke-width="2"/>
+
+  <!-- child 1 -->
+  <rect x="128" y="388" width="1252" height="60" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="130" y="398" width="4" height="40" rx="2" fill="#d29922"/>
+  <g fill="#8b949e">
+    <circle cx="147" cy="410" r="1.6"/><circle cx="153" cy="410" r="1.6"/>
+    <circle cx="147" cy="418" r="1.6"/><circle cx="153" cy="418" r="1.6"/>
+    <circle cx="147" cy="426" r="1.6"/><circle cx="153" cy="426" r="1.6"/>
+  </g>
+  <rect x="170" y="406" width="66" height="24" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <text x="203" y="422" class="badge" text-anchor="middle">SIMPLE</text>
+  <text x="254" y="423" class="val">1:00 @ 100% FTP</text>
+  <text x="1304" y="423" class="mut">1:00</text>
+  <text x="1356" y="424" font-size="16" fill="#8b949e" text-anchor="middle">&#215;</text>
+
+  <!-- drop indicator -->
+  <line x1="128" y1="464" x2="1380" y2="464" stroke="#388bfd" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="128" cy="464" r="5" fill="#388bfd"/>
+
+  <!-- child 2 -->
+  <rect x="128" y="480" width="1252" height="60" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="130" y="490" width="4" height="40" rx="2" fill="#388bfd"/>
+  <g fill="#8b949e">
+    <circle cx="147" cy="502" r="1.6"/><circle cx="153" cy="502" r="1.6"/>
+    <circle cx="147" cy="510" r="1.6"/><circle cx="153" cy="510" r="1.6"/>
+    <circle cx="147" cy="518" r="1.6"/><circle cx="153" cy="518" r="1.6"/>
+  </g>
+  <rect x="170" y="498" width="66" height="24" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <text x="203" y="514" class="badge" text-anchor="middle">SIMPLE</text>
+  <text x="254" y="515" class="val">0:30 @ 55% FTP</text>
+  <text x="1304" y="515" class="mut">0:30</text>
+  <text x="1356" y="516" font-size="16" fill="#8b949e" text-anchor="middle">&#215;</text>
+
+  <!-- drag ghost in flight -->
+  <g filter="url(#drop)" opacity="0.96">
+    <rect x="540" y="430" width="300" height="52" rx="8" fill="#1c2330" stroke="#388bfd" stroke-width="2"/>
+    <rect x="542" y="438" width="4" height="36" rx="2" fill="#388bfd"/>
+    <rect x="562" y="444" width="66" height="24" rx="12" fill="#0d1117" stroke="#30363d"/>
+    <text x="595" y="460" class="badge" text-anchor="middle">SIMPLE</text>
+    <text x="644" y="461" class="val">0:30 @ 55%</text>
+  </g>
+  <path d="M846 472 l0 22 l6 -6 l5 10 l4 -2 l-5 -10 l8 0 Z" fill="#e6edf3" stroke="#0d1117" stroke-width="1.2"/>
+
+  <!-- Row 3: SIMPLE, collapsed summary -->
+  <rect x="88" y="596" width="1308" height="60" rx="10" fill="#161b22" stroke="#30363d"/>
+  <rect x="90" y="606" width="4" height="40" rx="2" fill="#388bfd"/>
+  <g fill="#8b949e">
+    <circle cx="107" cy="618" r="1.6"/><circle cx="113" cy="618" r="1.6"/>
+    <circle cx="107" cy="626" r="1.6"/><circle cx="113" cy="626" r="1.6"/>
+    <circle cx="107" cy="634" r="1.6"/><circle cx="113" cy="634" r="1.6"/>
+  </g>
+  <rect x="130" y="614" width="66" height="24" rx="12" fill="#0d1117" stroke="#30363d"/>
+  <text x="163" y="630" class="badge" text-anchor="middle">SIMPLE</text>
+  <text x="214" y="631" class="val">5:00 @ 55% FTP</text>
+  <text x="1320" y="631" class="mut">5:00</text>
+  <text x="1372" y="632" font-size="16" fill="#8b949e" text-anchor="middle">&#215;</text>
+
+  <!-- tail drop zone -->
+  <rect x="88" y="684" width="1308" height="48" rx="10" fill="none" stroke="#30363d" stroke-dasharray="6 5"/>
+  <text x="742" y="713" class="mut" text-anchor="middle">Drop an interval here</text>
+
+  <!-- POWER PROFILE GRAPH -->
+  <text x="32" y="788" class="lbl">POWER PROFILE</text>
+  <rect x="32" y="800" width="1396" height="216" rx="12" fill="#0a0d12" stroke="#30363d"/>
+
+  <text x="80" y="836" class="lbl" text-anchor="end">150%</text>
+  <text x="80" y="891" class="lbl" text-anchor="end">100%</text>
+  <text x="80" y="945" class="lbl" text-anchor="end">50%</text>
+
+  <line x1="88" y1="886.7" x2="1400" y2="886.7" stroke="#30363d" stroke-dasharray="6 6"/>
+
+  <polygon points="88,996 88,935.9 760.8,914 760.8,996" fill="#388bfd" opacity="0.95"/>
+  <rect x="760.8" y="886.7" width="67.3" height="109.3" fill="#d29922" opacity="0.95"/>
+  <rect x="828.1" y="935.9" width="33.7" height="60.1" fill="#388bfd" opacity="0.95"/>
+  <rect x="861.8" y="886.7" width="67.2" height="109.3" fill="#d29922" opacity="0.95"/>
+  <rect x="929.0" y="935.9" width="33.7" height="60.1" fill="#388bfd" opacity="0.95"/>
+  <rect x="962.7" y="886.7" width="67.3" height="109.3" fill="#d29922" opacity="0.95"/>
+  <rect x="1030.0" y="935.9" width="370" height="60.1" fill="#388bfd" opacity="0.95"/>
+
+  <rect x="88" y="832" width="672.8" height="164" fill="#e6edf3" fill-opacity="0.07" stroke="#e6edf3" stroke-opacity="0.65" stroke-width="1.5"/>
+
+  <!-- repeat span bracket, below the frame -->
+  <path d="M760.8 1026 l0 6 M1030 1026 l0 6 M760.8 1032 L1030 1032" stroke="#8b949e" stroke-width="1.5" fill="none"/>
+  <rect x="875" y="1022" width="42" height="20" rx="6" fill="#0d1117"/>
+  <text x="896" y="1036" class="badge" text-anchor="middle">3 &#215;</text>
+
+  <text x="88" y="1064" class="lbl" text-anchor="middle">0:00</text>
+  <text x="760.8" y="1064" class="lbl" text-anchor="middle">10:00</text>
+  <text x="1030" y="1064" class="lbl" text-anchor="middle">14:30</text>
+  <text x="1400" y="1064" class="lbl" text-anchor="end">19:30</text>
+
+  <text x="70" y="1096" class="mut">Click to select &#183; drag to reorder &#183; Delete removes with no confirmation &#183; a Repeat cannot be dropped inside another Repeat</text>
+
+  <!-- leader line for the collapse chevron -->
+  <line x1="82" y1="368" x2="102" y2="358" stroke="#f778ba" stroke-width="1" opacity="0.6"/>
+
+  <!-- NUMBERED CALLOUTS -->
+  <g stroke="#0d1117" stroke-width="2" fill="#f778ba">
+    <circle cx="218" cy="32" r="13"/>
+    <circle cx="32"  cy="102" r="13"/>
+    <circle cx="176" cy="102" r="13"/>
+    <circle cx="320" cy="102" r="13"/>
+    <circle cx="1044" cy="122" r="13"/>
+    <circle cx="1208" cy="122" r="13"/>
+    <circle cx="1322" cy="122" r="13"/>
+    <circle cx="1172" cy="32" r="13"/>
+
+    <circle cx="50"  cy="196" r="13"/>
+    <circle cx="74"  cy="212" r="13"/>
+    <circle cx="110" cy="226" r="13"/>
+    <circle cx="92"  cy="282" r="13"/>
+    <circle cx="210" cy="254" r="13"/>
+    <circle cx="350" cy="254" r="13"/>
+    <circle cx="1372" cy="228" r="13"/>
+
+    <circle cx="74"  cy="328" r="13"/>
+    <circle cx="74"  cy="368" r="13"/>
+    <circle cx="210" cy="356" r="13"/>
+    <circle cx="96"  cy="540" r="13"/>
+    <circle cx="128" cy="388" r="13"/>
+    <circle cx="128" cy="464" r="13"/>
+    <circle cx="540" cy="430" r="13"/>
+
+    <circle cx="74"  cy="596" r="13"/>
+    <circle cx="74"  cy="684" r="13"/>
+
+    <circle cx="46"  cy="800" r="13"/>
+    <circle cx="58"  cy="972" r="13"/>
+    <circle cx="56"  cy="1064" r="13"/>
+    <circle cx="1386" cy="866" r="13"/>
+    <circle cx="124" cy="848" r="13"/>
+    <circle cx="748" cy="1032" r="13"/>
+    <circle cx="46"  cy="1090" r="13"/>
+  </g>
+  <g class="n">
+    <text x="218" y="37">1</text>
+    <text x="32"  y="107">2</text>
+    <text x="176" y="107">3</text>
+    <text x="320" y="107">4</text>
+    <text x="1044" y="127">5</text>
+    <text x="1208" y="127">6</text>
+    <text x="1322" y="127">7</text>
+    <text x="1172" y="37">8</text>
+
+    <text x="50"  y="201">9</text>
+    <text x="74"  y="217">10</text>
+    <text x="110" y="231">11</text>
+    <text x="92"  y="287">12</text>
+    <text x="210" y="259">13</text>
+    <text x="350" y="259">14</text>
+    <text x="1372" y="233">15</text>
+
+    <text x="74"  y="333">16</text>
+    <text x="74"  y="373">17</text>
+    <text x="210" y="361">18</text>
+    <text x="96"  y="545">19</text>
+    <text x="128" y="393">20</text>
+    <text x="128" y="469">21</text>
+    <text x="540" y="435">22</text>
+
+    <text x="74"  y="601">23</text>
+    <text x="74"  y="689">24</text>
+
+    <text x="46"  y="805">25</text>
+    <text x="58"  y="977">26</text>
+    <text x="56"  y="1069">27</text>
+    <text x="1386" y="871">28</text>
+    <text x="124" y="853">29</text>
+    <text x="748" y="1037">30</text>
+    <text x="46"  y="1095">31</text>
+  </g>
+</svg>

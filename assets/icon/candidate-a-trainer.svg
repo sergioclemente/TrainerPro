@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2536"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/><g transform="translate(430,470) rotate(119.40718906073367)"><rect x="-29.0" y="-29.0" width="373.67388235329196" height="58" rx="29.0" fill="#e6edf3"/></g><g transform="translate(430,470) rotate(52.6333305872313)"><rect x="-29.0" y="-29.0" width="404.01300553591915" height="58" rx="29.0" fill="#e6edf3"/></g><g transform="translate(240,772) rotate(0.0)"><rect x="-23.0" y="-23.0" width="506.0" height="46" rx="23.0" fill="#2c3b52"/></g><g transform="translate(430,470) rotate(-32.19573393471325)"><rect x="-30.0" y="-30.0" width="379.06112267087633" height="60" rx="30.0" fill="#e6edf3"/></g><circle cx="700" cy="300" r="58" fill="#388bfd"/><circle cx="700" cy="300" r="26" fill="#0d1117"/><circle cx="430" cy="470" r="200" fill="#388bfd"/><circle cx="430" cy="470" r="108" fill="#0d1117"/><circle cx="430" cy="470" r="42" fill="#e6edf3"/></svg>

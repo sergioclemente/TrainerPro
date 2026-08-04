@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the generated Info.plist for macOS bundles (Tauri reads this file
+  next to tauri.conf.json). The Bluetooth usage string is REQUIRED: macOS
+  CoreBluetooth denies BLE access to an app whose Info.plist lacks it, and the
+  denial is silent — scans return nothing with no error. See docs/SPEC.md §4.4
+  and the packaging notes.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>TrainerPro uses Bluetooth to connect to your smart trainer and heart-rate monitor.</string>
+</dict>
+</plist>
