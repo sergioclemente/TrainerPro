@@ -64,7 +64,7 @@ export interface Telemetry {
   cadence: number | null;
   hr: number | null;
   target: number | null;
-  smoothed3s: number | null;
+  power_smoothed_3s: number | null;
 }
 
 export interface LapRow {

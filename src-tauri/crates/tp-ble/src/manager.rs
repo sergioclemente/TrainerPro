@@ -131,12 +131,12 @@ impl DeviceManager {
     /// when the cache misses we scan *until the target appears* (bounded).
     pub async fn connect_trainer(&self, platform_id: &str) -> Result<FtmsTrainer, BleError> {
         let p = self.find_with_scan(Role::Trainer, platform_id, 12).await?;
-        FtmsTrainer::connect(p).await
+        FtmsTrainer::connect(self.adapter.clone(), p).await
     }
 
     pub async fn connect_hrm(&self, platform_id: &str) -> Result<HrmDevice, BleError> {
         let p = self.find_with_scan(Role::Hrm, platform_id, 12).await?;
-        HrmDevice::connect(p).await
+        HrmDevice::connect(self.adapter.clone(), p).await
     }
 
     /// Resolve a platform id, scanning until it shows up or `secs` elapse.

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use btleplug::api::bleuuid::uuid_from_u16;
-use btleplug::api::Peripheral as _;
-use btleplug::platform::Peripheral;
+use btleplug::api::{Central as _, CentralEvent, Peripheral as _};
+use btleplug::platform::{Adapter, Peripheral};
 use futures::StreamExt;
 use tokio::sync::{broadcast, watch};
 
@@ -20,7 +20,12 @@ pub struct HrmDevice {
 }
 
 impl HrmDevice {
-    pub async fn connect(peripheral: Peripheral) -> Result<Self, BleError> {
+    pub async fn connect(adapter: Adapter, peripheral: Peripheral) -> Result<Self, BleError> {
+        let peripheral_id = peripheral.id();
+        let mut adapter_events = adapter
+            .events()
+            .await
+            .map_err(|e| BleError::Adapter(format!("adapter events: {e}")))?;
         peripheral
             .connect()
             .await
@@ -60,13 +65,44 @@ impl HrmDevice {
         {
             let hr_tx = hr_tx.clone();
             let status_tx = status_tx.clone();
+            let mut status_rx = status_tx.subscribe();
             tokio::spawn(async move {
                 let mut stream = stream;
-                while let Some(n) = stream.next().await {
+                loop {
+                    let n = tokio::select! {
+                        n = stream.next() => match n {
+                            Some(n) => n,
+                            None => break,
+                        },
+                        changed = status_rx.changed() => {
+                            if changed.is_err()
+                                || *status_rx.borrow() == DeviceStatus::Disconnected
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
                     if n.uuid == uuid_from_u16(codec::CHR_HEART_RATE_MEASUREMENT) {
                         if let Ok(Some(bpm)) = codec::parse_heart_rate(&n.value) {
                             let _ = hr_tx.send(HrData { bpm });
                         }
+                    }
+                }
+                status_tx.send_replace(DeviceStatus::Disconnected);
+            });
+        }
+
+        {
+            let status_tx = status_tx.clone();
+            tokio::spawn(async move {
+                while let Some(event) = adapter_events.next().await {
+                    if matches!(
+                        event,
+                        CentralEvent::DeviceDisconnected(ref id) if id == &peripheral_id
+                    ) {
+                        status_tx.send_replace(DeviceStatus::Disconnected);
+                        return;
                     }
                 }
                 status_tx.send_replace(DeviceStatus::Disconnected);

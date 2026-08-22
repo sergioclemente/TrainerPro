@@ -150,7 +150,7 @@ export default function Player() {
   }
 
   const workout = workouts.find((w) => w.id === player.workout_id);
-  const power = telemetry?.smoothed3s ?? telemetry?.power ?? null;
+  const power = telemetry?.power_smoothed_3s ?? telemetry?.power ?? null;
   const target = player.target;
   const weight = settings?.profile.weight_kg ?? null;
   const wkg =

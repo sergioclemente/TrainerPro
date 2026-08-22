@@ -47,6 +47,9 @@ pub enum DeviceStatus {
 /// serialize control-point access internally (one op in flight, SPEC §4.2).
 #[async_trait]
 pub trait Trainer: Send + Sync {
+    /// One-off transport check used to gate ride start. Ongoing connection
+    /// changes are delivered through `status()` rather than polled.
+    async fn is_connected(&self) -> Result<bool, BleError>;
     async fn set_target_power(&self, watts: u16) -> Result<(), BleError>;
     /// FreeRide segments: simulation mode, grade 0 %. SPEC §0.
     async fn set_sim_grade_zero(&self) -> Result<(), BleError>;

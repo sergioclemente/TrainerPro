@@ -69,6 +69,24 @@ impl DeviceHub {
         self.manager.get_or_try_init(DeviceManager::new).await
     }
 
+    /// These are cached status reads. They may briefly await the slot lock,
+    /// but never call into the Bluetooth transport.
+    pub async fn trainer_connected(&self) -> bool {
+        self.trainer
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|trainer| *trainer.status().borrow() == DeviceStatus::Connected)
+    }
+
+    pub async fn hrm_connected(&self) -> bool {
+        self.hrm
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|hrm| *hrm.status().borrow() == DeviceStatus::Connected)
+    }
+
     /// Time-boxed scan; sim entries first, then real devices as found.
     /// Emits `scan_result` events; returns when the scan window closes.
     pub async fn scan(&self, app: AppHandle, role: Role) -> Result<(), BleError> {
@@ -170,7 +188,11 @@ impl DeviceHub {
                 spawn_status_forwarder(app.clone(), role, trainer.status(), name.clone());
                 spawn_trainer_reading_forwarder(app.clone(), trainer.telemetry());
                 if platform_id != SIM_TRAINER_ID {
-                    spawn_reconnector(app.clone(), platform_id.to_string(), trainer.status());
+                    spawn_trainer_reconnector(
+                        app.clone(),
+                        platform_id.to_string(),
+                        trainer.status(),
+                    );
                 }
                 *self.trainer.write().await = Some(trainer);
                 name
@@ -189,6 +211,9 @@ impl DeviceHub {
                 let name = hrm.name();
                 spawn_status_forwarder(app.clone(), role, hrm.status(), name.clone());
                 spawn_hrm_reading_forwarder(app.clone(), hrm.heart_rate());
+                if platform_id != SIM_HRM_ID {
+                    spawn_hrm_reconnector(app.clone(), platform_id.to_string(), hrm.status());
+                }
                 *self.hrm.write().await = Some(hrm);
                 name
             }
@@ -338,7 +363,7 @@ fn spawn_status_forwarder(
 /// (0/1/2/5/10 s then every 15 s) until the slot is replaced, the user
 /// disconnects, or a new device connects. The player runtime auto-pauses
 /// independently by watching the same status channel.
-fn spawn_reconnector(
+fn spawn_trainer_reconnector(
     app: AppHandle,
     platform_id: String,
     mut status: tokio::sync::watch::Receiver<DeviceStatus>,
@@ -386,4 +411,77 @@ fn spawn_reconnector(
             }
         }
     });
+}
+
+/// HRM reconnect follows the same schedule as the trainer, but it never
+/// pauses the player. Keeping this role-specific avoids hiding different
+/// device behavior behind a common connection wrapper.
+fn spawn_hrm_reconnector(
+    app: AppHandle,
+    platform_id: String,
+    mut status: tokio::sync::watch::Receiver<DeviceStatus>,
+) {
+    tokio::spawn(async move {
+        loop {
+            if *status.borrow() == DeviceStatus::Disconnected {
+                break;
+            }
+            if status.changed().await.is_err() {
+                break;
+            }
+        }
+        let state = app.state::<AppState>();
+        let mut attempt: u32 = 0;
+        loop {
+            {
+                let slot = state.hub.hrm.read().await;
+                match slot.as_ref() {
+                    None => return,
+                    Some(h) if *h.status().borrow() == DeviceStatus::Connected => return,
+                    Some(_) => {}
+                }
+            }
+            let delay = RECONNECT_SCHEDULE_S
+                .get(attempt as usize)
+                .copied()
+                .unwrap_or(RECONNECT_STEADY_S);
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+            attempt += 1;
+            emit_device_status(
+                &app,
+                Role::Hrm,
+                DeviceStatus::Reconnecting { attempt },
+                None,
+            );
+            match state.hub.connect(&app, Role::Hrm, &platform_id).await {
+                Ok(name) => {
+                    info!("hrm reconnected: {name}");
+                    return;
+                }
+                Err(e) => warn!("hrm reconnect attempt {attempt} failed: {e}"),
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn connected_state_comes_from_device_status() {
+        let hub = DeviceHub::default();
+        let trainer = Arc::new(SimTrainer::new());
+        let hrm = Arc::new(SimHrm::new(trainer.telemetry()));
+        *hub.trainer.write().await = Some(trainer.clone());
+        *hub.hrm.write().await = Some(hrm.clone());
+
+        assert!(hub.trainer_connected().await);
+        assert!(hub.hrm_connected().await);
+
+        trainer.inject_disconnect();
+        hrm.inject_disconnect();
+        assert!(!hub.trainer_connected().await);
+        assert!(!hub.hrm_connected().await);
+    }
 }
