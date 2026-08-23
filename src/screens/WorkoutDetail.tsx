@@ -98,14 +98,14 @@ function zoneSeconds(segments: SegmentRow[]): number[] {
   return out;
 }
 
-function SegLine({ seg }: { seg: SegmentRow }) {
+function SegLine({ seg, ftp }: { seg: SegmentRow; ftp: number }) {
   const color =
     seg.kind === "freeride" ? "#6e7681" : zoneColor(Math.max(seg.start_pct, seg.end_pct));
   return (
     <div className="segment-row">
       <span className="segment-dot" style={{ background: color }} />
       <span className="segment-text">
-        {segmentText(seg)}
+        {segmentText(seg, ftp)}
         {seg.note && <span className="segment-note">{seg.note}</span>}
       </span>
     </div>
@@ -266,6 +266,7 @@ export default function WorkoutDetail() {
           durationS={d.duration_s}
           height={160}
           segments={d.segments}
+          ftp={ftp}
         />
       </div>
 
@@ -298,13 +299,13 @@ export default function WorkoutDetail() {
       <div className="segment-list">
         {tree.map((node, i) =>
           node.type === "single" ? (
-            <SegLine key={i} seg={node.seg} />
+            <SegLine key={i} seg={node.seg} ftp={ftp} />
           ) : (
             <div key={i} className="repeat-group">
               <div className="repeat-head">{node.reps}×</div>
               <div className="repeat-children">
                 {node.children.map((c, j) => (
-                  <SegLine key={j} seg={c} />
+                  <SegLine key={j} seg={c} ftp={ftp} />
                 ))}
               </div>
             </div>

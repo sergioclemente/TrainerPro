@@ -231,6 +231,11 @@ export default function Player() {
           <span className="metric-value">{power ?? "–"}</span>
           <span className={`metric-target ${player.erg_enabled ? "" : "erg-off"}`}>
             {targetLabel}
+            {player.intensity !== 1.0 && (
+              <span className="intensity-badge">
+                {" "}· {Math.round(player.intensity * 100)}% intensity
+              </span>
+            )}
             {wkg !== null && <span className="metric-wkg"> · {wkg} W/kg</span>}
           </span>
           <span className="metric-label">
@@ -268,9 +273,6 @@ export default function Player() {
           </div>
           <div className="clock-label">
             {showRemaining ? "total remaining" : "total elapsed"}
-            {player.intensity !== 1.0 && (
-              <span className="intensity-badge"> {Math.round(player.intensity * 100)}%</span>
-            )}
           </div>
         </button>
 
