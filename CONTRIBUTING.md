@@ -21,8 +21,13 @@ Xcode Command Line Tools.
 
 ```bash
 npm install
-npm run tauri dev
+npm run tauri:qa
 ```
+
+This launches **TrainerPro QA** with an isolated data directory. The regular
+TrainerPro bundle remains the day-to-day app and keeps its workouts, rides,
+and paired devices separate. Prefer the simulated devices in QA, and do not
+connect both app flavors to the same physical trainer at once.
 
 No trainer needed: pair **Simulated KICKR** / **Simulated HRM** from the
 Devices screen. The simulator implements the same traits as the real drivers,

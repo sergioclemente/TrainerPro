@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TrainerPro QA",
+  "identifier": "com.trainerpro.desktop.qa",
+  "app": {
+    "windows": [
+      {
+        "title": "TrainerPro QA",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 640
+      }
+    ]
+  }
+}

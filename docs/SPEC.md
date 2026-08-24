@@ -432,8 +432,10 @@ browser). FIT is also always auto-saved at `<appdata>/rides/<ride_uuid>.fit`.
 
 ## 8. Persistence (`tp-app`)
 
-App data dir: `~/Library/Application Support/com.trainerpro.app/` (Tauri
-`app_data_dir`); subdirs `workouts/`, `rides/`; DB `trainerpro.sqlite3`.
+App data dir: `~/Library/Application Support/com.trainerpro.desktop/` (Tauri
+`app_data_dir`); subdirs `workouts/`, `rides/`; DB `trainerpro.sqlite3`. The
+development QA flavor uses `com.trainerpro.desktop.qa` so its data remains
+isolated from an installed production app.
 
 ```sql
 CREATE TABLE workouts (

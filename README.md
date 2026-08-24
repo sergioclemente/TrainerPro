@@ -124,7 +124,7 @@ Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 npm install
-npm run tauri dev        # launches the app (Rust + Vite dev servers)
+npm run tauri:qa         # launches an isolated TrainerPro QA app
 
 # Tests
 cd src-tauri && cargo test --workspace     # core, BLE codecs, planner, woz parsers
@@ -134,6 +134,12 @@ npx tsc --noEmit                           # frontend types
 TP_PARSE_FILE=some.zwo cargo test -p tp-core parse_env_file -- --ignored --nocapture
 cargo test --bin tp-app live_fetch -- --ignored --nocapture   # whatsonzwift live check
 ```
+
+The QA flavor uses its own app name, bundle identifier, and data directory, so
+development workouts, rides, and paired devices do not affect an installed
+TrainerPro app. Use the simulated devices for QA; do not connect both app
+flavors to the same physical trainer at once. Build a standalone QA app with
+`npm run tauri:qa:build -- --bundles app`.
 
 No trainer? Pair the **Simulated KICKR** and **Simulated HRM** from the
 Devices screen — they appear in every scan and behave like the real thing
