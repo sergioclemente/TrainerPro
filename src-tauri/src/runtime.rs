@@ -122,14 +122,13 @@ pub async fn spawn(
     workout: Workout,
 ) -> Result<PlayerHandle, AppError> {
     let state = app.state::<AppState>();
-    let trainer: Arc<dyn Trainer> = state
-        .hub
-        .trainer
-        .read()
-        .await
+    let trainer_updates = state.hub.trainer_updates();
+    let trainer: Arc<dyn Trainer> = trainer_updates
+        .borrow()
         .clone()
         .ok_or_else(|| AppError::new("no_trainer", "connect a trainer first"))?;
-    let hrm: Option<Arc<dyn HeartRateMonitor>> = state.hub.hrm.read().await.clone();
+    let hrm_updates = state.hub.hrm_updates();
+    let hrm: Option<Arc<dyn HeartRateMonitor>> = hrm_updates.borrow().clone();
 
     let settings = state.settings();
     let ride_id = uuid::Uuid::new_v4().to_string();
@@ -175,6 +174,8 @@ pub async fn spawn(
         engine,
         trainer,
         hrm,
+        trainer_updates,
+        hrm_updates,
         journal: Some(journal),
         journal_path: journal_path.to_string_lossy().into_owned(),
         ride_id,
@@ -206,6 +207,8 @@ struct Runtime {
     engine: Engine,
     trainer: Arc<dyn Trainer>,
     hrm: Option<Arc<dyn HeartRateMonitor>>,
+    trainer_updates: watch::Receiver<Option<Arc<dyn Trainer>>>,
+    hrm_updates: watch::Receiver<Option<Arc<dyn HeartRateMonitor>>>,
     journal: Option<JournalWriter<File>>,
     journal_path: String,
     ride_id: String,
@@ -251,6 +254,8 @@ impl Runtime {
         let mut trainer_status = self.trainer.status();
         let mut hr_rx = self.hrm.as_ref().map(|h| h.heart_rate());
         let mut hrm_status = self.hrm.as_ref().map(|h| h.status());
+        let mut trainer_updates = self.trainer_updates.clone();
+        let mut hrm_updates = self.hrm_updates.clone();
 
         loop {
             tokio::select! {
@@ -379,11 +384,43 @@ impl Runtime {
                         });
                     }
                 }
+                changed = hrm_updates.changed() => {
+                    if changed.is_ok() {
+                        self.hrm = hrm_updates.borrow().clone();
+                        hr_rx = self.hrm.as_ref().map(|h| h.heart_rate());
+                        hrm_status = self.hrm.as_ref().map(|h| h.status());
+                        self.latest_hr = None;
+                        let _ = self.app.emit("telemetry", TelemetryPayload {
+                            power: self.latest_power,
+                            cadence: self.latest_cadence,
+                            hr: None,
+                            target: if self.in_free_ride { None } else { self.last_target },
+                            power_smoothed_3s: self.power_smoothed_3s,
+                        });
+                    }
+                }
                 r = trainer_status.changed() => {
                     if r.is_err() { continue; }
                     let s = *trainer_status.borrow();
                     if s == DeviceStatus::Disconnected && self.engine.phase() == Phase::Riding {
                         self.trainer_error("trainer disconnected").await;
+                    }
+                }
+                changed = trainer_updates.changed() => {
+                    if changed.is_ok() {
+                        let replacement = trainer_updates.borrow().clone();
+                        if let Some(trainer) = replacement {
+                            self.trainer = trainer;
+                            telemetry_rx = self.trainer.telemetry();
+                            trainer_status = self.trainer.status();
+                            if self.engine.phase() == Phase::Riding {
+                                // The old status event and slot replacement can race.
+                                // Always pause before the rider resumes on the new link.
+                                self.trainer_error("trainer disconnected").await;
+                            }
+                        } else if self.engine.phase() == Phase::Riding {
+                            self.trainer_error("trainer disconnected").await;
+                        }
                     }
                 }
             }
