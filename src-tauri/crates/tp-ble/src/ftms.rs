@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use btleplug::api::bleuuid::uuid_from_u16;
-use btleplug::api::{CharPropFlags, Characteristic, Peripheral as _, WriteType};
-use btleplug::platform::Peripheral;
+use btleplug::api::{
+    Central as _, CentralEvent, CharPropFlags, Characteristic, Peripheral as _, WriteType,
+};
+use btleplug::platform::{Adapter, Peripheral};
 use futures::StreamExt;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::time::{timeout, Duration};
@@ -32,7 +34,14 @@ pub struct FtmsTrainer {
 impl FtmsTrainer {
     /// Full connect sequence per SPEC §4.2: discover, capability-check,
     /// subscribe, request control. Fails with a specific error at each step.
-    pub async fn connect(peripheral: Peripheral) -> Result<Self, BleError> {
+    pub async fn connect(adapter: Adapter, peripheral: Peripheral) -> Result<Self, BleError> {
+        let peripheral_id = peripheral.id();
+        // Subscribe before connecting so a short-lived connection cannot
+        // lose its disconnect event between setup steps.
+        let mut adapter_events = adapter
+            .events()
+            .await
+            .map_err(|e| BleError::Adapter(format!("adapter events: {e}")))?;
         debug!("ftms connect: gatt connect to {:?}", peripheral.id());
         peripheral
             .connect()
@@ -106,10 +115,25 @@ impl FtmsTrainer {
         {
             let telemetry_tx = telemetry_tx.clone();
             let status_tx = status_tx.clone();
+            let mut status_rx = status_tx.subscribe();
             tokio::spawn(async move {
                 let mut malformed = 0u32;
                 let mut stream = stream;
-                while let Some(n) = stream.next().await {
+                loop {
+                    let n = tokio::select! {
+                        n = stream.next() => match n {
+                            Some(n) => n,
+                            None => break,
+                        },
+                        changed = status_rx.changed() => {
+                            if changed.is_err()
+                                || *status_rx.borrow() == DeviceStatus::Disconnected
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
                     if n.uuid == uuid_from_u16(codec::CHR_INDOOR_BIKE_DATA) {
                         match codec::parse_indoor_bike_data(&n.value) {
                             Ok(d) => {
@@ -147,6 +171,25 @@ impl FtmsTrainer {
         debug!("ftms connect: requesting control");
         trainer.cp_op(codec::request_control(), codec::CP_REQUEST_CONTROL).await?;
         trainer.status_tx.send_replace(DeviceStatus::Connected);
+
+        // On CoreBluetooth, a peripheral notification stream can remain open
+        // after link loss. The adapter event is the authoritative disconnect
+        // signal; the notification pump remains a secondary fallback.
+        {
+            let status_tx = trainer.status_tx.clone();
+            tokio::spawn(async move {
+                while let Some(event) = adapter_events.next().await {
+                    if matches!(
+                        event,
+                        CentralEvent::DeviceDisconnected(ref id) if id == &peripheral_id
+                    ) {
+                        status_tx.send_replace(DeviceStatus::Disconnected);
+                        return;
+                    }
+                }
+                status_tx.send_replace(DeviceStatus::Disconnected);
+            });
+        }
         Ok(trainer)
     }
 
@@ -184,6 +227,12 @@ impl FtmsTrainer {
 
 #[async_trait::async_trait]
 impl Trainer for FtmsTrainer {
+    async fn is_connected(&self) -> Result<bool, BleError> {
+        self.peripheral
+            .is_connected()
+            .await
+            .map_err(|e| BleError::Transport(format!("connection check: {e}")))
+    }
     async fn set_target_power(&self, watts: u16) -> Result<(), BleError> {
         self.cp_op(codec::set_target_power(watts), codec::CP_SET_TARGET_POWER).await
     }

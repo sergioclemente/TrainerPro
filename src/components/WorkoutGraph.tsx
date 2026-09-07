@@ -36,14 +36,26 @@ export function zoneColor(pct: number): string {
   return "#bc8cff"; // Z7 neuromuscular
 }
 
-export function segmentText(s: SegmentRow): string {
+/** Resolve a displayed %FTP value exactly as the Rust power model does for
+    positive workout targets: nearest whole watt. */
+export function wattsFromPct(pct: number, ftp: number): number {
+  return Math.round((pct / 100) * ftp);
+}
+
+export function segmentText(s: SegmentRow, ftp?: number): string {
   if (s.kind === "freeride") return `${s.label} — ${fmtDuration(s.duration_s)}`;
-  const pow =
+  const pct =
     s.kind === "ramp"
       ? `${Math.round(s.start_pct)}% → ${Math.round(s.end_pct)}%`
       : `${Math.round(s.start_pct)}%`;
+  const watts =
+    ftp && ftp > 0
+      ? s.kind === "ramp"
+        ? ` (${wattsFromPct(s.start_pct, ftp)}\u00a0W → ${wattsFromPct(s.end_pct, ftp)}\u00a0W)`
+        : ` (${wattsFromPct(s.start_pct, ftp)}\u00a0W)`
+      : "";
   const cad = s.cadence_rpm != null ? ` · ${s.cadence_rpm} rpm` : "";
-  return `${s.label} — ${fmtDuration(s.duration_s)} @ ${pow}${cad}`;
+  return `${s.label} — ${fmtDuration(s.duration_s)} @ ${pct} FTP${watts}${cad}`;
 }
 
 export default function WorkoutGraph({
@@ -212,7 +224,7 @@ export default function WorkoutGraph({
                 }
           }
         >
-          <div className="graph-tooltip-title">{segmentText(hovered)}</div>
+          <div className="graph-tooltip-title">{segmentText(hovered, ftp)}</div>
           {hovered.note && <div className="graph-tooltip-note">{hovered.note}</div>}
         </div>
       )}

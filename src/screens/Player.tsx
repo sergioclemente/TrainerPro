@@ -150,7 +150,7 @@ export default function Player() {
   }
 
   const workout = workouts.find((w) => w.id === player.workout_id);
-  const power = telemetry?.smoothed3s ?? telemetry?.power ?? null;
+  const power = telemetry?.power_smoothed_3s ?? telemetry?.power ?? null;
   const target = player.target;
   const weight = settings?.profile.weight_kg ?? null;
   const wkg =
@@ -231,6 +231,11 @@ export default function Player() {
           <span className="metric-value">{power ?? "–"}</span>
           <span className={`metric-target ${player.erg_enabled ? "" : "erg-off"}`}>
             {targetLabel}
+            {player.intensity !== 1.0 && (
+              <span className="intensity-badge">
+                {" "}· {Math.round(player.intensity * 100)}% intensity
+              </span>
+            )}
             {wkg !== null && <span className="metric-wkg"> · {wkg} W/kg</span>}
           </span>
           <span className="metric-label">
@@ -268,9 +273,6 @@ export default function Player() {
           </div>
           <div className="clock-label">
             {showRemaining ? "total remaining" : "total elapsed"}
-            {player.intensity !== 1.0 && (
-              <span className="intensity-badge"> {Math.round(player.intensity * 100)}%</span>
-            )}
           </div>
         </button>
 

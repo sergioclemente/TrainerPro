@@ -22,7 +22,7 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { AppError, fmtDuration, ipc } from "../ipc";
 import { useStore } from "../state";
-import WorkoutGraph, { zoneColor } from "../components/WorkoutGraph";
+import WorkoutGraph, { wattsFromPct, zoneColor } from "../components/WorkoutGraph";
 import {
   BuildNode,
   LeafNode,
@@ -105,8 +105,19 @@ function DurationField({
   );
 }
 
-function PctField({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function PctField({
+  value,
+  ftp,
+  onChange,
+}: {
+  value: number;
+  ftp: number;
+  onChange: (v: number) => void;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
+  const displayedText = draft ?? String(value);
+  const displayedPct = displayedText.trim() === "" ? NaN : Number(displayedText);
+  const watts = Number.isFinite(displayedPct) ? wattsFromPct(displayedPct, ftp) : null;
   return (
     <div className="b-pct">
       <input
@@ -130,6 +141,7 @@ function PctField({ value, onChange }: { value: number; onChange: (v: number) =>
         }}
       />
       <span className="b-unit">%</span>
+      {watts !== null && <span className="b-watts">{watts} W</span>}
     </div>
   );
 }
@@ -216,13 +228,14 @@ function RowHead({ kind, pct }: { kind: string; pct: number }) {
 
 interface RowProps {
   node: LeafNode;
+  ftp: number;
   selected: boolean;
   onSelect: () => void;
   onPatch: (patch: NodePatch) => void;
   onDelete: () => void;
 }
 
-function LeafRow({ node, selected, onSelect, onPatch, onDelete }: RowProps) {
+function LeafRow({ node, ftp, selected, onSelect, onPatch, onDelete }: RowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: node.id,
   });
@@ -248,18 +261,30 @@ function LeafRow({ node, selected, onSelect, onPatch, onDelete }: RowProps) {
           {node.kind === "simple" ? (
             <label className="b-lbl">
               intensity
-              <PctField value={node.power_pct} onChange={(v) => onPatch({ power_pct: v })} />
+              <PctField
+                value={node.power_pct}
+                ftp={ftp}
+                onChange={(v) => onPatch({ power_pct: v })}
+              />
             </label>
           ) : (
             <>
               <label className="b-lbl">
                 from
-                <PctField value={node.start_pct} onChange={(v) => onPatch({ start_pct: v })} />
+                <PctField
+                  value={node.start_pct}
+                  ftp={ftp}
+                  onChange={(v) => onPatch({ start_pct: v })}
+                />
               </label>
               <span className="b-arrow">→</span>
               <label className="b-lbl">
                 to
-                <PctField value={node.end_pct} onChange={(v) => onPatch({ end_pct: v })} />
+                <PctField
+                  value={node.end_pct}
+                  ftp={ftp}
+                  onChange={(v) => onPatch({ end_pct: v })}
+                />
               </label>
             </>
           )}
@@ -274,8 +299,8 @@ function LeafRow({ node, selected, onSelect, onPatch, onDelete }: RowProps) {
       ) : (
         <span className="b-summary">
           {node.kind === "ramp"
-            ? `${fmtDuration(node.duration_s)} @ ${node.start_pct}% → ${node.end_pct}%`
-            : `${fmtDuration(node.duration_s)} @ ${node.power_pct}% FTP`}
+            ? `${fmtDuration(node.duration_s)} @ ${node.start_pct}% → ${node.end_pct}% FTP (${wattsFromPct(node.start_pct, ftp)} W → ${wattsFromPct(node.end_pct, ftp)} W)`
+            : `${fmtDuration(node.duration_s)} @ ${node.power_pct}% FTP (${wattsFromPct(node.power_pct, ftp)} W)`}
           {node.cadence_rpm ? ` · ${node.cadence_rpm} rpm` : ""}
         </span>
       )}
@@ -297,6 +322,7 @@ function LeafRow({ node, selected, onSelect, onPatch, onDelete }: RowProps) {
 
 function RepeatBlock({
   node,
+  ftp,
   selectedId,
   onSelect,
   onPatch,
@@ -305,6 +331,7 @@ function RepeatBlock({
   onDeleteChild,
 }: {
   node: RepeatNode;
+  ftp: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onPatch: (patch: NodePatch) => void;
@@ -364,6 +391,7 @@ function RepeatBlock({
             <LeafRow
               key={c.id}
               node={c}
+              ftp={ftp}
               selected={selectedId === c.id}
               onSelect={() => onSelect(c.id)}
               onPatch={(p) => onPatchChild(c.id, p)}
@@ -553,6 +581,7 @@ export default function Builder() {
                 <RepeatBlock
                   key={n.id}
                   node={n}
+                  ftp={ftp}
                   selectedId={selectedId}
                   onSelect={setSelectedId}
                   onPatch={(p) => patch(n.id, p)}
@@ -564,6 +593,7 @@ export default function Builder() {
                 <LeafRow
                   key={n.id}
                   node={n}
+                  ftp={ftp}
                   selected={selectedId === n.id}
                   onSelect={() => setSelectedId(n.id)}
                   onPatch={(p) => patch(n.id, p)}

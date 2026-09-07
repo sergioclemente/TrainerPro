@@ -1223,6 +1223,12 @@ button.go:hover {
   color: var(--muted);
   font-size: 13px;
 }
+.b-watts {
+  min-width: 48px;
+  color: var(--fg);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
 .b-dur {
   color: var(--muted);
   font-size: 13px;

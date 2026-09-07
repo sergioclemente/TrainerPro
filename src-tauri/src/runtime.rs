@@ -74,7 +74,7 @@ pub struct TelemetryPayload {
     pub cadence: Option<u16>,
     pub hr: Option<u16>,
     pub target: Option<u16>,
-    pub smoothed3s: Option<u16>,
+    pub power_smoothed_3s: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,14 +122,13 @@ pub async fn spawn(
     workout: Workout,
 ) -> Result<PlayerHandle, AppError> {
     let state = app.state::<AppState>();
-    let trainer: Arc<dyn Trainer> = state
-        .hub
-        .trainer
-        .read()
-        .await
+    let trainer_updates = state.hub.trainer_updates();
+    let trainer: Arc<dyn Trainer> = trainer_updates
+        .borrow()
         .clone()
         .ok_or_else(|| AppError::new("no_trainer", "connect a trainer first"))?;
-    let hrm: Option<Arc<dyn HeartRateMonitor>> = state.hub.hrm.read().await.clone();
+    let hrm_updates = state.hub.hrm_updates();
+    let hrm: Option<Arc<dyn HeartRateMonitor>> = hrm_updates.borrow().clone();
 
     let settings = state.settings();
     let ride_id = uuid::Uuid::new_v4().to_string();
@@ -175,17 +174,20 @@ pub async fn spawn(
         engine,
         trainer,
         hrm,
+        trainer_updates,
+        hrm_updates,
         journal: Some(journal),
         journal_path: journal_path.to_string_lossy().into_owned(),
         ride_id,
         workout_id: workout_id.clone(),
         header_started_ms: now_unix_ms(),
-        started: None,
+        ride_started_at: None,
         state_tx,
         last_target: None,
         in_free_ride: false,
         erg_enabled: true,
         latest_power: None,
+        power_smoothed_3s: None,
         latest_cadence: None,
         latest_hr: None,
         power_window: VecDeque::new(),
@@ -205,6 +207,8 @@ struct Runtime {
     engine: Engine,
     trainer: Arc<dyn Trainer>,
     hrm: Option<Arc<dyn HeartRateMonitor>>,
+    trainer_updates: watch::Receiver<Option<Arc<dyn Trainer>>>,
+    hrm_updates: watch::Receiver<Option<Arc<dyn HeartRateMonitor>>>,
     journal: Option<JournalWriter<File>>,
     journal_path: String,
     ride_id: String,
@@ -212,7 +216,7 @@ struct Runtime {
     header_started_ms: u64,
     /// Wall-clock ride origin, set on Start. Journal t_ms is measured from
     /// here (includes paused spans in the timeline; no samples during pause).
-    started: Option<Instant>,
+    ride_started_at: Option<Instant>,
     state_tx: watch::Sender<PlayerState>,
     last_target: Option<u16>,
     in_free_ride: bool,
@@ -220,6 +224,7 @@ struct Runtime {
     /// simulation mode and target writes are suppressed.
     erg_enabled: bool,
     latest_power: Option<u16>,
+    power_smoothed_3s: Option<u16>,
     latest_cadence: Option<u16>,
     latest_hr: Option<u16>,
     /// (arrival, power) pairs for the 3 s display smoothing window.
@@ -248,6 +253,9 @@ impl Runtime {
         let mut telemetry_rx = self.trainer.telemetry();
         let mut trainer_status = self.trainer.status();
         let mut hr_rx = self.hrm.as_ref().map(|h| h.heart_rate());
+        let mut hrm_status = self.hrm.as_ref().map(|h| h.status());
+        let mut trainer_updates = self.trainer_updates.clone();
+        let mut hrm_updates = self.hrm_updates.clone();
 
         loop {
             tokio::select! {
@@ -255,10 +263,7 @@ impl Runtime {
                     let Some(cmd) = cmd else { break };
                     match cmd {
                         Cmd::Start => {
-                            self.started = Some(Instant::now());
-                            self.write_event(RideEventKind::Start, None);
-                            let fx = self.engine.handle(Input::Start);
-                            self.apply(fx).await;
+                            self.handle_start().await;
                         }
                         Cmd::Pause => {
                             self.write_event(RideEventKind::Pause, None);
@@ -344,7 +349,7 @@ impl Runtime {
                                     break;
                                 }
                             }
-                            let smoothed = if self.power_window.is_empty() { None } else {
+                            self.power_smoothed_3s = if self.power_window.is_empty() { None } else {
                                 Some((self.power_window.iter().map(|(_, p)| u32::from(*p)).sum::<u32>()
                                     / self.power_window.len() as u32) as u16)
                             };
@@ -353,7 +358,7 @@ impl Runtime {
                                 cadence: self.latest_cadence,
                                 hr: self.latest_hr,
                                 target: if self.in_free_ride { None } else { self.last_target },
-                                smoothed3s: smoothed,
+                                power_smoothed_3s: self.power_smoothed_3s,
                             });
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
@@ -365,6 +370,35 @@ impl Runtime {
                 r = recv_hr(&mut hr_rx) => {
                     if let Some(bpm) = r { self.latest_hr = Some(bpm); }
                 }
+                s = recv_hrm_status(&mut hrm_status) => {
+                    if s == DeviceStatus::Disconnected {
+                        hrm_status = None;
+                        hr_rx = None;
+                        self.latest_hr = None;
+                        let _ = self.app.emit("telemetry", TelemetryPayload {
+                            power: self.latest_power,
+                            cadence: self.latest_cadence,
+                            hr: None,
+                            target: if self.in_free_ride { None } else { self.last_target },
+                            power_smoothed_3s: self.power_smoothed_3s,
+                        });
+                    }
+                }
+                changed = hrm_updates.changed() => {
+                    if changed.is_ok() {
+                        self.hrm = hrm_updates.borrow().clone();
+                        hr_rx = self.hrm.as_ref().map(|h| h.heart_rate());
+                        hrm_status = self.hrm.as_ref().map(|h| h.status());
+                        self.latest_hr = None;
+                        let _ = self.app.emit("telemetry", TelemetryPayload {
+                            power: self.latest_power,
+                            cadence: self.latest_cadence,
+                            hr: None,
+                            target: if self.in_free_ride { None } else { self.last_target },
+                            power_smoothed_3s: self.power_smoothed_3s,
+                        });
+                    }
+                }
                 r = trainer_status.changed() => {
                     if r.is_err() { continue; }
                     let s = *trainer_status.borrow();
@@ -372,8 +406,67 @@ impl Runtime {
                         self.trainer_error("trainer disconnected").await;
                     }
                 }
+                changed = trainer_updates.changed() => {
+                    if changed.is_ok() {
+                        let replacement = trainer_updates.borrow().clone();
+                        if let Some(trainer) = replacement {
+                            self.trainer = trainer;
+                            telemetry_rx = self.trainer.telemetry();
+                            trainer_status = self.trainer.status();
+                            if self.engine.phase() == Phase::Riding {
+                                // The old status event and slot replacement can race.
+                                // Always pause before the rider resumes on the new link.
+                                self.trainer_error("trainer disconnected").await;
+                            }
+                        } else if self.engine.phase() == Phase::Riding {
+                            self.trainer_error("trainer disconnected").await;
+                        }
+                    }
+                }
             }
         }
+    }
+
+    async fn handle_start(&mut self) {
+        if self.engine.phase() != Phase::Ready {
+            return;
+        }
+
+        match self.trainer.is_connected().await {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = self.app.emit("toast", serde_json::json!({
+                    "level": "warn",
+                    "message": "Trainer is disconnected — reconnect it before starting.",
+                }));
+                return;
+            }
+            Err(e) => {
+                warn!("trainer connection check failed: {e}");
+                let _ = self.app.emit("toast", serde_json::json!({
+                    "level": "warn",
+                    "message": format!("Could not check trainer connection: {e}"),
+                }));
+                return;
+            }
+        }
+
+        let hrm_connected = self
+            .hrm
+            .as_ref()
+            .map(|hrm| *hrm.status().borrow() == DeviceStatus::Connected)
+            .unwrap_or(false);
+        if !hrm_connected {
+            let _ = self.app.emit("toast", serde_json::json!({
+                "level": "info",
+                "message": "Heart-rate monitor not connected — continuing without heart-rate data.",
+            }));
+        }
+
+        self.ride_started_at = Some(Instant::now());
+        self.write_event(RideEventKind::Start, None);
+        let fx = self.engine.handle(Input::Start);
+        self.apply(fx).await;
     }
 
     /// Apply engine effects. Returns true when the ride finalized (workout
@@ -465,7 +558,9 @@ impl Runtime {
     }
 
     fn t_ms(&self) -> u64 {
-        self.started.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0)
+        self.ride_started_at
+            .map(|started_at| started_at.elapsed().as_millis() as u64)
+            .unwrap_or(0)
     }
 
     fn write_event(&mut self, kind: RideEventKind, seg: Option<usize>) {
@@ -697,5 +792,17 @@ async fn recv_hr(
             std::future::pending::<()>().await;
             None
         }
+    }
+}
+
+async fn recv_hrm_status(
+    status: &mut Option<watch::Receiver<DeviceStatus>>,
+) -> DeviceStatus {
+    match status {
+        Some(status) => match status.changed().await {
+            Ok(()) => *status.borrow(),
+            Err(_) => DeviceStatus::Disconnected,
+        },
+        None => std::future::pending::<DeviceStatus>().await,
     }
 }

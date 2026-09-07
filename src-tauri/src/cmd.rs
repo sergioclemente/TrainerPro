@@ -488,18 +488,20 @@ pub async fn get_device_state(state: State<'_, AppState>) -> R<Vec<DeviceSlot>> 
         rows
     };
     let find = |role: &str| saved.iter().find(|(r, _, _)| r == role);
+    let trainer_connected = state.hub.trainer_connected();
+    let hrm_connected = state.hub.hrm_connected();
     Ok(vec![
         DeviceSlot {
             role: Role::Trainer,
             saved_name: find("trainer").map(|(_, _, n)| n.clone()),
             saved_platform_id: find("trainer").map(|(_, p, _)| p.clone()),
-            connected: state.hub.trainer.read().await.is_some(),
+            connected: trainer_connected,
         },
         DeviceSlot {
             role: Role::Hrm,
             saved_name: find("hrm").map(|(_, _, n)| n.clone()),
             saved_platform_id: find("hrm").map(|(_, p, _)| p.clone()),
-            connected: state.hub.hrm.read().await.is_some(),
+            connected: hrm_connected,
         },
     ])
 }

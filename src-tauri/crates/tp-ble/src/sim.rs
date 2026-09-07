@@ -150,6 +150,9 @@ impl SimTrainer {
 
 #[async_trait::async_trait]
 impl Trainer for SimTrainer {
+    async fn is_connected(&self) -> Result<bool, BleError> {
+        Ok(!self.state.lock().unwrap().dropped)
+    }
     async fn set_target_power(&self, watts: u16) -> Result<(), BleError> {
         self.check_link()?;
         let mut s = self.state.lock().unwrap();
@@ -205,6 +208,7 @@ impl SimHrm {
         let status_tx = Arc::new(status_tx);
         {
             let hr_tx = hr_tx.clone();
+            let status_tx = status_tx.clone();
             tokio::spawn(async move {
                 let mut hr = 60.0f64;
                 let mut last_power = 0.0f64;
@@ -219,6 +223,9 @@ impl SimHrm {
                             Err(broadcast::error::RecvError::Closed) => break,
                         },
                         _ = interval.tick() => {
+                            if *status_tx.borrow() == DeviceStatus::Disconnected {
+                                continue;
+                            }
                             let goal = 60.0 + 110.0 * (last_power / 250.0).min(1.4);
                             let alpha = 1.0 - (-1.0 / HR_TAU_S).exp();
                             hr += (goal - hr) * alpha;
@@ -229,6 +236,14 @@ impl SimHrm {
             });
         }
         SimHrm { hr_tx, status_tx }
+    }
+
+    pub fn inject_disconnect(&self) {
+        self.status_tx.send_replace(DeviceStatus::Disconnected);
+    }
+
+    pub fn heal(&self) {
+        self.status_tx.send_replace(DeviceStatus::Connected);
     }
 }
 
@@ -270,14 +285,28 @@ mod tests {
     async fn fault_injection_disconnect_and_heal() {
         let sim = SimTrainer::new();
         sim.inject_disconnect();
+        assert!(!sim.is_connected().await.unwrap());
         assert!(matches!(
             sim.set_target_power(150).await,
             Err(BleError::Disconnected)
         ));
         assert_eq!(*sim.status().borrow(), DeviceStatus::Disconnected);
         sim.heal();
+        assert!(sim.is_connected().await.unwrap());
         assert!(sim.set_target_power(150).await.is_ok());
         assert_eq!(*sim.status().borrow(), DeviceStatus::Connected);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hrm_fault_injection_updates_existing_status_stream() {
+        let trainer = SimTrainer::new();
+        let hrm = SimHrm::new(trainer.telemetry());
+        let status = hrm.status();
+
+        hrm.inject_disconnect();
+        assert_eq!(*status.borrow(), DeviceStatus::Disconnected);
+        hrm.heal();
+        assert_eq!(*status.borrow(), DeviceStatus::Connected);
     }
 
     #[tokio::test(start_paused = true)]

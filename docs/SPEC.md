@@ -432,8 +432,10 @@ browser). FIT is also always auto-saved at `<appdata>/rides/<ride_uuid>.fit`.
 
 ## 8. Persistence (`tp-app`)
 
-App data dir: `~/Library/Application Support/com.trainerpro.app/` (Tauri
-`app_data_dir`); subdirs `workouts/`, `rides/`; DB `trainerpro.sqlite3`.
+App data dir: `~/Library/Application Support/com.trainerpro.desktop/` (Tauri
+`app_data_dir`); subdirs `workouts/`, `rides/`; DB `trainerpro.sqlite3`. The
+development QA flavor uses `com.trainerpro.desktop.qa` so its data remains
+isolated from an installed production app.
 
 ```sql
 CREATE TABLE workouts (
@@ -529,17 +531,21 @@ Navigation: left rail — Library · Devices · History · Settings; Player take
 over full window when a ride is loaded.
 
 1. **Library**: workout cards (name, duration, est TSS/IF, graph thumbnail
-   from `graph_json`), import button + drag-drop target, delete via context
-   menu. Click → Player in `Ready` (or device-connect prompt if no trainer).
+   from `graph_json`), import button + drag-drop target, workout builder,
+   delete via context menu. Builder target fields and interval descriptions
+   show both % FTP and the resolved watts for the current profile FTP. Click →
+   Player in `Ready` (or device-connect prompt if no trainer).
 2. **Devices**: two slots (Trainer / HRM): saved device card with status dot,
    or Scan flow (list by RSSI, click to pair). Forget button.
 3. **Player** (§6.3 of the product layout): top ⅓ workout graph (zone-colored
    bars, progress cursor, next-interval label, text-event overlay); middle:
-   three tiles — power (3 s smoothed, huge) with target underneath + ±5 %
-   over/under coloring, cadence, HR; bottom strip: interval countdown
-   (largest number on screen), interval avg power, elapsed/remaining, kJ,
-   intensity badge when ≠ 100 %. Controls row: pause/resume, skip, ±intensity,
-   end. Keyboard: space = pause/resume, `s` = skip, `↑/↓` = intensity.
+   three tiles — power (3 s smoothed, huge) with the live watt target and an
+   intensity badge when ≠ 100 % underneath + ±5 % over/under coloring,
+   cadence, HR; workout interval descriptions show both % FTP and resolved
+   watts; bottom strip: interval countdown (largest number on screen),
+   interval avg power, elapsed/remaining, kJ. Controls row: pause/resume, skip,
+   ±intensity, end. Keyboard: space = pause/resume, `s` = skip, `↑/↓` =
+   intensity.
 4. **Summary** (post-ride): §7.4.
 5. **History**: table of rides (date, workout, duration, avg P, NP, TSS,
    avg HR) → row click = Summary view for that ride (re-read from journal).
