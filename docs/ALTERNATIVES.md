@@ -186,9 +186,8 @@ real consequences:*
 - **Power match** (separate power meter as truth source, app offsets trainer
   target to compensate): deferred — correct for v1, but note that riders who
   own crank/pedal meters often see 5–10 W trainer-vs-meter discrepancies, and
-  it's a common feature request in this category. The `Trainer` trait +
-  a second BLE power source slot in the device manager is the phase-2 shape;
-  nothing in v1 blocks it.
+  it's a common feature request in this category. A second device owner behind
+  its own connection contract is the phase-2 shape; nothing in v1 blocks it.
 - **ANT+ sensors**: skipped entirely (needs USB dongle support). Only
   reconsider if a must-have sensor in your stable is ANT-only.
 

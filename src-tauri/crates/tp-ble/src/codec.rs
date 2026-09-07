@@ -1,7 +1,7 @@
 //! Pure FTMS / Heart Rate packet codecs. SPEC.md §4.2–§4.3. No BLE deps —
 //! everything here is unit-testable byte manipulation.
 
-use crate::traits::TrainerData;
+use crate::traits::TrainerMeasurement;
 
 // --- UUIDs (16-bit shorthand expanded to full base UUIDs by the drivers) ---
 pub const SVC_FTMS: u16 = 0x1826;
@@ -41,7 +41,7 @@ pub fn request_control() -> Vec<u8> {
     vec![CP_REQUEST_CONTROL]
 }
 
-pub fn reset() -> Vec<u8> {
+pub fn reset_trainer() -> Vec<u8> {
     vec![CP_RESET]
 }
 
@@ -50,33 +50,52 @@ pub fn set_target_power(watts: u16) -> Vec<u8> {
     vec![CP_SET_TARGET_POWER, w[0], w[1]]
 }
 
-pub fn start_resume() -> Vec<u8> {
+pub fn start_or_resume_training() -> Vec<u8> {
     vec![CP_START_RESUME]
 }
 
-/// FTMS stop/pause parameter: 0x01 = stop, 0x02 = pause. We pause (the spec
-/// §4.2 table's `08 01` shorthand notwithstanding — pause is the semantic we
-/// want mid-ride; the trainer keeps its state).
-pub fn pause() -> Vec<u8> {
+/// FTMS stop/pause parameter: 0x01 = stop, 0x02 = pause. We pause mid-ride so
+/// the trainer keeps its state.
+pub fn pause_training() -> Vec<u8> {
     vec![CP_STOP_PAUSE, 0x02]
 }
 
 /// Simulation parameters, grade 0 % (FreeRide): wind 0 m/s, grade 0.00 %,
 /// crr 0.0040 (40 × 0.0001), cw 0.51 kg/m (51 × 0.01). SPEC §4.2 table.
-pub fn sim_grade_zero() -> Vec<u8> {
+pub fn flat_road_simulation() -> Vec<u8> {
     let wind = 0i16.to_le_bytes();
     let grade = 0i16.to_le_bytes();
-    vec![CP_SET_INDOOR_BIKE_SIM, wind[0], wind[1], grade[0], grade[1], 40, 51]
+    vec![
+        CP_SET_INDOOR_BIKE_SIM,
+        wind[0],
+        wind[1],
+        grade[0],
+        grade[1],
+        40,
+        51,
+    ]
+}
+
+/// A control-point indication identifying the request and its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlPointResponse {
+    pub request_opcode: u8,
+    pub result_code: u8,
 }
 
 /// Parse a control-point response indication `[0x80, req_op, result]`.
-/// Returns `(request_opcode, result_code)`.
-pub fn parse_cp_response(data: &[u8]) -> Result<(u8, u8), CodecError> {
+pub fn parse_cp_response(data: &[u8]) -> Result<ControlPointResponse, CodecError> {
     if data.len() < 3 {
-        return Err(CodecError::Short { need: 3, got: data.len() });
+        return Err(CodecError::Short {
+            need: 3,
+            got: data.len(),
+        });
     }
     // data[0] must be 0x80; tolerate and let the caller match request ops.
-    Ok((data[1], data[2]))
+    Ok(ControlPointResponse {
+        request_opcode: data[1],
+        result_code: data[2],
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -85,10 +104,14 @@ pub fn parse_cp_response(data: &[u8]) -> Result<(u8, u8), CodecError> {
 
 /// Flag-walking parser per SPEC §4.2: fields appear in bit order when set;
 /// never assume fixed offsets. Unused fields are skipped by size.
-pub fn parse_indoor_bike_data(data: &[u8]) -> Result<TrainerData, CodecError> {
+pub fn parse_indoor_bike_data(data: &[u8]) -> Result<TrainerMeasurement, CodecError> {
     let mut r = Reader::new(data);
     let flags = r.u16()?;
-    let mut out = TrainerData { power_w: None, cadence_rpm: None, speed_kmh: None };
+    let mut out = TrainerMeasurement {
+        power_w: None,
+        cadence_rpm: None,
+        speed_kmh: None,
+    };
 
     // Bit 0 ("More Data") INVERTED: instantaneous speed present when 0.
     if flags & (1 << 0) == 0 {
@@ -159,7 +182,10 @@ impl<'a> Reader<'a> {
     }
     fn take(&mut self, n: usize) -> Result<&'a [u8], CodecError> {
         if self.pos + n > self.data.len() {
-            return Err(CodecError::Short { need: self.pos + n, got: self.data.len() });
+            return Err(CodecError::Short {
+                need: self.pos + n,
+                got: self.data.len(),
+            });
         }
         let s = &self.data[self.pos..self.pos + n];
         self.pos += n;
@@ -188,15 +214,23 @@ mod tests {
     #[test]
     fn cp_builders() {
         assert_eq!(request_control(), [0x00]);
+        assert_eq!(reset_trainer(), [0x01]);
         assert_eq!(set_target_power(220), [0x05, 220, 0]);
         assert_eq!(set_target_power(300), [0x05, 0x2C, 0x01]);
-        assert_eq!(pause(), [0x08, 0x02]);
-        assert_eq!(sim_grade_zero(), [0x11, 0, 0, 0, 0, 40, 51]);
+        assert_eq!(start_or_resume_training(), [0x07]);
+        assert_eq!(pause_training(), [0x08, 0x02]);
+        assert_eq!(flat_road_simulation(), [0x11, 0, 0, 0, 0, 40, 51]);
     }
 
     #[test]
     fn cp_response_parses_and_rejects_short() {
-        assert_eq!(parse_cp_response(&[0x80, 0x05, 0x01]), Ok((0x05, 0x01)));
+        assert_eq!(
+            parse_cp_response(&[0x80, 0x05, 0x01]),
+            Ok(ControlPointResponse {
+                request_opcode: CP_SET_TARGET_POWER,
+                result_code: CP_RESULT_SUCCESS,
+            })
+        );
         assert!(parse_cp_response(&[0x80, 0x05]).is_err());
     }
 

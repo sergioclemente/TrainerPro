@@ -444,14 +444,13 @@ pub async fn start_scan(app: AppHandle, state: State<'_, AppState>, role: String
 
 #[tauri::command]
 pub async fn connect_device(
-    app: AppHandle,
     state: State<'_, AppState>,
     role: String,
     platform_id: String,
     name: Option<String>,
 ) -> R<()> {
     let role_e = role_from(&role)?;
-    let dev_name = state.hub.connect(&app, role_e, &platform_id).await?;
+    let dev_name = state.hub.connect(role_e, &platform_id).await?;
     let conn = state.db.lock().unwrap();
     conn.execute(
         "INSERT INTO devices(role, platform_id, name, last_connected_at)
@@ -464,14 +463,14 @@ pub async fn connect_device(
 }
 
 #[tauri::command]
-pub async fn disconnect_device(app: AppHandle, state: State<'_, AppState>, role: String) -> R<()> {
-    state.hub.disconnect(&app, role_from(&role)?).await;
+pub async fn disconnect_device(state: State<'_, AppState>, role: String) -> R<()> {
+    state.hub.disconnect(role_from(&role)?).await?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn forget_device(app: AppHandle, state: State<'_, AppState>, role: String) -> R<()> {
-    state.hub.disconnect(&app, role_from(&role)?).await;
+pub async fn forget_device(state: State<'_, AppState>, role: String) -> R<()> {
+    state.hub.disconnect(role_from(&role)?).await?;
     let conn = state.db.lock().unwrap();
     conn.execute("DELETE FROM devices WHERE role = ?1", [&role])?;
     Ok(())
@@ -489,7 +488,7 @@ pub async fn get_device_state(state: State<'_, AppState>) -> R<Vec<DeviceSlot>> 
     };
     let find = |role: &str| saved.iter().find(|(r, _, _)| r == role);
     let trainer_connected = state.hub.trainer_connected();
-    let hrm_connected = state.hub.hrm_connected();
+    let hrm_connected = state.hub.heart_rate_monitor_connected();
     Ok(vec![
         DeviceSlot {
             role: Role::Trainer,

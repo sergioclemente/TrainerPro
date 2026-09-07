@@ -7,13 +7,16 @@
 mod cache;
 mod cmd;
 mod db;
+mod device;
 mod err;
+mod heart_rate_monitor;
 mod hub;
 mod planner;
 mod runtime;
 mod sources;
 mod woz;
 mod state;
+mod trainer;
 
 use tauri::Manager;
 
@@ -34,10 +37,12 @@ fn main() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let conn = db::open(&data_dir.join("trainerpro.sqlite3"))?;
+            let hub = hub::DeviceHub::default();
+            hub.start_event_forwarders(app.handle().clone());
             app.manage(AppState {
                 db: std::sync::Mutex::new(conn),
                 data_dir,
-                hub: hub::DeviceHub::default(),
+                hub,
                 player: tokio::sync::Mutex::new(None),
                 planner_cache: std::sync::Mutex::new(Vec::new()),
                 planner_previews: std::sync::Mutex::new(std::collections::HashMap::new()),

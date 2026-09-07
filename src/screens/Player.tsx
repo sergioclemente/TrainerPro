@@ -38,7 +38,7 @@ function Stat({
 }
 
 export default function Player() {
-  const { player, telemetry, textEvent, workouts, settings, go, pushToast } = useStore();
+  const { player, measurement, textEvent, workouts, settings, go, pushToast } = useStore();
   /** Both clocks show elapsed by default; clicking one toggles it to remaining. */
   const [showRemaining, setShowRemaining] = useState(false);
   const [showIntervalRemaining, setShowIntervalRemaining] = useState(false);
@@ -150,7 +150,7 @@ export default function Player() {
   }
 
   const workout = workouts.find((w) => w.id === player.workout_id);
-  const power = telemetry?.power_smoothed_3s ?? telemetry?.power ?? null;
+  const power = measurement?.power_smoothed_3s_w ?? measurement?.power_w ?? null;
   const target = player.target;
   const weight = settings?.profile.weight_kg ?? null;
   const wkg =
@@ -172,7 +172,7 @@ export default function Player() {
   // Live EF, the same shape as the W/kg beside it: what the ratio is right now,
   // off the displayed (3 s smoothed) watts. The session figure — NP over average
   // HR — is the one in the stats strip.
-  const hr = telemetry?.hr ?? null;
+  const hr = measurement?.heart_rate_bpm ?? null;
   const liveEf = power !== null && hr !== null && hr > 0 ? (power / hr).toFixed(2) : null;
   /** The interval's prescribed cadence, when the ZWO named one. */
   const targetCadence = segment?.cadence_rpm ?? null;
@@ -192,7 +192,7 @@ export default function Player() {
       return;
     try {
       const summary = await ipc.endRide();
-      useStore.setState({ summary, screen: "summary", player: null, telemetry: null });
+      useStore.setState({ summary, screen: "summary", player: null, measurement: null });
       void useStore.getState().refreshRides();
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
@@ -243,7 +243,7 @@ export default function Player() {
           </span>
         </div>
         <div className="metric">
-          <span className="metric-value">{telemetry?.cadence ?? "–"}</span>
+          <span className="metric-value">{measurement?.cadence_rpm ?? "–"}</span>
           <span className="metric-sub">
             {targetCadence !== null ? `target ${targetCadence} rpm` : ""}
           </span>

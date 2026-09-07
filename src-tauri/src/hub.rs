@@ -1,83 +1,79 @@
-//! Device hub: owns the connected trainer/HRM slots and the reconnect
-//! policy (SPEC.md §4.4 — schedule in tp_core::consts). Simulator devices
-//! are always offered in scans so the app runs without hardware.
+//! Device coordination: shared Bluetooth discovery plus long-lived trainer
+//! and heart-rate owners. Reconnect policy belongs to those role-specific owners.
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::{watch, OnceCell};
 use tracing::{info, warn};
 
 use tp_ble::sim::{SimHrm, SimTrainer, SIM_HRM_ID, SIM_TRAINER_ID};
-use tp_ble::{
-    BleError, DeviceManager, DeviceStatus, HeartRateMonitor, Role, ScanResult, Trainer,
-};
-use tp_core::consts::{RECONNECT_SCHEDULE_S, RECONNECT_STEADY_S};
+use tp_ble::{BleError, DeviceManager, HeartRateConnection, Role, ScanResult, TrainerConnection};
 
+use crate::device::DeviceStatus;
+use crate::heart_rate_monitor::{HeartRateConnector, HeartRateMonitor};
 use crate::state::AppState;
+use crate::trainer::{Trainer, TrainerConnector};
+
+const SCAN_DURATION_S: u64 = 10;
+const DEVICE_MEASUREMENT_INTERVAL_S: u64 = 1;
+const STARTUP_RECONNECT_DELAY_MS: u64 = 1_500;
+const STARTUP_RECONNECT_ATTEMPTS: u32 = 2;
+const STARTUP_RECONNECT_RETRY_S: u64 = 5;
+
+struct TrainerConnections {
+    manager: Arc<DeviceManager>,
+}
+
+#[async_trait]
+impl TrainerConnector for TrainerConnections {
+    async fn connect(&self, platform_id: &str) -> Result<Box<dyn TrainerConnection>, BleError> {
+        if platform_id == SIM_TRAINER_ID {
+            self.manager.cancel_scan().await;
+            return Ok(Box::new(SimTrainer::new()));
+        }
+        Ok(Box::new(self.manager.connect_trainer(platform_id).await?))
+    }
+}
+
+struct HeartRateConnections {
+    manager: Arc<DeviceManager>,
+    trainer: Trainer,
+}
+
+#[async_trait]
+impl HeartRateConnector for HeartRateConnections {
+    async fn connect(&self, platform_id: &str) -> Result<Box<dyn HeartRateConnection>, BleError> {
+        if platform_id == SIM_HRM_ID {
+            self.manager.cancel_scan().await;
+            return Ok(Box::new(SimHrm::new(self.trainer.measurement_stream())));
+        }
+        Ok(Box::new(self.manager.connect_hrm(platform_id).await?))
+    }
+}
 
 pub struct DeviceHub {
-    manager: OnceCell<DeviceManager>,
-    trainer: DeviceSlot<dyn Trainer>,
-    hrm: DeviceSlot<dyn HeartRateMonitor>,
-    /// Control block of the in-flight scan, if any. Connecting while a scan
-    /// polls the same peripheral races btleplug's CoreBluetooth futures
-    /// (observed panic: "We should still have a future at this point!"), so
-    /// connects cancel the scan and wait for it to wind down first.
-    scan_ctl: std::sync::Mutex<Option<Arc<ScanCtl>>>,
-    /// Per-role connect-in-progress guard: a double-click used to launch two
-    /// concurrent connects to the same peripheral, racing btleplug's
-    /// CoreBluetooth discovery futures (observed panic, internal.rs:282).
-    busy: [std::sync::atomic::AtomicBool; 2],
-}
-
-/// The hub is the sole owner of the current device for a role. A watch-backed
-/// slot lets an active player follow a successful reconnect without mirroring
-/// connection state: live connectivity still comes from the device's own
-/// `DeviceStatus` stream.
-struct DeviceSlot<T: ?Sized> {
-    current: watch::Sender<Option<Arc<T>>>,
-}
-
-impl<T: ?Sized> Default for DeviceSlot<T> {
-    fn default() -> Self {
-        let (current, _) = watch::channel(None);
-        Self { current }
-    }
-}
-
-impl<T: ?Sized> DeviceSlot<T> {
-    fn get(&self) -> Option<Arc<T>> {
-        self.current.borrow().clone()
-    }
-
-    fn subscribe(&self) -> watch::Receiver<Option<Arc<T>>> {
-        self.current.subscribe()
-    }
-
-    fn replace(&self, device: Option<Arc<T>>) {
-        self.current.send_replace(device);
-    }
+    manager: Arc<DeviceManager>,
+    trainer: Trainer,
+    heart_rate_monitor: HeartRateMonitor,
 }
 
 impl Default for DeviceHub {
     fn default() -> Self {
+        let manager = Arc::new(DeviceManager::new());
+        let trainer = Trainer::new(Arc::new(TrainerConnections {
+            manager: manager.clone(),
+        }));
+        let heart_rate_monitor = HeartRateMonitor::new(Arc::new(HeartRateConnections {
+            manager: manager.clone(),
+            trainer: trainer.clone(),
+        }));
         Self {
-            manager: OnceCell::new(),
-            trainer: DeviceSlot::default(),
-            hrm: DeviceSlot::default(),
-            scan_ctl: std::sync::Mutex::new(None),
-            busy: [
-                std::sync::atomic::AtomicBool::new(false),
-                std::sync::atomic::AtomicBool::new(false),
-            ],
+            manager,
+            trainer,
+            heart_rate_monitor,
         }
     }
-}
-
-struct ScanCtl {
-    stop: Arc<std::sync::atomic::AtomicBool>,
-    running: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -88,8 +84,8 @@ pub struct DeviceStatusPayload {
     pub name: Option<String>,
 }
 
-fn status_str(s: DeviceStatus) -> (String, Option<u32>) {
-    match s {
+fn status_str(status: DeviceStatus) -> (String, Option<u32>) {
+    match status {
         DeviceStatus::Disconnected => ("disconnected".into(), None),
         DeviceStatus::Connecting => ("connecting".into(), None),
         DeviceStatus::Connected => ("connected".into(), None),
@@ -97,55 +93,46 @@ fn status_str(s: DeviceStatus) -> (String, Option<u32>) {
     }
 }
 
-pub fn emit_device_status(
-    app: &AppHandle,
-    role: Role,
-    status: DeviceStatus,
-    name: Option<String>,
-) {
+fn emit_device_status(app: &AppHandle, role: Role, status: DeviceStatus, name: Option<String>) {
     let (status, attempt) = status_str(status);
-    let _ = app.emit("device_status", DeviceStatusPayload { role, status, attempt, name });
+    let _ = app.emit(
+        "device_status",
+        DeviceStatusPayload {
+            role,
+            status,
+            attempt,
+            name,
+        },
+    );
 }
 
 impl DeviceHub {
-    async fn manager(&self) -> Result<&DeviceManager, BleError> {
-        self.manager.get_or_try_init(DeviceManager::new).await
+    pub fn trainer(&self) -> &Trainer {
+        &self.trainer
     }
 
-    pub fn trainer(&self) -> Option<Arc<dyn Trainer>> {
-        self.trainer.get()
+    pub fn heart_rate_monitor(&self) -> &HeartRateMonitor {
+        &self.heart_rate_monitor
     }
 
-    pub fn hrm(&self) -> Option<Arc<dyn HeartRateMonitor>> {
-        self.hrm.get()
-    }
-
-    pub fn trainer_updates(&self) -> watch::Receiver<Option<Arc<dyn Trainer>>> {
-        self.trainer.subscribe()
-    }
-
-    pub fn hrm_updates(&self) -> watch::Receiver<Option<Arc<dyn HeartRateMonitor>>> {
-        self.hrm.subscribe()
-    }
-
-    /// These are cached status reads and never call into the Bluetooth
-    /// transport.
     pub fn trainer_connected(&self) -> bool {
-        self.trainer
-            .get()
-            .as_ref()
-            .is_some_and(|trainer| *trainer.status().borrow() == DeviceStatus::Connected)
+        self.trainer.is_connected()
     }
 
-    pub fn hrm_connected(&self) -> bool {
-        self.hrm
-            .get()
-            .as_ref()
-            .is_some_and(|hrm| *hrm.status().borrow() == DeviceStatus::Connected)
+    pub fn heart_rate_monitor_connected(&self) -> bool {
+        self.heart_rate_monitor.is_connected()
     }
 
-    /// Time-boxed scan; sim entries first, then real devices as found.
-    /// Emits `scan_result` events; returns when the scan window closes.
+    /// Start the application event bridges once. Their subscriptions remain
+    /// valid while the owners replace connections underneath them.
+    pub fn start_event_forwarders(&self, app: AppHandle) {
+        spawn_trainer_state_forwarder(app.clone(), self.trainer.clone());
+        spawn_heart_rate_state_forwarder(app.clone(), self.heart_rate_monitor.clone());
+        spawn_trainer_measurement_forwarder(app.clone(), self.trainer.clone());
+        spawn_heart_rate_measurement_forwarder(app, self.heart_rate_monitor.clone());
+    }
+
+    /// Time-boxed scan; simulator entries appear before physical devices.
     pub async fn scan(&self, app: AppHandle, role: Role) -> Result<(), BleError> {
         let sim = match role {
             Role::Trainer => ScanResult {
@@ -162,196 +149,125 @@ impl DeviceHub {
             },
         };
         let _ = app.emit("scan_result", &sim);
-        let manager = self.manager().await?;
 
-        // Register this scan's control block (cancelling any previous scan).
-        let ctl = Arc::new(ScanCtl {
-            stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            running: std::sync::atomic::AtomicBool::new(true),
-        });
-        {
-            let mut slot = self.scan_ctl.lock().unwrap();
-            if let Some(prev) = slot.take() {
-                prev.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            *slot = Some(ctl.clone());
-        }
-
-        let app2 = app.clone();
-        let result = manager
-            .scan(role, 10, ctl.stop.clone(), move |r| {
-                let _ = app2.emit("scan_result", &r);
+        let app_for_result = app.clone();
+        self.manager
+            .scan(role, SCAN_DURATION_S, move |result| {
+                let _ = app_for_result.emit("scan_result", &result);
             })
-            .await;
-        ctl.running.store(false, std::sync::atomic::Ordering::Relaxed);
-        result
+            .await
     }
 
-    /// Cancel any in-flight scan and wait (bounded) for its loop to exit, so
-    /// no scan-poll interleaves with the upcoming connect.
-    async fn quiesce_scan(&self) {
-        let ctl = self.scan_ctl.lock().unwrap().take();
-        if let Some(ctl) = ctl {
-            ctl.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-            for _ in 0..40 {
-                if !ctl.running.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-        }
-    }
-
-    pub async fn connect(
-        &self,
-        app: &AppHandle,
-        role: Role,
-        platform_id: &str,
-    ) -> Result<String, BleError> {
-        use std::sync::atomic::Ordering;
-        let idx = match role {
-            Role::Trainer => 0,
-            Role::Hrm => 1,
-        };
-        if self.busy[idx].swap(true, Ordering::SeqCst) {
-            return Err(BleError::Transport(
-                "a connection attempt is already in progress".into(),
-            ));
-        }
-        let result = self.connect_inner(app, role, platform_id).await;
-        self.busy[idx].store(false, Ordering::SeqCst);
-        if result.is_err() {
-            emit_device_status(app, role, DeviceStatus::Disconnected, None);
-        }
-        result
-    }
-
-    async fn connect_inner(
-        &self,
-        app: &AppHandle,
-        role: Role,
-        platform_id: &str,
-    ) -> Result<String, BleError> {
-        emit_device_status(app, role, DeviceStatus::Connecting, None);
-        self.quiesce_scan().await;
-        let name = match role {
-            Role::Trainer => {
-                let trainer: Arc<dyn Trainer> = if platform_id == SIM_TRAINER_ID {
-                    Arc::new(SimTrainer::new())
-                } else {
-                    Arc::new(self.manager().await?.connect_trainer(platform_id).await?)
-                };
-                let name = trainer.name();
-                spawn_status_forwarder(app.clone(), role, trainer.status(), name.clone());
-                spawn_trainer_reading_forwarder(app.clone(), trainer.telemetry());
-                if platform_id != SIM_TRAINER_ID {
-                    spawn_trainer_reconnector(
-                        app.clone(),
-                        platform_id.to_string(),
-                        trainer.status(),
-                    );
-                }
-                self.trainer.replace(Some(trainer));
-                name
-            }
-            Role::Hrm => {
-                let hrm: Arc<dyn HeartRateMonitor> = if platform_id == SIM_HRM_ID {
-                    // Model effort off the connected trainer when present.
-                    let rx = match self.trainer.get().as_ref() {
-                        Some(t) => t.telemetry(),
-                        None => tokio::sync::broadcast::channel(1).0.subscribe(),
-                    };
-                    Arc::new(SimHrm::new(rx))
-                } else {
-                    Arc::new(self.manager().await?.connect_hrm(platform_id).await?)
-                };
-                let name = hrm.name();
-                spawn_status_forwarder(app.clone(), role, hrm.status(), name.clone());
-                spawn_hrm_reading_forwarder(app.clone(), hrm.heart_rate());
-                if platform_id != SIM_HRM_ID {
-                    spawn_hrm_reconnector(app.clone(), platform_id.to_string(), hrm.status());
-                }
-                self.hrm.replace(Some(hrm));
-                name
-            }
-        };
-        emit_device_status(app, role, DeviceStatus::Connected, Some(name.clone()));
-        Ok(name)
-    }
-
-    pub async fn disconnect(&self, app: &AppHandle, role: Role) {
+    pub async fn connect(&self, role: Role, platform_id: &str) -> Result<String, BleError> {
         match role {
-            Role::Trainer => self.trainer.replace(None),
-            Role::Hrm => self.hrm.replace(None),
+            Role::Trainer => self.trainer.connect(platform_id).await,
+            Role::Hrm => self.heart_rate_monitor.connect(platform_id).await,
         }
-        emit_device_status(app, role, DeviceStatus::Disconnected, None);
+    }
+
+    pub async fn disconnect(&self, role: Role) -> Result<(), BleError> {
+        match role {
+            Role::Trainer => self.trainer.disconnect().await,
+            Role::Hrm => self.heart_rate_monitor.disconnect().await,
+        }
     }
 }
 
-/// Live reading ticker for the Devices screen: latest trainer power/cadence
-/// at 1 Hz while connected; a final null reading on disconnect. Exits when
-/// the driver (broadcast sender) is dropped.
-fn spawn_trainer_reading_forwarder(
-    app: AppHandle,
-    mut rx: tokio::sync::broadcast::Receiver<tp_ble::TrainerData>,
-) {
-    use tokio::sync::broadcast::error::RecvError;
+fn spawn_trainer_state_forwarder(app: AppHandle, trainer: Trainer) {
+    let mut state_rx = trainer.subscribe_state();
     tokio::spawn(async move {
-        let mut latest: Option<tp_ble::TrainerData> = None;
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        while state_rx.changed().await.is_ok() {
+            let state = state_rx.borrow_and_update().clone();
+            let is_connected = state.is_connected();
+            emit_device_status(&app, Role::Trainer, state.status, state.name);
+            if !is_connected {
+                let _ = app.emit(
+                    "device_measurement",
+                    serde_json::json!({
+                        "role": "trainer", "power_w": null, "cadence_rpm": null,
+                    }),
+                );
+            }
+        }
+    });
+}
+
+fn spawn_heart_rate_state_forwarder(app: AppHandle, monitor: HeartRateMonitor) {
+    let mut state_rx = monitor.subscribe_state();
+    tokio::spawn(async move {
+        while state_rx.changed().await.is_ok() {
+            let state = state_rx.borrow_and_update().clone();
+            let is_connected = state.is_connected();
+            emit_device_status(&app, Role::Hrm, state.status, state.name);
+            if !is_connected {
+                let _ = app.emit(
+                    "device_measurement",
+                    serde_json::json!({
+                        "role": "hrm", "heart_rate_bpm": null,
+                    }),
+                );
+            }
+        }
+    });
+}
+
+/// Latest trainer measurement for the Devices screen, sampled at 1 Hz.
+fn spawn_trainer_measurement_forwarder(app: AppHandle, trainer: Trainer) {
+    let mut measurements = trainer.subscribe_measurements();
+    let state = trainer.subscribe_state();
+    tokio::spawn(async move {
+        let mut latest = None;
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(
+            DEVICE_MEASUREMENT_INTERVAL_S,
+        ));
         loop {
             tokio::select! {
-                r = rx.recv() => match r {
-                    Ok(d) => latest = Some(d),
-                    Err(RecvError::Lagged(_)) => {}
-                    Err(RecvError::Closed) => break,
+                result = measurements.recv() => match result {
+                    Ok(sample) if state.borrow().accepts(&sample) => latest = Some(sample),
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                 },
                 _ = tick.tick() => {
-                    if let Some(d) = &latest {
-                        let _ = app.emit("device_reading", serde_json::json!({
+                    if let Some(sample) = latest.filter(|sample| state.borrow().accepts(sample)) {
+                        let measurement = sample.value;
+                        let _ = app.emit("device_measurement", serde_json::json!({
                             "role": "trainer",
-                            "power": d.power_w,
-                            "cadence": d.cadence_rpm.map(|c| c.round() as u16),
+                            "power_w": measurement.power_w,
+                            "cadence_rpm": measurement.cadence_rpm.map(|rpm| rpm.round() as u16),
                         }));
                     }
                 }
             }
         }
-        let _ = app.emit("device_reading", serde_json::json!({
-            "role": "trainer", "power": null, "cadence": null,
-        }));
     });
 }
 
-fn spawn_hrm_reading_forwarder(
-    app: AppHandle,
-    mut rx: tokio::sync::broadcast::Receiver<tp_ble::HrData>,
-) {
-    use tokio::sync::broadcast::error::RecvError;
+fn spawn_heart_rate_measurement_forwarder(app: AppHandle, monitor: HeartRateMonitor) {
+    let mut measurements = monitor.subscribe_measurements();
+    let state = monitor.subscribe_state();
     tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(d) => {
-                    let _ = app.emit("device_reading", serde_json::json!({
-                        "role": "hrm", "hr": d.bpm,
-                    }));
+            match measurements.recv().await {
+                Ok(sample) if state.borrow().accepts(&sample) => {
+                    let _ = app.emit(
+                        "device_measurement",
+                        serde_json::json!({
+                            "role": "hrm", "heart_rate_bpm": sample.value.bpm,
+                        }),
+                    );
                 }
-                Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => break,
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             }
         }
-        let _ = app.emit("device_reading", serde_json::json!({ "role": "hrm", "hr": null }));
     });
 }
 
-/// SPEC §4.4: on app start, silently reconnect saved devices. Trainer
-/// first (the sim HRM models effort off trainer telemetry), two attempts
-/// each; connect_trainer/_hrm already scan-until-found internally. Gives up
-/// quietly — the Devices screen still offers manual Connect.
+/// On startup, try the saved devices in trainer-then-HRM order. Once an
+/// initial connection succeeds, each owner maintains its own reconnect loop.
 pub fn spawn_startup_reconnect(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        // Let the BLE adapter and webview settle before scanning.
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(STARTUP_RECONNECT_DELAY_MS)).await;
         let state = app.state::<AppState>();
         let mut saved: Vec<(String, String)> = {
             let conn = state.db.lock().unwrap();
@@ -359,157 +275,85 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
                 return;
             };
             match stmt
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
             {
-                Ok(v) => v,
+                Ok(saved) => saved,
                 Err(_) => return,
             }
         };
         saved.sort_by_key(|(role, _)| if role == "trainer" { 0 } else { 1 });
-        for (role_s, pid) in saved {
-            let role = match role_s.as_str() {
+
+        for (role_name, platform_id) in saved {
+            let role = match role_name.as_str() {
                 "trainer" => Role::Trainer,
                 "hrm" => Role::Hrm,
                 _ => continue,
             };
-            let already = match role {
-                Role::Trainer => state.hub.trainer().is_some(),
-                Role::Hrm => state.hub.hrm().is_some(),
+            let initial_state = match role {
+                Role::Trainer => state.hub.trainer().state(),
+                Role::Hrm => state.hub.heart_rate_monitor().state(),
             };
-            if already {
+            // Any earlier user action owns this role, including an explicit
+            // disconnect. Startup recovery must never supersede it.
+            if initial_state.generation != 0 || initial_state.platform_id.is_some() {
                 continue;
             }
-            for attempt in 1..=2u32 {
-                match state.hub.connect(&app, role, &pid).await {
+            let mut expected_generation = initial_state.generation;
+            for attempt in 1..=STARTUP_RECONNECT_ATTEMPTS {
+                let owner_state = match role {
+                    Role::Trainer => state.hub.trainer().state(),
+                    Role::Hrm => state.hub.heart_rate_monitor().state(),
+                };
+                if owner_state.is_connected()
+                    || owner_state.generation != expected_generation
+                    || (attempt == 1 && owner_state.platform_id.is_some())
+                    || (attempt > 1
+                        && owner_state.platform_id.as_deref() != Some(platform_id.as_str()))
+                {
+                    break;
+                }
+                let result = match role {
+                    Role::Trainer => {
+                        state
+                            .hub
+                            .trainer()
+                            .connect_if_generation(&platform_id, owner_state.generation)
+                            .await
+                    }
+                    Role::Hrm => {
+                        state
+                            .hub
+                            .heart_rate_monitor()
+                            .connect_if_generation(&platform_id, owner_state.generation)
+                            .await
+                    }
+                };
+                match result {
                     Ok(name) => {
-                        info!("startup reconnect: {role_s} \"{name}\" connected");
+                        info!("startup reconnect: {role_name} \"{name}\" connected");
                         break;
                     }
-                    Err(e) => {
-                        warn!("startup reconnect {role_s} attempt {attempt} failed: {e}");
-                        if attempt < 2 {
-                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    Err(error) => {
+                        warn!("startup reconnect {role_name} attempt {attempt} failed: {error}");
+                        if attempt < STARTUP_RECONNECT_ATTEMPTS {
+                            let failed_state = match role {
+                                Role::Trainer => state.hub.trainer().state(),
+                                Role::Hrm => state.hub.heart_rate_monitor().state(),
+                            };
+                            if failed_state.platform_id.as_deref() != Some(platform_id.as_str()) {
+                                break;
+                            }
+                            expected_generation = failed_state.generation;
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                STARTUP_RECONNECT_RETRY_S,
+                            ))
+                            .await;
                         }
                     }
                 }
-            }
-        }
-    });
-}
-
-/// Forward driver status changes to the UI event stream.
-fn spawn_status_forwarder(
-    app: AppHandle,
-    role: Role,
-    mut status: tokio::sync::watch::Receiver<DeviceStatus>,
-    name: String,
-) {
-    tokio::spawn(async move {
-        while status.changed().await.is_ok() {
-            let s = *status.borrow();
-            emit_device_status(&app, role, s, Some(name.clone()));
-            if s == DeviceStatus::Disconnected {
-                break;
-            }
-        }
-    });
-}
-
-/// Trainer auto-reconnect per SPEC §4.4: on drop, retry on the schedule
-/// (0/1/2/5/10 s then every 15 s) until the slot is replaced, the user
-/// disconnects, or a new device connects. The player runtime auto-pauses
-/// independently by watching the same status channel.
-fn spawn_trainer_reconnector(
-    app: AppHandle,
-    platform_id: String,
-    mut status: tokio::sync::watch::Receiver<DeviceStatus>,
-) {
-    tokio::spawn(async move {
-        // Wait for the drop.
-        loop {
-            if *status.borrow() == DeviceStatus::Disconnected {
-                break;
-            }
-            if status.changed().await.is_err() {
-                break;
-            }
-        }
-        let state = app.state::<AppState>();
-        let mut attempt: u32 = 0;
-        loop {
-            // Stop if the user cleared or replaced the slot meanwhile.
-            match state.hub.trainer() {
-                None => return,
-                Some(t) if *t.status().borrow() == DeviceStatus::Connected => return,
-                Some(_) => {}
-            }
-            let delay = RECONNECT_SCHEDULE_S
-                .get(attempt as usize)
-                .copied()
-                .unwrap_or(RECONNECT_STEADY_S);
-            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-            attempt += 1;
-            emit_device_status(
-                &app,
-                Role::Trainer,
-                DeviceStatus::Reconnecting { attempt },
-                None,
-            );
-            match state.hub.connect(&app, Role::Trainer, &platform_id).await {
-                Ok(name) => {
-                    info!("trainer reconnected: {name}");
-                    return; // connect() spawned a fresh reconnector.
-                }
-                Err(e) => warn!("reconnect attempt {attempt} failed: {e}"),
-            }
-        }
-    });
-}
-
-/// HRM reconnect follows the same schedule as the trainer, but it never
-/// pauses the player. Keeping this role-specific avoids hiding different
-/// device behavior behind a common connection wrapper.
-fn spawn_hrm_reconnector(
-    app: AppHandle,
-    platform_id: String,
-    mut status: tokio::sync::watch::Receiver<DeviceStatus>,
-) {
-    tokio::spawn(async move {
-        loop {
-            if *status.borrow() == DeviceStatus::Disconnected {
-                break;
-            }
-            if status.changed().await.is_err() {
-                break;
-            }
-        }
-        let state = app.state::<AppState>();
-        let mut attempt: u32 = 0;
-        loop {
-            match state.hub.hrm() {
-                None => return,
-                Some(h) if *h.status().borrow() == DeviceStatus::Connected => return,
-                Some(_) => {}
-            }
-            let delay = RECONNECT_SCHEDULE_S
-                .get(attempt as usize)
-                .copied()
-                .unwrap_or(RECONNECT_STEADY_S);
-            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-            attempt += 1;
-            emit_device_status(
-                &app,
-                Role::Hrm,
-                DeviceStatus::Reconnecting { attempt },
-                None,
-            );
-            match state.hub.connect(&app, Role::Hrm, &platform_id).await {
-                Ok(name) => {
-                    info!("hrm reconnected: {name}");
-                    return;
-                }
-                Err(e) => warn!("hrm reconnect attempt {attempt} failed: {e}"),
             }
         }
     });
@@ -520,44 +364,14 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn device_fault_and_replacement_reach_existing_subscribers() {
+    async fn owners_start_disconnected() {
         let hub = DeviceHub::default();
-        let trainer = Arc::new(SimTrainer::new());
-        let hrm = Arc::new(SimHrm::new(trainer.telemetry()));
-        hub.trainer.replace(Some(trainer.clone()));
-        hub.hrm.replace(Some(hrm.clone()));
-
-        assert!(hub.trainer_connected());
-        assert!(hub.hrm_connected());
-
-        let mut trainer_status = trainer.status();
-        let mut hrm_status = hrm.status();
-        let mut trainer_updates = hub.trainer_updates();
-        let mut hrm_updates = hub.hrm_updates();
-
-        trainer.inject_disconnect();
-        hrm.inject_disconnect();
-        trainer_status.changed().await.unwrap();
-        hrm_status.changed().await.unwrap();
-        assert_eq!(*trainer_status.borrow(), DeviceStatus::Disconnected);
-        assert_eq!(*hrm_status.borrow(), DeviceStatus::Disconnected);
         assert!(!hub.trainer_connected());
-        assert!(!hub.hrm_connected());
-
-        let replacement_trainer_impl = Arc::new(SimTrainer::new());
-        let replacement_hrm_impl = Arc::new(SimHrm::new(replacement_trainer_impl.telemetry()));
-        let replacement_trainer: Arc<dyn Trainer> = replacement_trainer_impl;
-        let replacement_hrm: Arc<dyn HeartRateMonitor> = replacement_hrm_impl;
-        hub.trainer.replace(Some(replacement_trainer.clone()));
-        hub.hrm.replace(Some(replacement_hrm.clone()));
-
-        trainer_updates.changed().await.unwrap();
-        hrm_updates.changed().await.unwrap();
-        let observed_trainer = trainer_updates.borrow().clone().unwrap();
-        let observed_hrm = hrm_updates.borrow().clone().unwrap();
-        assert!(Arc::ptr_eq(&observed_trainer, &replacement_trainer));
-        assert!(Arc::ptr_eq(&observed_hrm, &replacement_hrm));
-        assert!(hub.trainer_connected());
-        assert!(hub.hrm_connected());
+        assert!(!hub.heart_rate_monitor_connected());
+        assert_eq!(hub.trainer().state().status, DeviceStatus::Disconnected);
+        assert_eq!(
+            hub.heart_rate_monitor().state().status,
+            DeviceStatus::Disconnected
+        );
     }
 }
