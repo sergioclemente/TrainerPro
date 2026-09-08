@@ -20,9 +20,9 @@ use tp_core::journal::{
 use tp_core::metrics::{normalized_power, session_totals, tss};
 use tp_core::model::Workout;
 
-use crate::err::AppError;
+use crate::app_error::AppError;
 use crate::heart_rate_monitor::HeartRateMonitor;
-use crate::state::{now_unix_ms, AppState};
+use crate::app_state::{now_unix_ms, AppState};
 use crate::trainer::Trainer;
 
 const PLAYER_COMMAND_CAPACITY: usize = 16;

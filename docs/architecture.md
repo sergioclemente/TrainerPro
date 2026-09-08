@@ -22,7 +22,7 @@ flowchart TD
     end
 
     ZWO["ZWO text<br/>the interchange format"]
-    PIPE["sources::ride_from_zwo<br/>import + sha256 dedup<br/>provenance tag: origin, origin_ref"]
+    PIPE["workout_sources::ride_from_zwo<br/>import + sha256 dedup<br/>provenance tag: origin, origin_ref"]
     LIB[("Workout library<br/>files + SQLite")]
     PLAYER["Player runtime"]
     FIT["FIT file to Garmin Connect"]
@@ -39,13 +39,13 @@ flowchart TD
 
 Adding a source = one frontend tab component registered in `frontend/sources.ts`,
 plus a backend module that produces ZWO text and calls
-`sources::ride_from_zwo`. Provenance columns (`origin`, `origin_ref`) tag
+`workout_sources::ride_from_zwo`. Provenance columns (`origin`, `origin_ref`) tag
 imported rows so the library shows badges and future features (results
 push-back, re-sync) know where a workout came from.
 
 ## Device connection lifecycle
 
-`Trainer` and `HeartRateMonitor` are stable tp-app owners. A BLE or simulated
+`Trainer` and `HeartRateMonitor` are stable backend owners. A BLE or simulated
 driver implements the corresponding one-link connection trait. Connection
 replacement and retry state stay private to the owner, so the player and UI
 subscribe once and never receive an optional connection object.
@@ -117,7 +117,7 @@ sequenceDiagram
 |---|---|---|---|
 | Shell / webview | WKWebView | WebView2 (bootstrapper via NSIS) | Tauri 2 config |
 | BLE | CoreBluetooth via btleplug | WinRT via btleplug | drivers + traits unchanged |
-| Everything else | — | — | 100 % shared (tp-core, tp-app, frontend) |
+| Everything else | — | — | 100 % shared (tp-core, backend, frontend) |
 
 Windows-specific work is validation, not architecture: btleplug's WinRT
 backend has its own timing personality (the CoreBluetooth race-guards we

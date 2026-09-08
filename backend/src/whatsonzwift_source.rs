@@ -11,10 +11,10 @@ use tauri_plugin_opener::OpenerExt;
 
 use tp_core::model::{PowerTarget, Segment, SourceFormat, Workout};
 
-use crate::err::AppError;
-use crate::runtime::PlayerState;
-use crate::sources;
-use crate::state::AppState;
+use crate::app_error::AppError;
+use crate::player_runtime::PlayerState;
+use crate::workout_sources as sources;
+use crate::app_state::AppState;
 
 const BASE: &str = "https://whatsonzwift.com";
 const UA: &str = "TrainerPro/0.1 (+https://github.com/sergioclemente/TrainerPro)";
@@ -36,7 +36,7 @@ pub struct WozWorkout {
     pub est_if: f64,
     pub est_tss: f64,
     pub graph: Vec<(u32, f64)>,
-    pub segments: Vec<crate::cmd::SegmentRow>,
+    pub segments: Vec<crate::commands::workout::SegmentRow>,
 }
 
 async fn fetch(path: &str) -> Result<String, AppError> {
@@ -304,18 +304,18 @@ pub fn parse_collection_page(html: &str) -> Vec<(String, Workout)> {
 // Commands
 // ---------------------------------------------------------------------------
 
-fn db_get(state: &State<'_, AppState>, key: &str) -> Option<crate::cache::Cached> {
+fn db_get(state: &State<'_, AppState>, key: &str) -> Option<crate::workout_source_cache::Cached> {
     let conn = state.db.lock().unwrap();
-    crate::cache::get(&conn, "woz", key)
+    crate::workout_source_cache::get(&conn, "woz", key)
 }
 
 fn db_put(state: &State<'_, AppState>, key: &str, value: &str) {
     let conn = state.db.lock().unwrap();
-    crate::cache::put(&conn, "woz", key, None, value, crate::state::now_unix_ms() as i64);
+    crate::workout_source_cache::put(&conn, "woz", key, None, value, crate::app_state::now_unix_ms() as i64);
 }
 
-fn fresh(c: &crate::cache::Cached) -> bool {
-    (crate::state::now_unix_ms() as i64) - c.fetched_at_ms < TTL_MS
+fn fresh(c: &crate::workout_source_cache::Cached) -> bool {
+    (crate::app_state::now_unix_ms() as i64) - c.fetched_at_ms < TTL_MS
 }
 
 /// Cached-first with 1 h TTL; `force` (the Sync button) always refetches.
@@ -424,8 +424,8 @@ pub async fn woz_workouts(
                 duration_s: w.duration_s(),
                 est_if,
                 est_tss,
-                graph: crate::cmd::graph_points(&w, ftp),
-                segments: crate::cmd::segment_rows(&w, ftp),
+                graph: crate::commands::workout::graph_points(&w, ftp),
+                segments: crate::commands::workout::segment_rows(&w, ftp),
             };
             (w, meta)
         })

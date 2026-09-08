@@ -1,6 +1,6 @@
 //! Ride journal: JSONL line types, writer/reader over caller-supplied
-//! `io::Write`/`io::Read` (tp-core stays I/O-agnostic; tp-app opens the file
-//! and fsyncs). SPEC.md §6.
+//! `io::Write`/`io::Read` (tp-core stays I/O-agnostic; the backend opens the
+//! file and fsyncs). SPEC.md §6.
 //!
 //! Line format (exactly one JSON object per line, short keys):
 //!   {"h":{...header...}}
@@ -123,7 +123,8 @@ enum LineRef<'a> {
 }
 
 /// Appends lines to a caller-supplied writer. The caller is responsible for
-/// opening the file and calling `flush`/fsync policy (tp-app fsyncs per line).
+/// opening the file and calling `flush`/fsync policy (the backend fsyncs per
+/// line).
 pub struct JournalWriter<W: io::Write> {
     inner: W,
 }

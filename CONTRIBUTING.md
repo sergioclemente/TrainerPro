@@ -51,7 +51,7 @@ Two invariants keep this codebase testable. PRs that break them will be asked
 to restructure, however good the feature is:
 
 1. **`tp-core` stays zero-I/O, zero-async, zero-BLE/Tauri.** If your change
-   needs I/O, a clock, or a network, it belongs in `tp-app` (the Tauri crate);
+   needs I/O, a clock, or a network, it belongs in the `backend` Tauri crate;
    `tp-core` gets the pure logic and the tests.
 2. **Hardware only behind the `TrainerConnection` / `HeartRateConnection` traits**
    (`crates/tp-ble/src/traits.rs`). If the simulator can't exercise your
@@ -60,7 +60,7 @@ to restructure, however good the feature is:
 Two conventions worth knowing:
 
 - **ZWO is the interchange format.** Every workout source ultimately produces
-  ZWO text and funnels through `sources::ride_from_zwo` — sources never touch
+  ZWO text and funnels through `workout_sources::ride_from_zwo` — sources never touch
   import, database, or player code directly.
 - **The UI is push-only.** The frontend never polls; state arrives via the
   Tauri event stream (see `wireEvents()` in `frontend/state.ts`).
@@ -68,7 +68,8 @@ Two conventions worth knowing:
 ## Adding a workout source
 
 1. Backend: a module that produces ZWO text and calls
-   `sources::ride_from_zwo` (see `planner.rs` / `woz.rs` as examples).
+   `workout_sources::ride_from_zwo` (see `workout_planner_source.rs` /
+   `whatsonzwift_source.rs` as examples).
    Config lives in the schemaless `SourceConfig` bag — no DB migration needed.
 2. Frontend: one tab component + one descriptor appended to
    `frontend/sources.ts`. The Libraries settings form is generated from the

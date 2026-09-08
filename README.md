@@ -52,7 +52,7 @@ flowchart TD
         STORE["zustand store"]
     end
 
-    subgraph APP["tp-app - Rust backend"]
+    subgraph APP["Backend - Rust / Tauri host"]
         IPC["IPC commands + event stream"]
         SOURCES["Workout source plugin layer"]
         RUNTIME["Player runtime<br/>engine ticks / ERG loop / recorder"]
@@ -118,6 +118,7 @@ More detail: [`docs/architecture.md`](docs/architecture.md) (source plugin
 interface, ride data flow, cross-platform notes) ·
 [`docs/SPEC.md`](docs/SPEC.md) (build spec) ·
 [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) (decision records) ·
+[`docs/garmin-access.md`](docs/garmin-access.md) (export integration status) ·
 [`docs/spec-workoutplanner.md`](docs/spec-workoutplanner.md) (planner
 integration).
 
@@ -153,7 +154,7 @@ Devices screen — they appear in every scan and behave like the real thing
 
 ```
 frontend/               React frontend (screens, store, IPC client, sources)
-backend/                tp-app: lifecycle, IPC, I/O, device hub, player runtime
+backend/                lifecycle, IPC, I/O, device hub, player runtime
 crates/tp-core/         pure domain: parsers, engine, metrics, journal, FIT
 crates/tp-ble/          BLE: traits, FTMS/HR drivers, simulator
 tools/                  maintained internal command-line utilities

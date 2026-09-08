@@ -19,7 +19,7 @@ document first.
 | OS | **macOS first** (M1–M4). Windows port in M5. Linux: unsupported |
 | Sensors | Trainer (power/cadence/speed) + BLE HR strap. No power match, no ANT+ |
 | Player UI | Dashboard only |
-| Garmin export | FIT file + manual upload. Garmin API = phase 2, but the program is closed to new applicants — see `garmin-access.md` |
+| Garmin export | FIT file + manual upload today; direct sync awaits Garmin Developer Program access — see [`garmin-access.md`](garmin-access.md) |
 | Distance in FIT | **Off by default** (setting exists; virtual flat-road model when on) |
 | FreeRide segments | Switch trainer to simulation mode, grade 0 %; record only, no target |
 | Recording | JSONL journal during ride → FIT encoded at ride end |
@@ -32,8 +32,28 @@ document first.
 ```
 TrainerPro/
 ├── Cargo.toml                  # Rust workspace
-├── backend/                    # tp-app: lifecycle, IPC, I/O, runtime
+├── backend/                    # Tauri lifecycle, IPC, I/O, and runtime
 │   ├── src/
+│   │   ├── main.rs
+│   │   ├── app_error.rs
+│   │   ├── app_state.rs
+│   │   ├── commands/
+│   │   │   ├── mod.rs
+│   │   │   ├── device.rs
+│   │   │   ├── player.rs
+│   │   │   ├── ride_history.rs
+│   │   │   ├── settings.rs
+│   │   │   └── workout.rs
+│   │   ├── database.rs
+│   │   ├── device_hub.rs
+│   │   ├── device_owner.rs
+│   │   ├── heart_rate_monitor.rs
+│   │   ├── player_runtime.rs
+│   │   ├── trainer.rs
+│   │   ├── whatsonzwift_source.rs
+│   │   ├── workout_planner_source.rs
+│   │   ├── workout_source_cache.rs
+│   │   └── workout_sources.rs
 │   └── tauri.conf.json
 ├── crates/
 │   ├── tp-core/                # PURE: no I/O, no BLE, no tauri deps
@@ -67,7 +87,7 @@ TrainerPro/
 
 Rule that keeps this honest: **`tp-core` has zero async and zero I/O deps** —
 every function is callable from a plain unit test. `tp-ble` depends on
-`tp-core`; `tp-app` depends on both.
+`tp-core`; the backend depends on both.
 
 ---
 
@@ -281,7 +301,7 @@ reported as `None` (sensor warming up).
   setup. A connection request cancels and awaits an active public scan;
   trainer and HRM setup are serialized, but established links and their
   notification streams operate concurrently.
-- **Owners**: tp-app keeps one long-lived `Trainer` and one long-lived
+- **Owners**: the backend keeps one long-lived `Trainer` and one long-lived
   `HeartRateMonitor`. Each owns at most one selected device and privately
   replaces an `Option<Box<dyn ...Connection>>`. Consumers retain the owner
   and its stable `DeviceState`/measurement subscriptions across reconnects;
@@ -313,7 +333,7 @@ Selected via env var `TP_SIM=1` (dev) and directly in tests.
 
 ---
 
-## 5. Workout engine (`tp-core::engine`) + player runtime (`tp-app`)
+## 5. Workout engine (`tp-core::engine`) + backend player runtime
 
 ### 5.1 Engine (pure)
 
@@ -346,7 +366,7 @@ Rules:
 - Deterministic: same inputs ⇒ same effects. No clocks inside — the runtime
   owns time. Unit-test the whole workout by feeding Ticks.
 
-### 5.2 Player runtime (async, in `tp-app`)
+### 5.2 Player runtime (async, in the backend)
 
 - Tick loop: 250 ms interval → `Engine::handle(Tick)` → execute effects
   against the stable `Trainer` owner.
@@ -440,8 +460,8 @@ differ by paused duration.
 - `FitCSVTool.jar` (FIT SDK) decodes with **zero errors/warnings**; decoded
   totals equal recorder totals exactly (snapshot test in `testdata/fit-golden/`).
 - Manual gate: upload to Garmin Connect → type "Indoor Cycling", duration,
-  laps, power+HR charts, and Training Load all present. Also verified on
-  Strava and intervals.icu once per release.
+  laps, power+HR charts, and Training Load all present. Also manually import
+  the FIT into Strava and intervals.icu once per release.
 
 ### 7.4 Export UX
 
@@ -453,7 +473,7 @@ browser). FIT is also always auto-saved at `<appdata>/rides/<ride_uuid>.fit`.
 
 ---
 
-## 8. Persistence (`tp-app`)
+## 8. Persistence (backend)
 
 App data dir: `~/Library/Application Support/com.trainerpro.desktop/` (Tauri
 `app_data_dir`); subdirs `workouts/`, `rides/`; DB `trainerpro.sqlite3`. The
@@ -475,7 +495,7 @@ CREATE TABLE rides (
   avg_hr INTEGER, max_hr INTEGER, avg_cadence INTEGER, kj INTEGER,
   ftp_used INTEGER NOT NULL, intensity_final REAL NOT NULL,
   fit_path TEXT NOT NULL, journal_path TEXT NOT NULL, completed_pct REAL NOT NULL,
-  icu_activity_id TEXT);  -- v5: NULL = not uploaded to intervals.icu
+  icu_activity_id TEXT);  -- reserved by v5 for the planned intervals.icu integration
 
 CREATE TABLE devices (role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm')),
   platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
@@ -484,16 +504,16 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- JSON valu
 ```
 
 Settings keys & defaults: `profile` `{"ftp":200,"weight_kg":75.0,"name":""}` ·
-`record_distance` `false` · `intensity_default` `1.0` ·
-`icu` `{"key":"","athlete_id":"","enabled":false}` (intervals.icu upload —
-garmin-access.md §4; key stored plaintext, same class as a source password).
+`record_distance` `false` · `intensity_default` `1.0` · `export_dir` `null` ·
+`sources` (the workout-library provider registry below).
 
 **Workout-library providers** (`sources` key): a plugin registry keyed by
 provider id, each `{"enabled":bool,"values":{field:str}}` (`SourceConfig`).
-Built-in defaults: `woz` (Zwift) enabled, `planner` disabled with a pre-filled
-url. Fields are declared per-provider by the frontend descriptor
-(`frontend/sources.ts`) and rendered by one generic config form on the **Libraries**
-screen; adding a provider is a descriptor entry + fetch code, no schema change.
+Built-in defaults: both `woz` (Zwift) and `planner` are disabled until the user
+opts in; their value bags start empty. Fields are declared per-provider by the
+frontend descriptor (`frontend/sources.ts`) and rendered by one generic config
+form on the **Libraries** screen; adding a provider is a descriptor entry +
+fetch code, no schema change.
 Enabled gates both the Workouts tab and any fetch. The old typed `planner`
 settings key migrates into `sources.planner` on first load (creds preserved).
 This registry is the reuse surface for trainer-coach's own load sources.
@@ -507,29 +527,33 @@ Commands (Rust `#[tauri::command]`; TS wrappers in `frontend/ipc.ts`; all return
 `Result<T, AppError>` where `AppError = { code: string, message: string }`):
 
 ```
-workouts:  import_workout(path) -> {summary, warnings[]} · list_workouts() -> Summary[]
-           get_workout(id) -> {workout, graph} · delete_workout(id)
-devices:   start_scan(role) · stop_scan() · connect_device(role, platform_id)
-           disconnect_device(role) · forget_device(role) · get_device_state() -> {trainer, hrm}
+workouts:  import_workout(path) -> {summary, warnings[]} · create_workout(draft)
+           list_workouts() -> Summary[] · get_workout_detail(id) · delete_workout(id)
+devices:   start_scan(role) · connect_device(role, platform_id, name?)
+           disconnect_device(role) · forget_device(role) · get_device_state() -> DeviceSlot[]
 player:    load_workout(id) -> PlayerState · start_ride() · pause_ride() · resume_ride()
-           skip_segment() · set_intensity(pct) · end_ride() -> RideSummary · get_player_state()
-history:   list_rides() -> RideRow[] · get_ride(id) -> RideDetail
+           skip_segment() · set_intensity(pct) · set_erg(enabled)
+           end_ride() -> RideSummary · clear_ride() · get_player_state()
+history:   list_rides() -> RideRow[] · delete_ride(id)
            save_fit_as(id, dest_path) · reveal_fit(id) · open_garmin_import()
-icu:       icu_test(cfg) -> {ok, athlete_name?} · icu_upload_ride(ride_id)
 sources:   source_test(id, values) -> {ok, detail}   (provider connection test;
            dispatches by id — only testable providers, e.g. planner)
-profile:   get_settings() -> Settings · update_settings(patch)
+           planner_cached() · planner_list() · planner_preview(wid) · planner_ride(wid)
+           planner_open_editor(wid) · woz_collections(force) · woz_workouts(collection, force)
+           woz_ride(collection, idx) · woz_open_page(collection)
+profile:   get_settings() -> Settings · update_settings(settings)
 ```
 
-**intervals.icu upload** (garmin-access.md §4): a post-ride export sink, not a
-workout source — only completed FITs are pushed up. On ride finish,
-`finalize()` uploads the FIT best-effort (same contract as the `export_dir`
-copy: the local FIT/journal are truth, a network failure only warns) and
-records the returned activity id in `rides.icu_activity_id`. A NULL there drives
-the manual **Upload/Retry** control on the Summary and History screens
-(`icu_upload_ride`). Auth is HTTP basic, username literally `API_KEY`. The ride
-UUID rides along as the activity `external_id` for server-side dedup —
-**unverified** against the live API; confirm before trusting retry idempotency.
+**Planned intervals.icu upload:** this remains an intended post-ride export
+sink, not a workout source, but is not implemented in the current command,
+settings, or UI surfaces. The reserved `rides.icu_activity_id` column remains
+unused. Once work resumes, completed FITs should upload best-effort while the
+local FIT/journal remain authoritative; a failed upload should expose a manual
+retry rather than compromise ride finalization. The proposed commands are
+`icu_test(cfg)` and `icu_upload_ride(ride_id)`, with a disabled-by-default
+credential setting. Confirm authentication and server-side `external_id`
+deduplication against the live API before relying on retry idempotency. See
+[`garmin-access.md`](garmin-access.md) for current integration status.
 
 Events (Rust → UI, `tauri::Emitter`):
 
@@ -626,10 +650,10 @@ Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
 | M4 | Recorder → journal → FIT → Summary/History → export UX | FitCSVTool zero-error in CI; Garmin Connect upload shows laps/charts/load; crash-recovery replay works |
 | M5 | Polish + Windows: WinRT BLE pass, installers (mac notarized DMG, Windows MSI + signing), app icon, onboarding empty-states | fresh machine (both OS) → install → pair → ride → Garmin upload with no dev tools |
 
-Phase 2 (not scheduled): Garmin Connect API auto-sync (blocked — program
-closed to new applicants; see `garmin-access.md`),
-Strava OAuth upload, Wahoo legacy driver if demand appears, power match,
-FIT-workout import.
+Phase 2 (not scheduled): Garmin Connect API auto-sync (awaiting developer
+program access), intervals.icu post-ride upload, Strava OAuth upload, Wahoo
+legacy driver if demand appears, power match, FIT-workout import. See
+[`garmin-access.md`](garmin-access.md) for integration status.
 
 ---
 
