@@ -177,7 +177,7 @@ impl DeviceHub {
 
 fn spawn_trainer_state_forwarder(app: AppHandle, trainer: Trainer) {
     let mut state_rx = trainer.subscribe_state();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         while state_rx.changed().await.is_ok() {
             let state = state_rx.borrow_and_update().clone();
             let is_connected = state.is_connected();
@@ -196,7 +196,7 @@ fn spawn_trainer_state_forwarder(app: AppHandle, trainer: Trainer) {
 
 fn spawn_heart_rate_state_forwarder(app: AppHandle, monitor: HeartRateMonitor) {
     let mut state_rx = monitor.subscribe_state();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         while state_rx.changed().await.is_ok() {
             let state = state_rx.borrow_and_update().clone();
             let is_connected = state.is_connected();
@@ -217,7 +217,7 @@ fn spawn_heart_rate_state_forwarder(app: AppHandle, monitor: HeartRateMonitor) {
 fn spawn_trainer_measurement_forwarder(app: AppHandle, trainer: Trainer) {
     let mut measurements = trainer.subscribe_measurements();
     let state = trainer.subscribe_state();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut latest = None;
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(
             DEVICE_MEASUREMENT_INTERVAL_S,
@@ -247,7 +247,7 @@ fn spawn_trainer_measurement_forwarder(app: AppHandle, trainer: Trainer) {
 fn spawn_heart_rate_measurement_forwarder(app: AppHandle, monitor: HeartRateMonitor) {
     let mut measurements = monitor.subscribe_measurements();
     let state = monitor.subscribe_state();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         loop {
             match measurements.recv().await {
                 Ok(sample) if state.borrow().accepts(&sample) => {
@@ -365,8 +365,8 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn owners_start_disconnected() {
+    #[test]
+    fn owners_can_start_without_an_entered_tokio_runtime() {
         let hub = DeviceHub::default();
         assert!(!hub.trainer_connected());
         assert!(!hub.heart_rate_monitor_connected());

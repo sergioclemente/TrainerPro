@@ -33,7 +33,12 @@ impl HeartRateMonitor {
         let (commands, requests) = mpsc::channel(COMMAND_CAPACITY);
         let (state_tx, state_rx) = watch::channel(DeviceState::default());
         let (measurements, _) = broadcast::channel(MEASUREMENT_CAPACITY);
-        tokio::spawn(run(connector, requests, state_tx, measurements.clone()));
+        tauri::async_runtime::spawn(run(
+            connector,
+            requests,
+            state_tx,
+            measurements.clone(),
+        ));
         Self {
             commands,
             state_rx,
