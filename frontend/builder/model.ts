@@ -229,7 +229,7 @@ export function expand(nodes: BuildNode[]): FlatSegment[] {
 }
 
 /** Breakpoint polyline for WorkoutGraph: exactly two points per segment, so
-    polygon i ↔ segment i. Mirrors graph_points() in backend/src/cmd.rs. */
+    polygon i ↔ segment i. Mirrors graph_points() in backend/src/commands/workout.rs. */
 export function toGraph(segments: FlatSegment[]): [number, number][] {
   const out: [number, number][] = [];
   let t = 0;

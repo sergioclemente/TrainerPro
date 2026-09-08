@@ -7,9 +7,9 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::db;
-use crate::hub::DeviceHub;
-use crate::runtime::PlayerHandle;
+use crate::database as db;
+use crate::device_hub::DeviceHub;
+use crate::player_runtime::PlayerHandle;
 
 pub struct AppState {
     pub db: Mutex<Connection>,
@@ -17,14 +17,14 @@ pub struct AppState {
     pub hub: DeviceHub,
     pub player: tokio::sync::Mutex<Option<PlayerHandle>>,
     /// Last planner_list result; used for edit-URL construction.
-    pub planner_cache: Mutex<Vec<crate::planner::PlannerWorkout>>,
+    pub planner_cache: Mutex<Vec<crate::workout_planner_source::PlannerWorkout>>,
     /// Preview cache: wid → (zwo sha256, preview). Invalidated by hash.
     pub planner_previews:
-        Mutex<std::collections::HashMap<i64, (String, crate::planner::PlannerPreview)>>,
+        Mutex<std::collections::HashMap<i64, (String, crate::workout_planner_source::PlannerPreview)>>,
     /// whatsonzwift caches (per app run).
-    pub woz_collections: Mutex<Option<Vec<crate::woz::WozCollection>>>,
+    pub woz_collections: Mutex<Option<Vec<crate::whatsonzwift_source::WozCollection>>>,
     pub woz_cache: Mutex<
-        std::collections::HashMap<String, Vec<(tp_core::model::Workout, crate::woz::WozWorkout)>>,
+        std::collections::HashMap<String, Vec<(tp_core::model::Workout, crate::whatsonzwift_source::WozWorkout)>>,
     >,
 }
 
@@ -59,7 +59,7 @@ impl SourceConfig {
     }
 }
 
-/// Typed view of the `planner` provider's config, so `planner.rs`'s fetch code
+/// Typed view of the `planner` provider's config, so the WorkoutPlanner source's fetch code
 /// keeps concrete fields instead of reaching into the values bag by hand.
 #[derive(Debug, Clone)]
 pub struct PlannerSettings {

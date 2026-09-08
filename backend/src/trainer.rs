@@ -1,7 +1,8 @@
 //! Long-lived trainer owner. Connection replacement is private to this module.
 
-use crate::device::{
-    self, ConnectionAttempt, DeviceState, DeviceStatus, Measurement, Reply, COMMAND_CAPACITY,
+use crate::device_owner::{
+    self as device, ConnectionAttempt, DeviceState, DeviceStatus, Measurement, Reply,
+    COMMAND_CAPACITY,
     MEASUREMENT_CAPACITY,
 };
 use std::sync::Arc;

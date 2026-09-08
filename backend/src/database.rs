@@ -49,10 +49,9 @@ const MIGRATIONS: &[&str] = &[
       PRIMARY KEY (source, key)
     );
     ",
-    // v5: legacy ride-upload marker (was intervals.icu, then Coach push).
-    // The upload/push feature was removed to keep the app simple; the column is
-    // retained (unread, unwritten) because dropping it buys nothing and a
-    // SQLite column-drop migration is needless risk. Safe to reuse or drop later.
+    // v5: reserved marker for the planned intervals.icu post-ride upload.
+    // It remains unread and unwritten until that integration is implemented;
+    // retaining it also avoids rewriting migration history.
     "
     ALTER TABLE rides ADD COLUMN icu_activity_id TEXT;
     ",

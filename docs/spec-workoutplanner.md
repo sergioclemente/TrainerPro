@@ -133,8 +133,8 @@ New keys (settings table, SPEC.md §8 conventions):
 
 ## B2. Backend: planner client + IPC
 
-New module `backend/src/planner.rs` (HTTP via `reqwest`, add dependency
-with `default-features = false, features = ["rustls-tls"]`):
+New module `backend/src/workout_planner_source.rs` (HTTP via `reqwest`, add
+dependency with `default-features = false, features = ["rustls-tls"]`):
 
 ```
 planner_test()            -> { ok, workout_count }        // GET /workouts, HEAD-ish probe
@@ -186,7 +186,7 @@ ships (feature-detect: config flag `planner.wid_links` defaulting false).
 
 ## B4. Testing
 
-- Rust: `planner.rs` unit tests against a local `tiny_http`/hyper stub
+- Rust: `workout_planner_source.rs` unit tests against a local `tiny_http`/hyper stub
   serving canned `/workouts` + `/workout_file` (happy, 401, 422, timeout).
 - The stub's ZWO fixture must round-trip through `parse_zwo` — guards the
   interchange contract from the consuming side.
@@ -199,7 +199,7 @@ ships (feature-detect: config flag `planner.wid_links` defaulting false).
 | # | Item | Depends on |
 |---|---|---|
 | WP-1 | Part A1 endpoint (+A2, A3) in WorkoutPlanner | — (other workspace) |
-| TP-1 | Settings section + planner.rs client + test-connection | none (stub-testable) |
+| TP-1 | Settings section + WorkoutPlanner source client + test-connection | none (stub-testable) |
 | TP-2 | Library tabs + planner list UI (states 1–4) | TP-1 |
 | TP-3 | Ride pipeline (import tagging migration) + Edit ↗ | TP-1, WP-1 |
 | — | Phase 2: results push-back (A5), planner thumbnails, keychain | later |

@@ -70,18 +70,16 @@ the spec). ANT+ only re-enters if you later care about ANT-only power meters.
 | **intervals.icu / SyncMyTracks-style intermediary** | intervals.icu has an open API and a loyal cyclist user base | Still doesn't push *into* Garmin Connect; same directionality problem |
 | **"Email the FIT file" / iCloud-Drive-watch folders** | Garmin's mobile app can import files; watch-folder hacks exist | Fragile, undocumented, poor UX |
 
-**The uncomfortable truth this table surfaces:** *nothing* gets an activity
-into Garmin Connect automatically except Garmin's own gated API. Every
-intermediary only syncs *out of* Garmin, not in. So the real decision is only
-about **timing**: manual upload now, and **apply for the Garmin developer
-program immediately** (it's free; the cost is lead time) so phase 2 isn't
-blocked.
+**The practical consequence:** direct Garmin synchronization depends on
+access to Garmin's gated API, so manual FIT upload remains the shipped path
+while the project's access request is pending. An intervals.icu post-ride
+export remains planned as an additional sink, but it does not replace direct
+Garmin synchronization and is not implemented today. See
+[`garmin-access.md`](garmin-access.md) for current status.
 
-**What would change my mind:** nothing changes v1. **Update (2026-07):** the
-Garmin developer program has since closed to new applicants and is
-enterprise-only, so the "apply early" advice above is no longer actionable —
-see `garmin-access.md` for current status and the intervals.icu path, which
-covers both directions today.
+**What would change my mind:** approved Garmin access would bring direct sync
+forward. Until then, local FIT files remain authoritative and any remote sink
+must be optional and best-effort.
 
 ---
 

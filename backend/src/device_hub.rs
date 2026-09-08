@@ -12,9 +12,9 @@ use tp_ble::{
     TrainerConnection,
 };
 
-use crate::device::DeviceStatus;
+use crate::device_owner::DeviceStatus;
 use crate::heart_rate_monitor::{HeartRateConnector, HeartRateMonitor};
-use crate::state::AppState;
+use crate::app_state::AppState;
 use crate::trainer::{Trainer, TrainerConnector};
 
 const SCAN_DURATION_S: u64 = 10;

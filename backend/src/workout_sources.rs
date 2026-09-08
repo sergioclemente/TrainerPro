@@ -8,10 +8,10 @@
 
 use tauri::{AppHandle, Emitter, State};
 
-use crate::cmd;
-use crate::err::AppError;
-use crate::runtime::PlayerState;
-use crate::state::AppState;
+use crate::app_error::AppError;
+use crate::app_state::AppState;
+use crate::commands::{player, workout};
+use crate::player_runtime::PlayerState;
 
 /// ZWO text → existing import pipeline (sha256 dedup) → provenance tag →
 /// loaded player. `origin` is the source id ('planner', 'whatsonzwift'…);
@@ -33,7 +33,7 @@ pub async fn ride_from_zwo(
         .collect();
     let tmp = tmp_dir.join(format!("{origin}-{safe}.zwo"));
     std::fs::write(&tmp, zwo)?;
-    let import = cmd::import_from_path(state, &tmp)?;
+    let import = workout::import_from_path(state, &tmp)?;
     let _ = std::fs::remove_file(&tmp);
 
     {
@@ -46,5 +46,5 @@ pub async fn ride_from_zwo(
     for w in import.warnings.iter().take(3) {
         let _ = app.emit("toast", serde_json::json!({ "level": "warn", "message": w }));
     }
-    cmd::do_load_workout(app.clone(), state, &import.summary.id).await
+    player::do_load_workout(app.clone(), state, &import.summary.id).await
 }

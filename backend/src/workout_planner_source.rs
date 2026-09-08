@@ -10,9 +10,9 @@ use tauri_plugin_opener::OpenerExt;
 
 use std::collections::HashMap;
 
-use crate::err::AppError;
-use crate::runtime::PlayerState;
-use crate::state::{AppState, PlannerSettings, SourceConfig};
+use crate::app_error::AppError;
+use crate::player_runtime::PlayerState;
+use crate::app_state::{AppState, PlannerSettings, SourceConfig};
 
 const TIMEOUT_S: u64 = 30;
 
@@ -231,7 +231,7 @@ pub struct PlannerListResult {
 
 fn read_cached_list(state: &State<'_, AppState>) -> Option<PlannerListResult> {
     let conn = state.db.lock().unwrap();
-    let c = crate::cache::get(&conn, "planner", "list")?;
+    let c = crate::workout_source_cache::get(&conn, "planner", "list")?;
     let rows: Vec<PlannerWorkout> = serde_json::from_str(&c.value).ok()?;
     Some(PlannerListResult { rows, from_cache: true, fetched_at_ms: c.fetched_at_ms })
 }
@@ -256,9 +256,9 @@ pub async fn planner_list(state: State<'_, AppState>) -> Result<PlannerListResul
     match fetch_workouts(&cfg).await {
         Ok(list) => {
             *state.planner_cache.lock().unwrap() = list.clone();
-            let now = crate::state::now_unix_ms() as i64;
+            let now = crate::app_state::now_unix_ms() as i64;
             let conn = state.db.lock().unwrap();
-            crate::cache::put(
+            crate::workout_source_cache::put(
                 &conn,
                 "planner",
                 "list",
@@ -295,7 +295,7 @@ pub async fn planner_ride(
             // workout — possibly stale, so say so.
             let cached = {
                 let conn = state.db.lock().unwrap();
-                crate::cache::get(&conn, "planner", &format!("preview:{wid}"))
+                crate::workout_source_cache::get(&conn, "planner", &format!("preview:{wid}"))
             }
             .and_then(|c| serde_json::from_str::<StoredPreview>(&c.value).ok());
             match cached {
@@ -310,7 +310,7 @@ pub async fn planner_ride(
             }
         }
     };
-    crate::sources::ride_from_zwo(app, &state, &zwo, "planner", &wid.to_string(), Some(wid))
+    crate::workout_sources::ride_from_zwo(app, &state, &zwo, "planner", &wid.to_string(), Some(wid))
         .await
 }
 
@@ -321,7 +321,7 @@ pub struct PlannerPreview {
     pub duration_s: u32,
     pub est_if: f64,
     pub est_tss: f64,
-    pub segments: Vec<crate::cmd::SegmentRow>,
+    pub segments: Vec<crate::commands::workout::SegmentRow>,
 }
 
 /// Lazy per-workout preview: fetch ZWO → existing parser → graph polyline
@@ -354,7 +354,7 @@ pub async fn planner_preview(
         // L2: persistent cache (survives restarts; enables offline).
         let db_hit = {
             let conn = state.db.lock().unwrap();
-            crate::cache::get(&conn, "planner", &format!("preview:{wid}"))
+            crate::workout_source_cache::get(&conn, "planner", &format!("preview:{wid}"))
         };
         if let Some(c) = db_hit {
             if c.content_hash.as_deref() == Some(key.as_str()) {
@@ -385,23 +385,23 @@ pub async fn planner_preview(
     let (est_if, est_tss) = tp_core::metrics::estimate_if_tss(w, ftp);
     let preview = PlannerPreview {
         wid,
-        graph: crate::cmd::graph_points(w, ftp),
+        graph: crate::commands::workout::graph_points(w, ftp),
         duration_s: w.duration_s(),
         est_if,
         est_tss,
-        segments: crate::cmd::segment_rows(w, ftp),
+        segments: crate::commands::workout::segment_rows(w, ftp),
     };
     state.planner_previews.lock().unwrap().insert(wid, (sha.clone(), preview.clone()));
     {
         let conn = state.db.lock().unwrap();
-        crate::cache::put(
+        crate::workout_source_cache::put(
             &conn,
             "planner",
             &format!("preview:{wid}"),
             Some(&sha),
             &serde_json::to_string(&StoredPreview { preview: preview.clone(), zwo })
                 .unwrap_or_default(),
-            crate::state::now_unix_ms() as i64,
+            crate::app_state::now_unix_ms() as i64,
         );
     }
     Ok(preview)
