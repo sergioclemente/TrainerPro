@@ -14,7 +14,7 @@ touch import, database, or player code directly.
 
 ```mermaid
 flowchart TD
-    subgraph SRCS["Workout sources - tabs from src/sources.ts registry"]
+    subgraph SRCS["Workout sources - tabs from frontend/sources.ts registry"]
         LOCAL["My Library<br/>local .zwo / .erg / .mrc files"]
         WP["WorkoutPlanner<br/>self-hosted server<br/>Basic Auth, /workout_file ZWO"]
         WOZ["Zwift<br/>whatsonzwift.com fetch<br/>textbars to model"]
@@ -37,7 +37,7 @@ flowchart TD
     PLAYER --> FIT
 ```
 
-Adding a source = one frontend tab component registered in `src/sources.ts`,
+Adding a source = one frontend tab component registered in `frontend/sources.ts`,
 plus a backend module that produces ZWO text and calls
 `sources::ride_from_zwo`. Provenance columns (`origin`, `origin_ref`) tag
 imported rows so the library shows badges and future features (results

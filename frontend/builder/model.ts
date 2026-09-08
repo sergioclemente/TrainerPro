@@ -7,7 +7,7 @@
 // The tree is at most two deep — a Repeat may hold leaves, never another
 // Repeat. That restriction is what lets drag-and-drop stay a flat multi-list
 // problem instead of a recursive one, and the Rust side enforces it again at
-// save time (tp-core/src/build.rs).
+// save time (crates/tp-core/src/build.rs).
 
 import type { SegmentRow } from "../ipc";
 
@@ -229,7 +229,7 @@ export function expand(nodes: BuildNode[]): FlatSegment[] {
 }
 
 /** Breakpoint polyline for WorkoutGraph: exactly two points per segment, so
-    polygon i ↔ segment i. Mirrors graph_points() in src-tauri/src/cmd.rs. */
+    polygon i ↔ segment i. Mirrors graph_points() in backend/src/cmd.rs. */
 export function toGraph(segments: FlatSegment[]): [number, number][] {
   const out: [number, number][] = [];
   let t = 0;

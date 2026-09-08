@@ -31,34 +31,35 @@ document first.
 
 ```
 TrainerPro/
-├── SPEC.md / ALTERNATIVES.md
-├── src-tauri/                  # Rust workspace
-│   ├── crates/
-│   │   ├── tp-core/            # PURE: no I/O, no BLE, no tauri deps
-│   │   │   ├── src/model.rs        # Workout, Segment, PowerTarget…
-│   │   │   ├── src/parse/zwo.rs
-│   │   │   ├── src/parse/ergmrc.rs
-│   │   │   ├── src/engine.rs       # player state machine
-│   │   │   ├── src/metrics.rs      # NP/IF/TSS, smoothing, zone calc
-│   │   │   ├── src/journal.rs      # JSONL read/write
-│   │   │   └── src/fit/            # encoder: profile.rs (generated), encode.rs, crc.rs
-│   │   ├── tp-ble/             # btleplug drivers
-│   │   │   ├── src/traits.rs       # per-link device contracts
-│   │   │   ├── src/codec.rs        # pure FTMS / HR packet codecs
-│   │   │   ├── src/device_manager.rs
-│   │   │   ├── src/ftms_trainer_connection.rs
-│   │   │   ├── src/ble_heart_rate_connection.rs
-│   │   │   ├── src/connection_tasks.rs
-│   │   │   ├── src/sim_trainer.rs
-│   │   │   ├── src/sim_hrm.rs
-│   │   │   └── tests/              # public simulator contract tests
-│   │   └── tp-app/             # tauri shell: IPC commands, event bridge, SQLite, paths
+├── Cargo.toml                  # Rust workspace
+├── backend/                    # tp-app: lifecycle, IPC, I/O, runtime
+│   ├── src/
 │   └── tauri.conf.json
-├── src/                        # React app (Vite + TypeScript)
+├── crates/
+│   ├── tp-core/                # PURE: no I/O, no BLE, no tauri deps
+│   │   ├── src/model.rs        # Workout, Segment, PowerTarget…
+│   │   ├── src/parse/zwo.rs
+│   │   ├── src/parse/ergmrc.rs
+│   │   ├── src/engine.rs       # player state machine
+│   │   ├── src/metrics.rs      # NP/IF/TSS, smoothing, zone calc
+│   │   ├── src/journal.rs      # JSONL read/write
+│   │   └── src/fit/            # encoder: profile.rs (generated), encode.rs, crc.rs
+│   └── tp-ble/                 # btleplug drivers
+│       ├── src/traits.rs       # per-link device contracts
+│       ├── src/codec.rs        # pure FTMS / HR packet codecs
+│       ├── src/device_manager.rs
+│       ├── src/ftms_trainer_connection.rs
+│       ├── src/ble_heart_rate_connection.rs
+│       ├── src/connection_tasks.rs
+│       ├── src/sim_trainer.rs
+│       ├── src/sim_hrm.rs
+│       └── tests/              # public simulator contract tests
+├── frontend/                   # React app (Vite + TypeScript)
 │   ├── screens/  (Library, Devices, Player, Summary, History, Settings)
 │   ├── components/ (WorkoutGraph, MetricTile, IntervalStrip, DeviceCard…)
 │   ├── ipc.ts                  # typed command wrappers + event subscriptions
 │   └── state.ts                # zustand store fed by events
+├── tools/                      # maintained internal command-line utilities
 └── testdata/
     ├── workouts/               # parser corpus: real .zwo/.erg/.mrc files
     └── fit-golden/             # expected FitCSVTool output snapshots
@@ -491,7 +492,7 @@ garmin-access.md §4; key stored plaintext, same class as a source password).
 provider id, each `{"enabled":bool,"values":{field:str}}` (`SourceConfig`).
 Built-in defaults: `woz` (Zwift) enabled, `planner` disabled with a pre-filled
 url. Fields are declared per-provider by the frontend descriptor
-(`src/sources.ts`) and rendered by one generic config form on the **Libraries**
+(`frontend/sources.ts`) and rendered by one generic config form on the **Libraries**
 screen; adding a provider is a descriptor entry + fetch code, no schema change.
 Enabled gates both the Workouts tab and any fetch. The old typed `planner`
 settings key migrates into `sources.planner` on first load (creds preserved).
@@ -502,7 +503,7 @@ Migrations: `user_version` pragma + numbered migration list from day one.
 
 ## 9. Tauri IPC surface
 
-Commands (Rust `#[tauri::command]`; TS wrappers in `src/ipc.ts`; all return
+Commands (Rust `#[tauri::command]`; TS wrappers in `frontend/ipc.ts`; all return
 `Result<T, AppError>` where `AppError = { code: string, message: string }`):
 
 ```

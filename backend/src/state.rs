@@ -44,7 +44,7 @@ impl Default for Profile {
 /// One workout-library provider's persisted state — the plugin surface. A
 /// provider has a string id (`planner`, `woz`, …), an `enabled` toggle, and a
 /// stringly-typed `values` bag whose keys are declared per-provider by the
-/// frontend descriptor (`src/sources.ts`). Adding a provider needs no schema
+/// frontend descriptor (`frontend/sources.ts`). Adding a provider needs no schema
 /// change here, just a new id + its fetch code. Reused by trainer-coach.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceConfig {

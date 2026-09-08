@@ -33,7 +33,7 @@ impl HeartRateMonitor {
         let (commands, requests) = mpsc::channel(COMMAND_CAPACITY);
         let (state_tx, state_rx) = watch::channel(DeviceState::default());
         let (measurements, _) = broadcast::channel(MEASUREMENT_CAPACITY);
-        tokio::spawn(run(connector, requests, state_tx, measurements.clone()));
+        tauri::async_runtime::spawn(run(connector, requests, state_tx, measurements.clone()));
         Self {
             commands,
             state_rx,
@@ -237,13 +237,12 @@ async fn run(
                     state.generation += 1;
                     state.status = DeviceStatus::Reconnecting { attempt: 0 };
                     status_tx.send_replace(state.clone());
-                    if let Err(error) = retire(
-                        &mut connection,
-                        &mut connection_status,
-                        &mut connection_measurements,
-                    ).await {
-                        tracing::warn!("heart-rate cleanup after link loss failed: {error}");
-                    }
+                    // The status stream is authoritative: this link is already
+                    // gone. Do not wait on a redundant CoreBluetooth disconnect,
+                    // which can remain pending and prevent retry attempt 1.
+                    connection_status = None;
+                    connection_measurements = None;
+                    connection = None;
                     retry_attempt = Some(0);
                     retry_at = Some(Instant::now() + device::retry_delay(0));
                 }
@@ -279,7 +278,7 @@ async fn run(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use std::time::Duration;
 
@@ -292,6 +291,8 @@ mod tests {
         status: watch::Sender<ConnectionStatus>,
         measurements: broadcast::Sender<HeartRateMeasurement>,
         disconnects: Arc<AtomicUsize>,
+        disconnect_blocks: Arc<AtomicBool>,
+        drops: Arc<AtomicUsize>,
     }
 
     impl FakeConnectionControl {
@@ -302,6 +303,8 @@ mod tests {
                 status,
                 measurements,
                 disconnects: Arc::new(AtomicUsize::new(0)),
+                disconnect_blocks: Arc::new(AtomicBool::new(false)),
+                drops: Arc::new(AtomicUsize::new(0)),
             }
         }
     }
@@ -314,6 +317,9 @@ mod tests {
     impl HeartRateConnection for FakeConnection {
         async fn disconnect(&mut self) -> Result<(), BleError> {
             self.control.disconnects.fetch_add(1, Ordering::SeqCst);
+            if self.control.disconnect_blocks.load(Ordering::SeqCst) {
+                std::future::pending().await
+            }
             self.control
                 .status
                 .send_replace(ConnectionStatus::Disconnected);
@@ -330,6 +336,12 @@ mod tests {
 
         fn name(&self) -> &str {
             "Fake HRM"
+        }
+    }
+
+    impl Drop for FakeConnection {
+        fn drop(&mut self) {
+            self.control.drops.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -368,6 +380,9 @@ mod tests {
         let first = connector.connection(0);
 
         // The owner state receiver exists before the injected link fault.
+        // A transport-level disconnect would never return after this fault;
+        // recovery must trust the observed status and drop the dead link.
+        first.disconnect_blocks.store(true, Ordering::SeqCst);
         first.status.send_replace(ConnectionStatus::Disconnected);
         let reconnected = tokio::time::timeout(TEST_TIMEOUT, async {
             loop {
@@ -381,7 +396,8 @@ mod tests {
         .await
         .expect("heart-rate reconnect did not complete");
 
-        assert_eq!(first.disconnects.load(Ordering::SeqCst), 1);
+        assert_eq!(first.disconnects.load(Ordering::SeqCst), 0);
+        assert_eq!(first.drops.load(Ordering::SeqCst), 1);
         let second = connector.connection(1);
         second
             .measurements

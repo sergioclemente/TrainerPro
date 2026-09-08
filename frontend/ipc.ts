@@ -1,4 +1,4 @@
-// Typed mirror of the tp-app command surface (SPEC.md §9, src-tauri/src/cmd.rs).
+// Typed mirror of the tp-app command surface (SPEC.md §9, backend/src/cmd.rs).
 
 import { invoke } from "@tauri-apps/api/core";
 

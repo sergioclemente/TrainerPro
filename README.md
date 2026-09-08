@@ -131,8 +131,8 @@ npm install
 npm run tauri:qa         # launches an isolated TrainerPro QA app
 
 # Tests
-cd src-tauri && cargo test --workspace     # core, BLE codecs, planner, woz parsers
-npx tsc --noEmit                           # frontend types
+cargo test --workspace     # core, BLE codecs, planner, woz parsers
+npx tsc --noEmit           # frontend types
 
 # Useful diagnostics
 TP_PARSE_FILE=some.zwo cargo test -p tp-core parse_env_file -- --ignored --nocapture
@@ -152,11 +152,11 @@ Devices screen — they appear in every scan and behave like the real thing
 ## Repository layout
 
 ```
-src/                    React frontend (screens, store, source registry)
-src-tauri/              tp-app: Tauri shell, IPC, device hub, player runtime,
-  │                     workout sources (planner.rs, woz.rs, sources.rs)
-  ├── crates/tp-core/   pure domain: parsers, engine, metrics, journal, FIT
-  └── crates/tp-ble/    BLE: traits, FTMS/HR drivers, simulator
+frontend/               React frontend (screens, store, IPC client, sources)
+backend/                tp-app: lifecycle, IPC, I/O, device hub, player runtime
+crates/tp-core/         pure domain: parsers, engine, metrics, journal, FIT
+crates/tp-ble/          BLE: traits, FTMS/HR drivers, simulator
+tools/                  maintained internal command-line utilities
 docs/                   spec, decision records, architecture notes
 assets/icon/            app icon sources (SVG masters + candidates)
 samples/                example workout files

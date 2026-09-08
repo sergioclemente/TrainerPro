@@ -54,14 +54,14 @@ duplicate those documents here.
 - Never introduce magic numeric or duration literals. Use a descriptive named
   constant at the narrowest useful scope, or `tp-core::consts` for shared
   product constants.
-- Treat Rust serialized payloads and `src/ipc.ts` as one API; update every
+- Treat Rust serialized payloads and `frontend/ipc.ts` as one API; update every
   producer and consumer together.
 
 ## Verification
 
 - Run focused tests while iterating. For changes spanning Rust and TypeScript,
-  finish with `cargo test --workspace` from `src-tauri/` and `npm run build`
-  from the repository root.
+  finish with `cargo test --workspace` and `npm run build` from the repository
+  root.
 - Device fault tests should obtain the status receiver before injecting the
   fault and prove that the existing stream observes the transition.
 - Check repository-wide formatting before applying it. If the baseline fails
