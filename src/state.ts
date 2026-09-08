@@ -3,7 +3,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
-  DeviceReading,
+  DeviceMeasurement,
   DeviceSlot,
   DeviceStatusEvent,
   PlannerPreview,
@@ -14,7 +14,7 @@ import {
   Role,
   ScanResult,
   Settings,
-  Telemetry,
+  PlayerMeasurement,
   WorkoutSummary,
   ipc,
 } from "./ipc";
@@ -66,9 +66,9 @@ interface Store {
   scanResults: ScanResult[];
   scanning: Role | null;
   deviceStatus: Record<Role, DeviceStatusEvent | null>;
-  deviceReading: Record<Role, DeviceReading | null>;
+  deviceMeasurement: Record<Role, DeviceMeasurement | null>;
   player: PlayerState | null;
-  telemetry: Telemetry | null;
+  measurement: PlayerMeasurement | null;
   textEvent: { message: string; duration_s: number } | null;
   summary: RideSummary | null;
   detail: WorkoutDetailView | null;
@@ -110,9 +110,9 @@ export const useStore = create<Store>((set, get) => ({
   scanResults: [],
   scanning: null,
   deviceStatus: { trainer: null, hrm: null },
-  deviceReading: { trainer: null, hrm: null },
+  deviceMeasurement: { trainer: null, hrm: null },
   player: null,
-  telemetry: null,
+  measurement: null,
   textEvent: null,
   summary: null,
   detail: null,
@@ -224,7 +224,9 @@ export async function wireEvents(): Promise<void> {
     })
     .catch(() => {});
 
-  await listen<Telemetry>("telemetry", (e) => s.setState({ telemetry: e.payload }));
+  await listen<PlayerMeasurement>("player_measurement", (e) =>
+    s.setState({ measurement: e.payload }),
+  );
 
   await listen<PlayerState>("player_state", (e) => s.setState({ player: e.payload }));
 
@@ -246,9 +248,12 @@ export async function wireEvents(): Promise<void> {
     void s.getState().refreshDevices();
   });
 
-  await listen<DeviceReading>("device_reading", (e) => {
+  await listen<DeviceMeasurement>("device_measurement", (e) => {
     s.setState({
-      deviceReading: { ...s.getState().deviceReading, [e.payload.role]: e.payload },
+      deviceMeasurement: {
+        ...s.getState().deviceMeasurement,
+        [e.payload.role]: e.payload,
+      },
     });
   });
 

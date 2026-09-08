@@ -56,7 +56,7 @@ flowchart TD
         IPC["IPC commands + event stream"]
         SOURCES["Workout source plugin layer"]
         RUNTIME["Player runtime<br/>engine ticks / ERG loop / recorder"]
-        HUB["Device hub<br/>scan / connect / auto-reconnect"]
+        HUB["Device hub<br/>device policy + stable role owners"]
         STORAGE[("SQLite index +<br/>files as truth")]
     end
 
@@ -69,7 +69,8 @@ flowchart TD
     end
 
     subgraph BLE["tp-ble - device layer"]
-        TRAITS["Trainer + HeartRateMonitor traits"]
+        CENTRAL["DeviceManager<br/>scan/connect coordination"]
+        TRAITS["TrainerConnection +<br/>HeartRateConnection traits"]
         FTMS["FTMS driver<br/>ERG control point"]
         HRDRV["Heart-rate driver"]
         SIMU["Simulator<br/>fault-injectable"]
@@ -91,8 +92,11 @@ flowchart TD
     RUNTIME --> JOURNAL
     RUNTIME --> METRICS
     RUNTIME --> FITENC
-    RUNTIME -->|Trainer trait| TRAITS
-    HUB --> TRAITS
+    RUNTIME -->|stable Trainer owner| HUB
+    HUB -->|scan / connect intent| CENTRAL
+    HUB -->|replaceable connections| TRAITS
+    CENTRAL --> FTMS
+    CENTRAL --> HRDRV
     TRAITS --> FTMS
     TRAITS --> HRDRV
     TRAITS --> SIMU
@@ -105,10 +109,10 @@ Two invariants keep this portable and testable:
 
 - **`tp-core` has zero I/O and zero async** — parsers, engine, metrics, journal
   and FIT encoder are pure functions, unit-tested without hardware on any OS.
-- **All hardware sits behind the `Trainer`/`HeartRateMonitor` traits** — the
-  simulator implements the same traits as the FTMS driver, so the full app
-  (and CI) runs with zero devices, and platform BLE differences are btleplug's
-  problem, not the app's.
+- **All hardware sits behind `TrainerConnection`/`HeartRateConnection`** —
+  the simulator implements the same contracts as the BLE drivers. Stable
+  `Trainer` and `HeartRateMonitor` owners replace those connections during
+  recovery, so consumers keep one status and measurement subscription.
 
 More detail: [`docs/architecture.md`](docs/architecture.md) (source plugin
 interface, ride data flow, cross-platform notes) ·

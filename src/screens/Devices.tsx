@@ -9,7 +9,7 @@ export default function Devices() {
     scanResults,
     scanning,
     deviceStatus,
-    deviceReading,
+    deviceMeasurement,
     pushToast,
     refreshDevices,
   } = useStore();
@@ -45,15 +45,15 @@ export default function Devices() {
           const status = deviceStatus[role];
           const connected = slot?.connected ?? false;
           const connecting = status?.status === "connecting";
-          const reading = deviceReading[role];
+          const reading = deviceMeasurement[role];
           const live =
             connected && reading
               ? role === "trainer"
-                ? reading.power != null
-                  ? `${reading.power} W${reading.cadence != null ? ` · ${reading.cadence} rpm` : ""}`
+                ? reading.power_w != null
+                  ? `${reading.power_w} W${reading.cadence_rpm != null ? ` · ${reading.cadence_rpm} rpm` : ""}`
                   : null
-                : reading.hr != null
-                  ? `${reading.hr} bpm`
+                : reading.heart_rate_bpm != null
+                  ? `${reading.heart_rate_bpm} bpm`
                   : null
               : null;
           return (

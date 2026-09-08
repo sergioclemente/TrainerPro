@@ -9,7 +9,7 @@ duplicate those documents here.
 ## Constraints
 
 - Keep `tp-core` pure: no I/O, async, BLE, or Tauri dependencies.
-- Keep hardware behavior behind `Trainer` and `HeartRateMonitor`; the
+- Keep hardware behavior behind `TrainerConnection` and `HeartRateConnection`; the
   simulator must be able to exercise it.
 - Extend the abstraction that already owns a behavior. Do not add parallel
   update channels, mirrored connection state, or a common enum when the
@@ -37,17 +37,20 @@ duplicate those documents here.
 
 ## Conventions
 
-- Ongoing device state is event-driven through the existing `DeviceStatus`
-  watch stream. Use a transport connectivity probe only at a one-off boundary,
-  not for polling.
+- Ongoing device state is event-driven through the existing `DeviceState`
+  watch stream and its `DeviceStatus`. Use a transport connectivity probe only
+  at a one-off boundary, not for polling.
+- `tp-ble::DeviceManager` owns adapter initialization, scan cancellation, and
+  scan/connection setup serialization. Keep Bluetooth quiescence mechanics
+  out of the application hub.
 - Runtime commands that already report user-facing outcomes through Tauri
   events use the existing `toast` event. Add a oneshot/result path only when
   the caller must consume that result to choose its next action.
 - A sensor-specific event may clear only that sensor's stale fields. Persist
-  derived telemetry in runtime state when another event path must re-emit it.
+  derived measurements in runtime state when another event path must re-emit them.
 - Names should expose state, units, and time windows. Avoid boolean-sounding
   names for optional timestamps; prefer shapes such as `ride_started_at` and
-  `power_smoothed_3s`.
+  `power_smoothed_3s_w`.
 - Never introduce magic numeric or duration literals. Use a descriptive named
   constant at the narrowest useful scope, or `tp-core::consts` for shared
   product constants.

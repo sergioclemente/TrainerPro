@@ -59,12 +59,11 @@ export interface PlayerState {
   erg_enabled: boolean;
 }
 
-export interface Telemetry {
-  power: number | null;
-  cadence: number | null;
-  hr: number | null;
-  target: number | null;
-  power_smoothed_3s: number | null;
+export interface PlayerMeasurement {
+  power_w: number | null;
+  cadence_rpm: number | null;
+  heart_rate_bpm: number | null;
+  power_smoothed_3s_w: number | null;
 }
 
 export interface LapRow {
@@ -184,11 +183,11 @@ export interface WozWorkout {
 }
 
 
-export interface DeviceReading {
+export interface DeviceMeasurement {
   role: Role;
-  power?: number | null;
-  cadence?: number | null;
-  hr?: number | null;
+  power_w?: number | null;
+  cadence_rpm?: number | null;
+  heart_rate_bpm?: number | null;
 }
 
 export interface DeviceStatusEvent {

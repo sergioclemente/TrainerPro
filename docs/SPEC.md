@@ -43,10 +43,10 @@ TrainerPro/
 │   │   │   ├── src/journal.rs      # JSONL read/write
 │   │   │   └── src/fit/            # encoder: profile.rs (generated), encode.rs, crc.rs
 │   │   ├── tp-ble/             # btleplug drivers
-│   │   │   ├── src/traits.rs       # Trainer / HeartRateMonitor traits
+│   │   │   ├── src/traits.rs       # per-link device contracts
 │   │   │   ├── src/ftms.rs
 │   │   │   ├── src/hrm.rs
-│   │   │   ├── src/manager.rs      # scan, connect, reconnect
+│   │   │   ├── src/manager.rs      # scan and physical connection setup
 │   │   │   └── src/sim.rs          # simulated trainer + HRM
 │   │   └── tp-app/             # tauri shell: IPC commands, event bridge, SQLite, paths
 │   └── tauri.conf.json
@@ -182,25 +182,29 @@ identical bytes returns the existing entry.
 
 ## 4. BLE layer (`tp-ble`)
 
-### 4.1 Traits (everything above this file is hardware-agnostic)
+### 4.1 Connection traits (everything above this file is hardware-agnostic)
 
 ```rust
 #[async_trait]
-pub trait Trainer: Send {
-    async fn set_target_power(&mut self, watts: u16) -> Result<(), BleError>;
-    async fn set_sim_grade_zero(&mut self) -> Result<(), BleError>;   // FreeRide
-    async fn start(&mut self) -> Result<(), BleError>;
-    async fn stop(&mut self) -> Result<(), BleError>;                 // pause
-    async fn reset(&mut self) -> Result<(), BleError>;
-    fn telemetry(&self) -> broadcast::Receiver<TrainerData>;          // per-notification
-    fn status(&self) -> watch::Receiver<DeviceStatus>;
+pub trait TrainerConnection: Send + Sync {
+    async fn disconnect(&mut self) -> Result<(), BleError>;
+    async fn probe_connection(&self) -> Result<bool, BleError>; // one-off boundary probe
+    async fn set_target_power(&self, watts: u16) -> Result<(), BleError>;
+    async fn set_flat_road_simulation(&self) -> Result<(), BleError>; // FreeRide
+    async fn start_or_resume_training(&self) -> Result<(), BleError>;
+    async fn pause_training(&self) -> Result<(), BleError>;
+    async fn reset_trainer(&self) -> Result<(), BleError>;
+    fn subscribe_measurements(&self) -> broadcast::Receiver<TrainerMeasurement>;
+    fn subscribe_status(&self) -> watch::Receiver<ConnectionStatus>;
 }
-pub struct TrainerData { pub power_w: Option<u16>, pub cadence_rpm: Option<f32>,
-                         pub speed_kmh: Option<f32>, pub at: Instant }
-pub enum DeviceStatus { Disconnected, Connecting, Connected, Reconnecting { attempt: u32 } }
+pub struct TrainerMeasurement { pub power_w: Option<u16>, pub cadence_rpm: Option<f32>,
+                                pub speed_kmh: Option<f32> }
+pub enum ConnectionStatus { Disconnected, Connecting, Connected }
 ```
 
-`HeartRateMonitor` mirrors this with `HrData { bpm: u16 }`.
+`HeartRateConnection` provides the same disconnect, measurement, and status
+shape with `HeartRateMeasurement { bpm: u16 }`. These traits describe one
+replaceable link; they do not own selection or reconnection policy.
 
 ### 4.2 FTMS driver (`ftms.rs`)
 
@@ -231,7 +235,7 @@ specific error):
 | Reset | `01` | end of ride |
 | Set Target Power | `05` + sint16 LE watts | ERG target changes + keep-alive |
 | Start/Resume | `07` | ride start / resume |
-| Stop/Pause | `08 01` | pause |
+| Stop/Pause | `08 02` | pause |
 | Set Indoor Bike Simulation | `11` + wind sint16(0.001 m/s)=0, grade sint16(0.01 %)=0, crr uint8(0.0001)=40, cw uint8(0.01)=51 | entering FreeRide |
 
 Serialize CP writes: one in flight, 2 s response timeout, one retry, then
@@ -262,24 +266,38 @@ Service `0x180D`, char `0x2A37` notify. Flags byte bit 0: 0 ⇒ uint8 bpm at
 offset 1; 1 ⇒ uint16 LE at offset 1. Ignore RR/energy fields. HR of 0 is
 reported as `None` (sensor warming up).
 
-### 4.4 Device manager (`manager.rs`)
+### 4.4 Device ownership and discovery
 
 - **Scan**: btleplug central scan, filter to advertised services `0x1826`
   (role Trainer) / `0x180D` (role HRM); emit `{platform_id, name, rssi, role}`
   deduped, sorted by RSSI. Stop scan on connect or explicit stop.
+- **Adapter coordination**: `tp-ble::DeviceManager` owns lazy adapter
+  initialization, public-scan cancellation, and exclusive scan/connection
+  setup. A connection request cancels and awaits an active public scan;
+  trainer and HRM setup are serialized, but established links and their
+  notification streams operate concurrently.
+- **Owners**: tp-app keeps one long-lived `Trainer` and one long-lived
+  `HeartRateMonitor`. Each owns at most one selected device and privately
+  replaces an `Option<Box<dyn ...Connection>>`. Consumers retain the owner
+  and its stable `DeviceState`/measurement subscriptions across reconnects;
+  `DeviceState` carries a `DeviceStatus` that adds `Reconnecting { attempt }`
+  to the link-level states. They do
+  not swap optional connection handles. V1 deliberately has one HRM owner;
+  multi-HRM support can later compose several owners without changing the
+  per-connection contract.
 - **Saved devices**: table `devices(role PRIMARY KEY, platform_id, name)` —
-  exactly one trainer + one HRM. On app start and every 10 s while
-  disconnected, attempt reconnect to saved devices (silent, no UI modal).
+  exactly one trainer + one HRM. On app start, make two silent attempts to
+  reconnect each saved device; the Devices screen remains the manual fallback.
 - **Reconnect on drop**: attempts at +0 s, 1, 2, 5, 10, then every 15 s
   forever until user cancels. On success: re-run connect sequence incl.
-  Request Control, re-send current target, emit `Connected`. Player behavior
-  on drop is in §5.4.
+  Request Control and emit `Connected`; Resume re-sends the current target.
+  Player behavior on drop is in §5.4.
 - macOS note: btleplug returns opaque peripheral UUIDs that are stable
   per-machine — store those, never MAC addresses.
 
 ### 4.5 Simulator (`sim.rs`)
 
-`SimTrainer` implements `Trainer`; drives all dev/CI work:
+`SimTrainer` implements `TrainerConnection`; drives all dev/CI work:
 - Power response: 4 Hz ticks, `p += (target − p)·(1 − e^(−dt/τ))`, τ = 1.5 s,
   plus N(0, 5 W) noise, floor 0.
 - Cadence: 88 ± 3 rpm while target > 0; 0 when target = 0 for > 5 s.
@@ -326,12 +344,12 @@ Rules:
 ### 5.2 Player runtime (async, in `tp-app`)
 
 - Tick loop: 250 ms interval → `Engine::handle(Tick)` → execute effects
-  against the `Trainer` trait.
+  against the stable `Trainer` owner.
 - **Keep-alive**: independent 10 s timer re-sends last target while Riding
   (some firmware drops ERG after CP silence).
-- **Recorder sampling**: 1 Hz wall-clock tick reads latest telemetry snapshot
+- **Recorder sampling**: 1 Hz wall-clock tick reads the latest measurement snapshot
   (see §6). Trainer notifications update the snapshot at native rate.
-- UI telemetry event: forwarded per BLE notification, throttled to max 4 Hz.
+- UI player-measurement event: forwarded per BLE notification, throttled to max 4 Hz.
 - **Live totals** (avg power, NP, TSS, EF, kcal on `player_state`) are computed
   from the same 1 Hz series and the same `metrics` functions as the post-ride
   totals in §6 — the in-ride number and the summary number cannot disagree.
@@ -512,9 +530,10 @@ Events (Rust → UI, `tauri::Emitter`):
 
 | Event | Payload | Rate |
 |---|---|---|
-| `telemetry` | `{power, cadence, hr, target, smoothed3s}` | ≤ 4 Hz |
+| `player_measurement` | `{power_w, cadence_rpm, heart_rate_bpm, power_smoothed_3s_w}` | ≤ 4 Hz |
 | `player_state` | `{phase, seg_idx, seg_remaining_s, elapsed_s, ride_s, intensity, lap_avg_power, np, tss, ef, kcal}` | 1 Hz + on transitions |
-| `device_status` | `{role, status, attempt?}` | on change |
+| `device_status` | `{role, status, attempt?, name?}` | on change |
+| `device_measurement` | `{role, power_w?, cadence_rpm?, heart_rate_bpm?}` | trainer 1 Hz / HRM notifications |
 | `scan_result` | `{role, platform_id, name, rssi}` | as found |
 | `text_event` | `{message, duration_s}` | on fire |
 | `ride_finished` | `RideSummary` | once |
@@ -597,7 +616,7 @@ Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
 |---|---|---|
 | M0 | Scaffold: Tauri app boots, workspace crates, CI green, SQLite migrations run | `pnpm tauri dev` shows shell; CI passes |
 | M1 | Parsers + Library UI + graph thumbnails | corpus parses clean; ZWO cooldown-direction check resolved; import UX incl. warnings works |
-| M2 | BLE: scan/pair/save, FTMS driver, live telemetry view, manual target slider (dev screen), SimTrainer | holds 150 W ±5 W on real KICKR Core for 5 min; survives BT toggle; fault-injection tests green |
+| M2 | BLE: scan/pair/save, FTMS driver, live measurement view, manual target slider (dev screen), SimTrainer | holds 150 W ±5 W on real KICKR Core for 5 min; survives BT toggle; fault-injection tests green |
 | M3 | Engine + Player UI + HRM + keep-alive + reconnect flow | full 45-min workout hands-free on hardware incl. ramps, skip, intensity, text events |
 | M4 | Recorder → journal → FIT → Summary/History → export UX | FitCSVTool zero-error in CI; Garmin Connect upload shows laps/charts/load; crash-recovery replay works |
 | M5 | Polish + Windows: WinRT BLE pass, installers (mac notarized DMG, Windows MSI + signing), app icon, onboarding empty-states | fresh machine (both OS) → install → pair → ride → Garmin upload with no dev tools |
@@ -615,7 +634,7 @@ FIT-workout import.
 |---|---|
 | Engine tick | 250 ms |
 | Record sample rate | 1 Hz |
-| UI telemetry throttle | 4 Hz |
+| UI measurement throttle | 4 Hz |
 | Power smoothing (display) | 3 s rolling mean |
 | ERG keep-alive | 10 s |
 | CP response timeout / retries | 2 s / 1 retry |

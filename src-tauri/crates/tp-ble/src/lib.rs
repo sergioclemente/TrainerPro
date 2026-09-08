@@ -10,7 +10,11 @@ pub mod ftms;
 pub mod hrm;
 pub mod manager;
 pub mod sim;
+mod tasks;
 pub mod traits;
 
 pub use manager::{DeviceManager, Role, ScanResult};
-pub use traits::{BleError, DeviceStatus, HeartRateMonitor, HrData, Trainer, TrainerData};
+pub use traits::{
+    BleError, ConnectionStatus, HeartRateConnection, HeartRateMeasurement, TrainerConnection,
+    TrainerMeasurement,
+};

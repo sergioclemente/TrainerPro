@@ -1,7 +1,5 @@
 //! FTMS trainer driver over btleplug. SPEC.md §4.2.
 
-use std::sync::Arc;
-
 use btleplug::api::bleuuid::uuid_from_u16;
 use btleplug::api::{
     Central as _, CentralEvent, CharPropFlags, Characteristic, Peripheral as _, WriteType,
@@ -14,27 +12,43 @@ use tracing::{debug, warn};
 
 use tp_core::consts::{CP_RETRIES, CP_TIMEOUT_MS};
 
-use crate::codec;
-use crate::traits::{BleError, DeviceStatus, Trainer, TrainerData};
+use crate::codec::{self, ControlPointResponse};
+use crate::tasks::ConnectionTasks;
+use crate::traits::{BleError, ConnectionStatus, TrainerConnection, TrainerMeasurement};
 
 /// Consecutive malformed Indoor Bike Data packets treated as a link failure.
 const MAX_MALFORMED: u32 = 10;
+const MEASUREMENT_CHANNEL_CAPACITY: usize = 32;
+const CONTROL_RESPONSE_CHANNEL_CAPACITY: usize = 8;
 
-pub struct FtmsTrainer {
+/// FTMS control and measurements for one connection. The instance can outlive its
+/// link; connectivity comes from `subscribe_status()`. Reconnect creates a new instance.
+pub struct FtmsTrainerConnection {
     peripheral: Peripheral,
     cp: Characteristic,
     name: String,
-    telemetry_tx: broadcast::Sender<TrainerData>,
-    status_tx: Arc<watch::Sender<DeviceStatus>>,
+    tasks: ConnectionTasks,
+    measurements_tx: broadcast::Sender<TrainerMeasurement>,
+    status_tx: watch::Sender<ConnectionStatus>,
     /// One control-point op in flight at a time (SPEC §4.2). The mutex guards
     /// the response receiver; holding it across write+await serializes ops.
-    cp_resp: Mutex<mpsc::Receiver<(u8, u8)>>,
+    cp_resp: Mutex<mpsc::Receiver<ControlPointResponse>>,
 }
 
-impl FtmsTrainer {
+impl FtmsTrainerConnection {
     /// Full connect sequence per SPEC §4.2: discover, capability-check,
     /// subscribe, request control. Fails with a specific error at each step.
     pub async fn connect(adapter: Adapter, peripheral: Peripheral) -> Result<Self, BleError> {
+        let result = Self::establish(adapter, peripheral.clone()).await;
+        if result.is_err() {
+            // Setup can fail after opening the transport.
+            let _ = peripheral.disconnect().await;
+        }
+        result
+    }
+
+    async fn establish(adapter: Adapter, peripheral: Peripheral) -> Result<Self, BleError> {
+        let mut tasks = ConnectionTasks::default();
         let peripheral_id = peripheral.id();
         // Subscribe before connecting so a short-lived connection cannot
         // lose its disconnect event between setup steps.
@@ -101,22 +115,21 @@ impl FtmsTrainer {
             }
         }
 
-        let (telemetry_tx, _) = broadcast::channel(32);
-        let (status_tx, _) = watch::channel(DeviceStatus::Connecting);
-        let status_tx = Arc::new(status_tx);
-        let (cp_tx, cp_rx) = mpsc::channel(8);
+        let (measurements_tx, _) = broadcast::channel(MEASUREMENT_CHANNEL_CAPACITY);
+        let (status_tx, _) = watch::channel(ConnectionStatus::Connecting);
+        let (cp_tx, cp_rx) = mpsc::channel(CONTROL_RESPONSE_CHANNEL_CAPACITY);
 
-        // Notification pump: telemetry out, CP responses to the op waiter,
+        // Notification pump: measurements out, CP responses to the op waiter,
         // stream end = disconnect.
         let stream = peripheral
             .notifications()
             .await
             .map_err(|e| BleError::Transport(format!("notification stream: {e}")))?;
         {
-            let telemetry_tx = telemetry_tx.clone();
+            let measurements_tx = measurements_tx.clone();
             let status_tx = status_tx.clone();
             let mut status_rx = status_tx.subscribe();
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let mut malformed = 0u32;
                 let mut stream = stream;
                 loop {
@@ -127,7 +140,7 @@ impl FtmsTrainer {
                         },
                         changed = status_rx.changed() => {
                             if changed.is_err()
-                                || *status_rx.borrow() == DeviceStatus::Disconnected
+                                || *status_rx.borrow() == ConnectionStatus::Disconnected
                             {
                                 break;
                             }
@@ -138,7 +151,7 @@ impl FtmsTrainer {
                         match codec::parse_indoor_bike_data(&n.value) {
                             Ok(d) => {
                                 malformed = 0;
-                                let _ = telemetry_tx.send(d);
+                                let _ = measurements_tx.send(d);
                             }
                             Err(e) => {
                                 malformed += 1;
@@ -155,40 +168,43 @@ impl FtmsTrainer {
                     }
                     // FTMS Status (0x2ADA) is informational; ignored in v1.
                 }
-                status_tx.send_replace(DeviceStatus::Disconnected);
-            });
+                status_tx.send_replace(ConnectionStatus::Disconnected);
+            }));
         }
 
-        let trainer = FtmsTrainer {
+        let mut trainer = FtmsTrainerConnection {
             peripheral,
             cp,
             name,
-            telemetry_tx,
+            tasks,
+            measurements_tx,
             status_tx,
             cp_resp: Mutex::new(cp_rx),
         };
 
         debug!("ftms connect: requesting control");
-        trainer.cp_op(codec::request_control(), codec::CP_REQUEST_CONTROL).await?;
-        trainer.status_tx.send_replace(DeviceStatus::Connected);
+        trainer
+            .cp_op(codec::request_control(), codec::CP_REQUEST_CONTROL)
+            .await?;
+        trainer.status_tx.send_replace(ConnectionStatus::Connected);
 
         // On CoreBluetooth, a peripheral notification stream can remain open
         // after link loss. The adapter event is the authoritative disconnect
         // signal; the notification pump remains a secondary fallback.
         {
             let status_tx = trainer.status_tx.clone();
-            tokio::spawn(async move {
+            trainer.tasks.push(tokio::spawn(async move {
                 while let Some(event) = adapter_events.next().await {
                     if matches!(
                         event,
                         CentralEvent::DeviceDisconnected(ref id) if id == &peripheral_id
                     ) {
-                        status_tx.send_replace(DeviceStatus::Disconnected);
+                        status_tx.send_replace(ConnectionStatus::Disconnected);
                         return;
                     }
                 }
-                status_tx.send_replace(DeviceStatus::Disconnected);
-            });
+                status_tx.send_replace(ConnectionStatus::Disconnected);
+            }));
         }
         Ok(trainer)
     }
@@ -205,15 +221,18 @@ impl FtmsTrainer {
                 .await
                 .map_err(|e| BleError::Transport(format!("cp write {:#04x}: {e}", op)))?;
             match timeout(Duration::from_millis(CP_TIMEOUT_MS), rx.recv()).await {
-                Ok(Some((resp_op, result))) => {
-                    if resp_op != op {
-                        warn!("CP response op mismatch: sent {op:#04x} got {resp_op:#04x}");
+                Ok(Some(response)) => {
+                    if response.request_opcode != op {
+                        warn!(
+                            "CP response op mismatch: sent {op:#04x} got {:#04x}",
+                            response.request_opcode
+                        );
                         continue;
                     }
-                    return if result == codec::CP_RESULT_SUCCESS {
+                    return if response.result_code == codec::CP_RESULT_SUCCESS {
                         Ok(())
                     } else {
-                        Err(BleError::ControlRefused(result))
+                        Err(BleError::ControlRefused(response.result_code))
                     };
                 }
                 Ok(None) => return Err(BleError::Disconnected),
@@ -226,35 +245,49 @@ impl FtmsTrainer {
 }
 
 #[async_trait::async_trait]
-impl Trainer for FtmsTrainer {
-    async fn is_connected(&self) -> Result<bool, BleError> {
+impl TrainerConnection for FtmsTrainerConnection {
+    async fn disconnect(&mut self) -> Result<(), BleError> {
+        self.status_tx.send_replace(ConnectionStatus::Disconnected);
+        let result = self
+            .peripheral
+            .disconnect()
+            .await
+            .map_err(|e| BleError::Transport(format!("disconnect: {e}")));
+        self.tasks.shutdown().await;
+        result
+    }
+    async fn probe_connection(&self) -> Result<bool, BleError> {
         self.peripheral
             .is_connected()
             .await
             .map_err(|e| BleError::Transport(format!("connection check: {e}")))
     }
     async fn set_target_power(&self, watts: u16) -> Result<(), BleError> {
-        self.cp_op(codec::set_target_power(watts), codec::CP_SET_TARGET_POWER).await
+        self.cp_op(codec::set_target_power(watts), codec::CP_SET_TARGET_POWER)
+            .await
     }
-    async fn set_sim_grade_zero(&self) -> Result<(), BleError> {
-        self.cp_op(codec::sim_grade_zero(), codec::CP_SET_INDOOR_BIKE_SIM).await
+    async fn set_flat_road_simulation(&self) -> Result<(), BleError> {
+        self.cp_op(codec::flat_road_simulation(), codec::CP_SET_INDOOR_BIKE_SIM)
+            .await
     }
-    async fn start(&self) -> Result<(), BleError> {
-        self.cp_op(codec::start_resume(), codec::CP_START_RESUME).await
+    async fn start_or_resume_training(&self) -> Result<(), BleError> {
+        self.cp_op(codec::start_or_resume_training(), codec::CP_START_RESUME)
+            .await
     }
-    async fn stop(&self) -> Result<(), BleError> {
-        self.cp_op(codec::pause(), codec::CP_STOP_PAUSE).await
+    async fn pause_training(&self) -> Result<(), BleError> {
+        self.cp_op(codec::pause_training(), codec::CP_STOP_PAUSE)
+            .await
     }
-    async fn reset(&self) -> Result<(), BleError> {
-        self.cp_op(codec::reset(), codec::CP_RESET).await
+    async fn reset_trainer(&self) -> Result<(), BleError> {
+        self.cp_op(codec::reset_trainer(), codec::CP_RESET).await
     }
-    fn telemetry(&self) -> broadcast::Receiver<TrainerData> {
-        self.telemetry_tx.subscribe()
+    fn subscribe_measurements(&self) -> broadcast::Receiver<TrainerMeasurement> {
+        self.measurements_tx.subscribe()
     }
-    fn status(&self) -> watch::Receiver<DeviceStatus> {
+    fn subscribe_status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status_tx.subscribe()
     }
-    fn name(&self) -> String {
-        self.name.clone()
+    fn name(&self) -> &str {
+        &self.name
     }
 }

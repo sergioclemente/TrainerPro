@@ -55,7 +55,7 @@ to restructure, however good the feature is:
 1. **`tp-core` stays zero-I/O, zero-async, zero-BLE/Tauri.** If your change
    needs I/O, a clock, or a network, it belongs in `tp-app` (the Tauri crate);
    `tp-core` gets the pure logic and the tests.
-2. **Hardware only behind the `Trainer` / `HeartRateMonitor` traits**
+2. **Hardware only behind the `TrainerConnection` / `HeartRateConnection` traits**
    (`crates/tp-ble/src/traits.rs`). If the simulator can't exercise your
    change, redesign it until it can.
 

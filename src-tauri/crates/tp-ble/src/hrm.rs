@@ -1,7 +1,5 @@
 //! BLE heart-rate strap driver. SPEC.md §4.3.
 
-use std::sync::Arc;
-
 use btleplug::api::bleuuid::uuid_from_u16;
 use btleplug::api::{Central as _, CentralEvent, Peripheral as _};
 use btleplug::platform::{Adapter, Peripheral};
@@ -9,18 +7,34 @@ use futures::StreamExt;
 use tokio::sync::{broadcast, watch};
 
 use crate::codec;
-use crate::traits::{BleError, DeviceStatus, HeartRateMonitor, HrData};
+use crate::tasks::ConnectionTasks;
+use crate::traits::{BleError, ConnectionStatus, HeartRateConnection, HeartRateMeasurement};
 
-pub struct HrmDevice {
+const MEASUREMENT_CHANNEL_CAPACITY: usize = 32;
+
+/// Heart-rate measurements for one BLE connection. The instance can outlive its
+/// link; connectivity comes from `subscribe_status()`. Reconnect creates a new instance.
+pub struct BleHeartRateConnection {
     name: String,
-    hr_tx: broadcast::Sender<HrData>,
-    status_tx: Arc<watch::Sender<DeviceStatus>>,
-    // Held to keep the connection alive for the device's lifetime.
-    _peripheral: Peripheral,
+    tasks: ConnectionTasks,
+    hr_tx: broadcast::Sender<HeartRateMeasurement>,
+    status_tx: watch::Sender<ConnectionStatus>,
+    // Retained peripheral handle for this connection.
+    peripheral: Peripheral,
 }
 
-impl HrmDevice {
+impl BleHeartRateConnection {
     pub async fn connect(adapter: Adapter, peripheral: Peripheral) -> Result<Self, BleError> {
+        let result = Self::establish(adapter, peripheral.clone()).await;
+        if result.is_err() {
+            // Setup can fail after opening the transport.
+            let _ = peripheral.disconnect().await;
+        }
+        result
+    }
+
+    async fn establish(adapter: Adapter, peripheral: Peripheral) -> Result<Self, BleError> {
+        let mut tasks = ConnectionTasks::default();
         let peripheral_id = peripheral.id();
         let mut adapter_events = adapter
             .events()
@@ -54,9 +68,8 @@ impl HrmDevice {
             .and_then(|p| p.local_name)
             .unwrap_or_else(|| "HR monitor".into());
 
-        let (hr_tx, _) = broadcast::channel(32);
-        let (status_tx, _) = watch::channel(DeviceStatus::Connected);
-        let status_tx = Arc::new(status_tx);
+        let (hr_tx, _) = broadcast::channel(MEASUREMENT_CHANNEL_CAPACITY);
+        let (status_tx, _) = watch::channel(ConnectionStatus::Connected);
 
         let stream = peripheral
             .notifications()
@@ -66,7 +79,7 @@ impl HrmDevice {
             let hr_tx = hr_tx.clone();
             let status_tx = status_tx.clone();
             let mut status_rx = status_tx.subscribe();
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let mut stream = stream;
                 loop {
                     let n = tokio::select! {
@@ -76,7 +89,7 @@ impl HrmDevice {
                         },
                         changed = status_rx.changed() => {
                             if changed.is_err()
-                                || *status_rx.borrow() == DeviceStatus::Disconnected
+                                || *status_rx.borrow() == ConnectionStatus::Disconnected
                             {
                                 break;
                             }
@@ -85,42 +98,59 @@ impl HrmDevice {
                     };
                     if n.uuid == uuid_from_u16(codec::CHR_HEART_RATE_MEASUREMENT) {
                         if let Ok(Some(bpm)) = codec::parse_heart_rate(&n.value) {
-                            let _ = hr_tx.send(HrData { bpm });
+                            let _ = hr_tx.send(HeartRateMeasurement { bpm });
                         }
                     }
                 }
-                status_tx.send_replace(DeviceStatus::Disconnected);
-            });
+                status_tx.send_replace(ConnectionStatus::Disconnected);
+            }));
         }
 
         {
             let status_tx = status_tx.clone();
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 while let Some(event) = adapter_events.next().await {
                     if matches!(
                         event,
                         CentralEvent::DeviceDisconnected(ref id) if id == &peripheral_id
                     ) {
-                        status_tx.send_replace(DeviceStatus::Disconnected);
+                        status_tx.send_replace(ConnectionStatus::Disconnected);
                         return;
                     }
                 }
-                status_tx.send_replace(DeviceStatus::Disconnected);
-            });
+                status_tx.send_replace(ConnectionStatus::Disconnected);
+            }));
         }
 
-        Ok(HrmDevice { name, hr_tx, status_tx, _peripheral: peripheral })
+        Ok(BleHeartRateConnection {
+            name,
+            tasks,
+            hr_tx,
+            status_tx,
+            peripheral,
+        })
     }
 }
 
-impl HeartRateMonitor for HrmDevice {
-    fn heart_rate(&self) -> broadcast::Receiver<HrData> {
+#[async_trait::async_trait]
+impl HeartRateConnection for BleHeartRateConnection {
+    async fn disconnect(&mut self) -> Result<(), BleError> {
+        self.status_tx.send_replace(ConnectionStatus::Disconnected);
+        let result = self
+            .peripheral
+            .disconnect()
+            .await
+            .map_err(|e| BleError::Transport(format!("disconnect: {e}")));
+        self.tasks.shutdown().await;
+        result
+    }
+    fn subscribe_measurements(&self) -> broadcast::Receiver<HeartRateMeasurement> {
         self.hr_tx.subscribe()
     }
-    fn status(&self) -> watch::Receiver<DeviceStatus> {
+    fn subscribe_status(&self) -> watch::Receiver<ConnectionStatus> {
         self.status_tx.subscribe()
     }
-    fn name(&self) -> String {
-        self.name.clone()
+    fn name(&self) -> &str {
+        &self.name
     }
 }
