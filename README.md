@@ -135,6 +135,9 @@ npm run tauri:qa         # launches an isolated TrainerPro QA app
 cargo test --workspace     # core, BLE codecs, planner, woz parsers
 npx tsc --noEmit           # frontend types
 
+# Packaged macOS app smoke tests
+# See backend/tests/e2e/README.md
+
 # Useful diagnostics
 TP_PARSE_FILE=some.zwo cargo test -p tp-core parse_env_file -- --ignored --nocapture
 cargo test --bin tp-app live_fetch -- --ignored --nocapture   # whatsonzwift live check
