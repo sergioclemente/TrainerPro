@@ -36,11 +36,9 @@ including fault injection.
 ## Before you push
 
 ```bash
-cd src-tauri
 cargo test --workspace
 cargo fmt --all
 cargo clippy --workspace
-cd ..
 npx tsc --noEmit
 ```
 
@@ -65,7 +63,7 @@ Two conventions worth knowing:
   ZWO text and funnels through `sources::ride_from_zwo` — sources never touch
   import, database, or player code directly.
 - **The UI is push-only.** The frontend never polls; state arrives via the
-  Tauri event stream (see `wireEvents()` in `src/state.ts`).
+  Tauri event stream (see `wireEvents()` in `frontend/state.ts`).
 
 ## Adding a workout source
 
@@ -73,7 +71,7 @@ Two conventions worth knowing:
    `sources::ride_from_zwo` (see `planner.rs` / `woz.rs` as examples).
    Config lives in the schemaless `SourceConfig` bag — no DB migration needed.
 2. Frontend: one tab component + one descriptor appended to
-   `src/sources.ts`. The Libraries settings form is generated from the
+   `frontend/sources.ts`. The Libraries settings form is generated from the
    descriptor's `fields`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the diagram.

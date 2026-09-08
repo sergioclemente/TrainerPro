@@ -133,7 +133,7 @@ New keys (settings table, SPEC.md §8 conventions):
 
 ## B2. Backend: planner client + IPC
 
-New module `src-tauri/src/planner.rs` (HTTP via `reqwest`, add dependency
+New module `backend/src/planner.rs` (HTTP via `reqwest`, add dependency
 with `default-features = false, features = ["rustls-tls"]`):
 
 ```

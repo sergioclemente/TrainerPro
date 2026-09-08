@@ -1,6 +1,5 @@
-//! TrainerPro Tauri shell. SPEC.md §1 (layout note: tp-app lives at the
-//! workspace root because the Tauri CLI expects tauri.conf.json next to the
-//! app crate; tp-core/tp-ble stay under crates/).
+//! TrainerPro backend: the Tauri host, application orchestration, and I/O
+//! adapters. Reusable domain and device behavior lives in the workspace crates.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
