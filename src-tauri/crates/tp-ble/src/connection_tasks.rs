@@ -1,4 +1,4 @@
-//! Background work belongs to a connection and must stop when it is retired.
+//! Background tasks belong to a connection and must stop when it is retired.
 
 use tokio::task::JoinHandle;
 

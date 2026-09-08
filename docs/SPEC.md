@@ -44,10 +44,14 @@ TrainerPro/
 │   │   │   └── src/fit/            # encoder: profile.rs (generated), encode.rs, crc.rs
 │   │   ├── tp-ble/             # btleplug drivers
 │   │   │   ├── src/traits.rs       # per-link device contracts
-│   │   │   ├── src/ftms.rs
-│   │   │   ├── src/hrm.rs
-│   │   │   ├── src/manager.rs      # scan and physical connection setup
-│   │   │   └── src/sim.rs          # simulated trainer + HRM
+│   │   │   ├── src/codec.rs        # pure FTMS / HR packet codecs
+│   │   │   ├── src/device_manager.rs
+│   │   │   ├── src/ftms_trainer_connection.rs
+│   │   │   ├── src/ble_heart_rate_connection.rs
+│   │   │   ├── src/connection_tasks.rs
+│   │   │   ├── src/sim_trainer.rs
+│   │   │   ├── src/sim_hrm.rs
+│   │   │   └── tests/              # public simulator contract tests
 │   │   └── tp-app/             # tauri shell: IPC commands, event bridge, SQLite, paths
 │   └── tauri.conf.json
 ├── src/                        # React app (Vite + TypeScript)
@@ -206,7 +210,7 @@ pub enum ConnectionStatus { Disconnected, Connecting, Connected }
 shape with `HeartRateMeasurement { bpm: u16 }`. These traits describe one
 replaceable link; they do not own selection or reconnection policy.
 
-### 4.2 FTMS driver (`ftms.rs`)
+### 4.2 FTMS driver (`ftms_trainer_connection.rs`)
 
 Service `0x1826`. Characteristics used:
 
@@ -260,7 +264,7 @@ Parser must walk flags in order and skip unset/unused fields by size — never
 assume fixed offsets. Malformed packet (short buffer): drop packet, count it,
 `warn!`; 10 consecutive malformed → treat as disconnect.
 
-### 4.3 Heart rate driver (`hrm.rs`)
+### 4.3 Heart rate driver (`ble_heart_rate_connection.rs`)
 
 Service `0x180D`, char `0x2A37` notify. Flags byte bit 0: 0 ⇒ uint8 bpm at
 offset 1; 1 ⇒ uint16 LE at offset 1. Ignore RR/energy fields. HR of 0 is
@@ -295,7 +299,7 @@ reported as `None` (sensor warming up).
 - macOS note: btleplug returns opaque peripheral UUIDs that are stable
   per-machine — store those, never MAC addresses.
 
-### 4.5 Simulator (`sim.rs`)
+### 4.5 Simulator (`sim_trainer.rs`, `sim_hrm.rs`)
 
 `SimTrainer` implements `TrainerConnection`; drives all dev/CI work:
 - Power response: 4 Hz ticks, `p += (target − p)·(1 − e^(−dt/τ))`, τ = 1.5 s,

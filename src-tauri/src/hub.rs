@@ -7,8 +7,10 @@ use async_trait::async_trait;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{info, warn};
 
-use tp_ble::sim::{SimHrm, SimTrainer, SIM_HRM_ID, SIM_TRAINER_ID};
-use tp_ble::{BleError, DeviceManager, HeartRateConnection, Role, ScanResult, TrainerConnection};
+use tp_ble::{
+    BleError, DeviceManager, HeartRateConnection, Role, ScanResult, SimHrm, SimTrainer,
+    TrainerConnection,
+};
 
 use crate::device::DeviceStatus;
 use crate::heart_rate_monitor::{HeartRateConnector, HeartRateMonitor};
@@ -28,7 +30,7 @@ struct TrainerConnections {
 #[async_trait]
 impl TrainerConnector for TrainerConnections {
     async fn connect(&self, platform_id: &str) -> Result<Box<dyn TrainerConnection>, BleError> {
-        if platform_id == SIM_TRAINER_ID {
+        if platform_id == SimTrainer::ID {
             self.manager.cancel_scan().await;
             return Ok(Box::new(SimTrainer::new()));
         }
@@ -44,7 +46,7 @@ struct HeartRateConnections {
 #[async_trait]
 impl HeartRateConnector for HeartRateConnections {
     async fn connect(&self, platform_id: &str) -> Result<Box<dyn HeartRateConnection>, BleError> {
-        if platform_id == SIM_HRM_ID {
+        if platform_id == SimHrm::ID {
             self.manager.cancel_scan().await;
             return Ok(Box::new(SimHrm::new(self.trainer.measurement_stream())));
         }
@@ -136,13 +138,13 @@ impl DeviceHub {
     pub async fn scan(&self, app: AppHandle, role: Role) -> Result<(), BleError> {
         let sim = match role {
             Role::Trainer => ScanResult {
-                platform_id: SIM_TRAINER_ID.into(),
+                platform_id: SimTrainer::ID.into(),
                 name: "Simulated KICKR".into(),
                 rssi: None,
                 role,
             },
             Role::Hrm => ScanResult {
-                platform_id: SIM_HRM_ID.into(),
+                platform_id: SimHrm::ID.into(),
                 name: "Simulated HRM".into(),
                 rssi: None,
                 role,

@@ -13,7 +13,7 @@ use tracing::{debug, warn};
 use tp_core::consts::{CP_RETRIES, CP_TIMEOUT_MS};
 
 use crate::codec::{self, ControlPointResponse};
-use crate::tasks::ConnectionTasks;
+use crate::connection_tasks::ConnectionTasks;
 use crate::traits::{BleError, ConnectionStatus, TrainerConnection, TrainerMeasurement};
 
 /// Consecutive malformed Indoor Bike Data packets treated as a link failure.
