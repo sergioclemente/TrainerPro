@@ -7,7 +7,7 @@ use futures::StreamExt;
 use tokio::sync::{broadcast, watch};
 
 use crate::codec;
-use crate::tasks::ConnectionTasks;
+use crate::connection_tasks::ConnectionTasks;
 use crate::traits::{BleError, ConnectionStatus, HeartRateConnection, HeartRateMeasurement};
 
 const MEASUREMENT_CHANNEL_CAPACITY: usize = 32;
