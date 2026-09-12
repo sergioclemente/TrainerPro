@@ -50,11 +50,14 @@ driver implements the corresponding one-link connection trait. Connection
 replacement and retry state stay private to the owner, so the player and UI
 subscribe once and never receive an optional connection object.
 
-`tp-ble::DeviceManager` owns the adapter-level invariant: public discovery
-and trainer/HRM connection setup never overlap. This exclusivity ends when
-setup returns; established trainer and heart-rate links continue operating
-concurrently. The application hub chooses when to scan or connect without
-knowing how the Bluetooth transport is quiesced.
+`tp-ble::DeviceManager` owns adapter-level scan and connection coordination.
+Public and targeted scans are serialized. Startup uses one scan for all
+configured physical roles and begins each device's setup as soon as it is
+resolved. Discovery of the other role may continue, and resolved GATT setups
+may proceed concurrently. Established links operate concurrently. A foreground
+connection cancels public discovery, while an automatic retry waits for it. A
+saved HRM lookup is preemptible by trainer recovery. The application hub chooses
+when to scan or connect without implementing Bluetooth quiescence itself.
 
 ```mermaid
 sequenceDiagram

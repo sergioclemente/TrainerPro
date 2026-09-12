@@ -10,8 +10,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:qa": "tauri dev --config backend/tauri.qa.conf.json",
-    "tauri:qa:build": "tauri build --config backend/tauri.qa.conf.json"
+    "tauri:qa": "tauri dev --config backend/tauri.qa.conf.json --features simulator",
+    "tauri:qa:build": "tauri build --config backend/tauri.qa.conf.json --features simulator"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -193,7 +193,6 @@ export interface DeviceMeasurement {
 export interface DeviceStatusEvent {
   role: Role;
   status: "disconnected" | "connecting" | "connected" | "reconnecting";
-  attempt: number | null;
   name: string | null;
 }
 
@@ -228,7 +227,7 @@ export const ipc = {
   deleteWorkout: (id: string) => invoke<void>("delete_workout", { id }),
   getWorkoutDetail: (id: string) => invoke<WorkoutDetail>("get_workout_detail", { id }),
 
-  startScan: (role: Role) => invoke<void>("start_scan", { role }),
+  startScan: () => invoke<void>("start_scan"),
   connectDevice: (role: Role, platformId: string, name?: string) =>
     invoke<void>("connect_device", { role, platformId, name }),
   disconnectDevice: (role: Role) => invoke<void>("disconnect_device", { role }),

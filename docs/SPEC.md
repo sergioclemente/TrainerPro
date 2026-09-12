@@ -293,36 +293,50 @@ reported as `None` (sensor warming up).
 
 ### 4.4 Device ownership and discovery
 
-- **Scan**: btleplug central scan, filter to advertised services `0x1826`
-  (role Trainer) / `0x180D` (role HRM); emit `{platform_id, name, rssi, role}`
-  deduped, sorted by RSSI. Stop scan on connect or explicit stop.
+- **Scan**: one btleplug central scan filters for advertised services `0x1826`
+  (role Trainer) and `0x180D` (role HRM); emit `{platform_id, name, rssi, role}`
+  deduped by device and role, sorted by RSSI. Startup discovery similarly puts
+  every saved role's service in one filter. Stop scan on a foreground connect
+  or explicit stop.
 - **Adapter coordination**: `tp-ble::DeviceManager` owns lazy adapter
-  initialization, public-scan cancellation, and exclusive scan/connection
-  setup. A connection request cancels and awaits an active public scan;
-  trainer and HRM setup are serialized, but established links and their
-  notification streams operate concurrently.
+  initialization, public-scan cancellation, and scan/setup coordination.
+  Public and targeted scans are serialized. During startup, each saved device's
+  setup begins as soon as it is resolved while the single shared scan continues
+  looking for the other role. Resolved trainer and HRM GATT setup may proceed
+  concurrently. A foreground connection cancels an active public scan;
+  automatic recovery waits for that scan to finish. Trainer recovery can preempt
+  a background HRM lookup so an unavailable HRM cannot delay restoring the
+  required trainer.
 - **Owners**: the backend keeps one long-lived `Trainer` and one long-lived
   `HeartRateMonitor`. Each owns at most one selected device and privately
   replaces an `Option<Box<dyn ...Connection>>`. Consumers retain the owner
   and its stable `DeviceState`/measurement subscriptions across reconnects;
-  `DeviceState` carries a `DeviceStatus` that adds `Reconnecting { attempt }`
-  to the link-level states. They do
+  `DeviceState` carries a `DeviceStatus` that adds `Reconnecting` to the
+  link-level states. They do
   not swap optional connection handles. V1 deliberately has one HRM owner;
   multi-HRM support can later compose several owners without changing the
   per-connection contract.
 - **Saved devices**: table `devices(role PRIMARY KEY, platform_id, name)` —
-  exactly one trainer + one HRM. On app start, make two silent attempts to
-  reconnect each saved device; the Devices screen remains the manual fallback.
-- **Reconnect on drop**: attempts at +0 s, 1, 2, 5, 10, then every 15 s
-  forever until user cancels. On success: re-run connect sequence incl.
-  Request Control and emit `Connected`; Resume re-sends the current target.
+  exactly one trainer + one HRM. On app start, discover configured physical
+  roles in one scan. Connect each device as soon as it appears, independently
+  of the other device's discovery or setup completion. An available
+  trainer does not wait for an unavailable HRM, and a found HRM does not need a
+  second scan. Every saved role remains selected for background recovery.
+- **Reconnect**: an initially unavailable saved device and a dropped link keep
+  retrying forever until the user disconnects or forgets it. Attempts run at
+  +0 s, 1, 2, 5, 10, then every 15 s. On success: re-run the connect sequence,
+  including Request Control for the trainer, and emit `Connected`; Resume
+  re-sends the current target.
   Player behavior on drop is in §5.4.
 - macOS note: btleplug returns opaque peripheral UUIDs that are stable
   per-machine — store those, never MAC addresses.
 
 ### 4.5 Simulator (`sim_trainer.rs`, `sim_hrm.rs`)
 
-`SimTrainer` implements `TrainerConnection`; drives all dev/CI work:
+QA builds expose `SimTrainer` and `SimHrm` as explicit scan choices; production
+builds do not. Simulators never participate in startup reconnect.
+
+`SimTrainer` implements `TrainerConnection`; drives dev/CI work:
 - Power response: 4 Hz ticks, `p += (target − p)·(1 − e^(−dt/τ))`, τ = 1.5 s,
   plus N(0, 5 W) noise, floor 0.
 - Cadence: 88 ± 3 rpm while target > 0; 0 when target = 0 for > 5 s.
@@ -390,7 +404,7 @@ No auto-pause in v1 (post-v1 flag). Extend-cooldown: cut from v1.
 ### 5.4 Disconnect mid-ride
 
 Trainer drop while Riding: engine gets `Pause` (auto), banner "Trainer
-reconnecting (attempt n)…" with Cancel. On reconnect: control re-acquired,
+reconnecting…" with Cancel. On reconnect: control re-acquired,
 target re-sent, banner offers Resume (no auto-resume — the rider may have
 gotten off). HRM drop: non-blocking toast; ride continues, HR samples `None`.
 
@@ -529,7 +543,7 @@ Commands (Rust `#[tauri::command]`; TS wrappers in `frontend/ipc.ts`; all return
 ```
 workouts:  import_workout(path) -> {summary, warnings[]} · create_workout(draft)
            list_workouts() -> Summary[] · get_workout_detail(id) · delete_workout(id)
-devices:   start_scan(role) · connect_device(role, platform_id, name?)
+devices:   start_scan() · connect_device(role, platform_id, name?)
            disconnect_device(role) · forget_device(role) · get_device_state() -> DeviceSlot[]
 player:    load_workout(id) -> PlayerState · start_ride() · pause_ride() · resume_ride()
            skip_segment() · set_intensity(pct) · set_erg(enabled)
@@ -561,7 +575,7 @@ Events (Rust → UI, `tauri::Emitter`):
 |---|---|---|
 | `player_measurement` | `{power_w, cadence_rpm, heart_rate_bpm, power_smoothed_3s_w}` | ≤ 4 Hz |
 | `player_state` | `{phase, seg_idx, seg_remaining_s, elapsed_s, ride_s, intensity, lap_avg_power, np, tss, ef, kcal}` | 1 Hz + on transitions |
-| `device_status` | `{role, status, attempt?, name?}` | on change |
+| `device_status` | `{role, status, name?}` | on change |
 | `device_measurement` | `{role, power_w?, cadence_rpm?, heart_rate_bpm?}` | trainer 1 Hz / HRM notifications |
 | `scan_result` | `{role, platform_id, name, rssi}` | as found |
 | `text_event` | `{message, duration_s}` | on fire |

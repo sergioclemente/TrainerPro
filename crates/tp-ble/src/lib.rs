@@ -15,7 +15,7 @@ mod sim_trainer;
 pub mod traits;
 
 pub use ble_heart_rate_connection::BleHeartRateConnection;
-pub use device_manager::{DeviceManager, Role, ScanResult};
+pub use device_manager::{ConnectionPriority, DeviceManager, Role, ScanResult};
 pub use ftms_trainer_connection::FtmsTrainerConnection;
 pub use sim_hrm::SimHrm;
 pub use sim_trainer::SimTrainer;

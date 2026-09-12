@@ -14,20 +14,20 @@ export default function Devices() {
     refreshDevices,
   } = useStore();
 
-  async function scan(role: Role) {
-    useStore.setState({ scanning: role, scanResults: [] });
+  async function scan() {
+    useStore.setState({ scanning: true, scanResults: [] });
     try {
-      await ipc.startScan(role);
+      await ipc.startScan();
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
-      useStore.setState({ scanning: null });
+      useStore.setState({ scanning: false });
     }
   }
 
   async function connect(role: Role, platformId: string, name: string) {
     try {
       await ipc.connectDevice(role, platformId, name);
-      useStore.setState({ scanning: null, scanResults: [] });
+      useStore.setState({ scanning: false, scanResults: [] });
       await refreshDevices();
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
@@ -38,13 +38,18 @@ export default function Devices() {
     <div className="screen">
       <header className="screen-head">
         <h1>Devices</h1>
+        <button onClick={scan} disabled={scanning}>
+          {scanning ? "Scanning…" : "Scan for devices"}
+        </button>
       </header>
       <div className="device-slots">
         {(["trainer", "hrm"] as Role[]).map((role) => {
           const slot = devices.find((d) => d.role === role);
           const status = deviceStatus[role];
-          const connected = slot?.connected ?? false;
+          const connected = status ? status.status === "connected" : (slot?.connected ?? false);
           const connecting = status?.status === "connecting";
+          const reconnecting = status?.status === "reconnecting";
+          const active = connecting || reconnecting;
           const reading = deviceMeasurement[role];
           const live =
             connected && reading
@@ -67,9 +72,9 @@ export default function Devices() {
                     ● {status?.name ?? slot?.saved_name ?? "connected"}
                     {live && <span className="live-reading"> {live}</span>}
                   </span>
-                ) : status?.status === "reconnecting" ? (
+                ) : reconnecting ? (
                   <span className="status warn">
-                    ● reconnecting… (attempt {status.attempt})
+                    ● reconnecting to {status.name ?? slot?.saved_name ?? "saved device"}…
                   </span>
                 ) : slot?.saved_name ? (
                   <span className="status muted">○ {slot.saved_name} (saved)</span>
@@ -78,7 +83,7 @@ export default function Devices() {
                 )}
               </div>
               <div className="row gap">
-                {!connected && slot?.saved_platform_id && (
+                {!connected && !active && slot?.saved_platform_id && (
                   <button
                     className="primary"
                     disabled={connecting}
@@ -89,14 +94,11 @@ export default function Devices() {
                     {connecting ? "Connecting…" : "Connect"}
                   </button>
                 )}
-                {connected && (
+                {(connected || active) && (
                   <button onClick={() => ipc.disconnectDevice(role).then(refreshDevices)}>
-                    Disconnect
+                    {connected ? "Disconnect" : "Stop trying"}
                   </button>
                 )}
-                <button onClick={() => scan(role)} disabled={scanning !== null || connecting}>
-                  {scanning === role ? "Scanning…" : "Scan"}
-                </button>
                 {slot?.saved_platform_id && (
                   <button
                     className="danger"
@@ -106,7 +108,7 @@ export default function Devices() {
                   </button>
                 )}
               </div>
-              {scanning === role || scanResults.some((r) => r.role === role) ? (
+              {scanning || scanResults.some((r) => r.role === role) ? (
                 <ul className="scan-list">
                   {scanResults
                     .filter((r) => r.role === role)
@@ -124,17 +126,13 @@ export default function Devices() {
                         </button>
                       </li>
                     ))}
-                  {scanning === role && <li className="muted">searching…</li>}
+                  {scanning && <li className="muted">searching…</li>}
                 </ul>
               ) : null}
             </div>
           );
         })}
       </div>
-      <p className="muted footnote">
-        The Simulated KICKR / HRM entries always appear in scans — use them to try
-        TrainerPro without hardware.
-      </p>
     </div>
   );
 }

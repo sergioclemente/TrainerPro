@@ -3,6 +3,8 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tp_ble::Role;
+#[cfg(not(feature = "simulator"))]
+use tp_ble::{SimHrm, SimTrainer};
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
@@ -26,17 +28,16 @@ fn role_from(s: &str) -> R<Role> {
 }
 
 #[tauri::command]
-pub async fn start_scan(app: AppHandle, state: State<'_, AppState>, role: String) -> R<()> {
-    let role = role_from(&role)?;
+pub async fn start_scan(app: AppHandle, state: State<'_, AppState>) -> R<()> {
     let app2 = app.clone();
     tokio::spawn(async move {
         let state = app2.state::<AppState>();
-        if let Err(e) = state.hub.scan(app2.clone(), role).await {
+        if let Err(e) = state.hub.scan(app2.clone()).await {
             let _ = app2.emit("toast", serde_json::json!({
                 "level": "error", "message": format!("Scan failed: {e}"),
             }));
         }
-        let _ = app2.emit("scan_done", serde_json::json!({ "role": role }));
+        let _ = app2.emit("scan_done", ());
     });
     let _ = state; // scan runs detached; command returns immediately
     Ok(())
@@ -50,6 +51,20 @@ pub async fn connect_device(
     name: Option<String>,
 ) -> R<()> {
     let role_e = role_from(&role)?;
+    let already_saved = {
+        let conn = state.db.lock().unwrap();
+        conn.query_row(
+            "SELECT platform_id FROM devices WHERE role = ?1",
+            [&role],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .is_some_and(|saved| saved == platform_id)
+    };
+    if already_saved {
+        state.hub.maintain(role_e, &platform_id).await?;
+        return Ok(());
+    }
     let dev_name = state.hub.connect(role_e, &platform_id).await?;
     let conn = state.db.lock().unwrap();
     conn.execute(
@@ -86,6 +101,11 @@ pub async fn get_device_state(state: State<'_, AppState>) -> R<Vec<DeviceSlot>> 
             .collect::<Result<Vec<_>, _>>()?;
         rows
     };
+    #[cfg(not(feature = "simulator"))]
+    let saved: Vec<_> = saved
+        .into_iter()
+        .filter(|(_, platform_id, _)| platform_id != SimTrainer::ID && platform_id != SimHrm::ID)
+        .collect();
     let find = |role: &str| saved.iter().find(|(r, _, _)| r == role);
     let trainer_connected = state.hub.trainer_connected();
     let hrm_connected = state.hub.heart_rate_monitor_connected();
