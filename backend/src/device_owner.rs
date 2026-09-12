@@ -16,7 +16,7 @@ pub enum DeviceStatus {
     Disconnected,
     Connecting,
     Connected,
-    Reconnecting { attempt: u32 },
+    Reconnecting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
