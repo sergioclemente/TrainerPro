@@ -1,4 +1,8 @@
-# Garmin and intervals.icu integration status
+# Garmin and Intervals.icu integration status
+
+> This document records current implementation and access status. The broader
+> provider product direction is in [`PRODUCT.md`](PRODUCT.md), with sequencing
+> in [`ROADMAP.md`](ROADMAP.md).
 
 TrainerPro currently produces a Garmin-compatible FIT file for every completed
 ride. The canonical FIT and its journal stay in the application data directory;
@@ -12,23 +16,31 @@ project is waiting for Garmin Developer Program access before committing to the
 authentication, token-custody, and server responsibilities that direct sync
 requires. Manual FIT upload remains the supported path in the meantime.
 
-## intervals.icu
+## Intervals.icu
 
-An optional intervals.icu post-ride upload is also planned but not implemented.
-The database already reserves `rides.icu_activity_id`; that column remains
-unused until the integration is built. There is currently no intervals.icu
-credential setting, backend client, IPC command, automatic upload, or retry UI.
+Intervals.icu is not implemented today. The database reserves
+`rides.icu_activity_id`, but there is no credential setting, backend client,
+IPC command, automatic upload, schedule pull, or retry UI.
 
-When implemented, the integration must preserve these invariants:
+The accepted direction is broader than the original post-ride-export proposal:
+Intervals.icu is the first candidate planning authority for inbound scheduled
+workouts, offline execution, activity upload, and an explicitly designed
+two-way sync. Its open API, external IDs, and calendar webhooks make that worth
+proving, but its exact authentication, polling/webhook, conflict, and device-
+export behavior remain implementation gates.
 
-- Local FIT and journal files remain authoritative.
-- Upload is best-effort and cannot make ride finalization fail.
-- A failed upload remains manually retryable from Summary or History.
-- Credentials are disabled by default and stored with the same care as other
-  source credentials.
-- The ride UUID should be used as an external identifier only after live API
-  validation proves retries are idempotent.
+When implemented, preserve these invariants:
 
-The proposed command surface is `icu_test(cfg)` and
-`icu_upload_ride(ride_id)`. Keep intervals.icu as an export sink; it must not be
-folded into the workout-source plugin layer.
+- A provider failure cannot make activity finalization fail.
+- Already-synced workouts remain executable offline.
+- Failed outbound operations are visible and retryable.
+- Stable external identities are validated against the live API before relying
+  on retry idempotency.
+- Provider-owned workouts are not silently overwritten by local changes.
+- Credentials are disabled by default and stored through the provider-
+  connection design rather than ad hoc settings.
+
+The old proposed `icu_test` / `icu_upload_ride`-only command surface and
+export-sink-only restriction are superseded. Intervals.icu should use the
+capability-specific connector and sync model in
+[`workout-platform.md`](workout-platform.md).

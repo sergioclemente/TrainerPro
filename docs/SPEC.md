@@ -1,5 +1,13 @@
 # TrainerPro — Implementation Spec (v1)
 
+> **Status:** current v1 implementation baseline. This spec intentionally
+> describes the file/library-first system that exists today. The accepted next
+> product direction is [`PRODUCT.md`](PRODUCT.md), sequenced in
+> [`ROADMAP.md`](ROADMAP.md), with target software boundaries in
+> [`workout-platform.md`](workout-platform.md). Update the relevant sections of
+> this spec as those migration PRs land; do not treat the historical workout
+> storage and navigation choices below as the target design.
+
 A macOS-first desktop indoor-cycling workout player. Load a structured workout
 file (ZWO / ERG / MRC), control a Wahoo smart trainer over BLE FTMS in ERG
 mode, record the ride, and export a Garmin-compatible .FIT activity file.

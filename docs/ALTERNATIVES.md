@@ -128,7 +128,10 @@ dependency-rot in fitness-format crates is a real observed problem.
 
 ## D6. Workout format scope
 
-*Spec picked: ZWO + ERG/MRC in, expanded flat model internally.*
+*Historical v1 choice: ZWO + ERG/MRC in, expanded flat model internally.* The
+current app still follows this path. It is superseded for connected-workout
+development by the semantic JSON and boundary-adapter decision in
+[`PRODUCT.md`](PRODUCT.md); see D10 below.
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -146,7 +149,11 @@ today's planned workout" is a killer daily-use feature.
 
 ## D7. Storage & data layer
 
-*Spec picked: files on disk (workouts, FIT, journal) + SQLite index.*
+*Historical v1 choice: files on disk (workouts, FIT, journal) + SQLite index.*
+The current app still follows this path. It is superseded for workout
+definitions and application metadata by the SQLite-authoritative direction in
+[`PRODUCT.md`](PRODUCT.md). Crash journals and generated FIT activity artifacts
+remain a separate robustness/export question.
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -191,6 +198,38 @@ real consequences:*
 
 ---
 
+## D10. Workout product orientation and canonical model
+
+*Product picked: execution-first Next Up list + provider-neutral semantic JSON
+in SQLite.*
+
+| Option | Pros | Cons |
+|---|---|---|
+| **File/library-first** (historical v1) | Simple local ownership; formats are inspectable; current code already works | Makes files part of the normal workflow; duplicates truth between files and SQLite; weak fit for synced planning providers |
+| **Calendar-first** | Matches Intervals.icu and TrainingPeaks planning; scheduled work is easy to understand | Excludes athletes who choose the next ride without a schedule; turns TrainerPro into a planner instead of focusing it on execution |
+| **Execution-first Next Up** (picked) | Opens directly on the decision the athlete needs; scheduled and recommended workouts share one execution path; external planners can retain calendar ownership | Requires an explicit projection over multiple sources and policies for overdue/future items |
+
+Next Up is a list containing `ScheduledWorkout` and
+`WorkoutRecommendation`; it is not a calendar and is not itself persisted.
+There is deliberately no queued-workout state. Recommendations show a
+training-focus tag such as Recovery Ride or Endurance Base rather than an
+algorithmic selection reason.
+
+For internal representation, Intervals.icu's text workout syntax is compact and
+LLM-friendly but is a provider parser contract, while its structured
+`workout_doc` is not a dependable public write contract. ZWO is similarly a
+useful adapter rather than a product model. A small versioned semantic JSON
+model in SQLite gives the player, sync connectors, UI, and future MCP service a
+shared contract without introducing a new crate.
+
+**What would change my mind:** a broadly adopted, versioned, documented, and
+round-trip-safe provider-neutral workout schema could replace TrainerPro's JSON
+model. Strong evidence that target athletes primarily manage schedules inside
+TrainerPro could justify a calendar surface, but not merely the presence of
+dates in connected providers.
+
+---
+
 ## Summary of the load-bearing decisions
 
 If you only pressure-test three, make it these:
@@ -202,3 +241,6 @@ If you only pressure-test three, make it these:
    own; it reorders milestone M2/M5 content.
 3. **D3 timing** — the only path into Garmin is Garmin; apply for API access
    now regardless of everything else.
+
+For connected-workout work, D10 and [`PRODUCT.md`](PRODUCT.md) supersede the
+historical D6/D7 assumptions.

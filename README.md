@@ -105,6 +105,12 @@ flowchart TD
     OSBLE -.->|BLE| DEVICES
 ```
 
+This diagram describes the current shipped architecture. The accepted next
+product direction replaces the file/library-first workout flow with an
+execution-first **Next Up** list, provider sync, and SQLite-backed semantic
+workout definitions. See [`docs/PRODUCT.md`](docs/PRODUCT.md) and the target
+flow in [`docs/workout-platform.md`](docs/workout-platform.md).
+
 Two invariants keep this portable and testable:
 
 - **`tp-core` has zero I/O and zero async** — parsers, engine, metrics, journal
@@ -116,6 +122,10 @@ Two invariants keep this portable and testable:
 
 More detail: [`docs/architecture.md`](docs/architecture.md) (source plugin
 interface, ride data flow, cross-platform notes) ·
+[`docs/PRODUCT.md`](docs/PRODUCT.md) (product direction and vocabulary) ·
+[`docs/ROADMAP.md`](docs/ROADMAP.md) (outcome sequence) ·
+[`docs/workout-platform.md`](docs/workout-platform.md) (target software design
+and PR plan) ·
 [`docs/SPEC.md`](docs/SPEC.md) (build spec) ·
 [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) (decision records) ·
 [`docs/garmin-access.md`](docs/garmin-access.md) (export integration status) ·
@@ -161,7 +171,7 @@ backend/                lifecycle, IPC, I/O, device hub, player runtime
 crates/tp-core/         pure domain: parsers, engine, metrics, journal, FIT
 crates/tp-ble/          BLE: traits, FTMS/HR drivers, simulator
 tools/                  maintained internal command-line utilities
-docs/                   spec, decision records, architecture notes
+docs/                   product, roadmap, specs, decisions, architecture notes
 assets/icon/            app icon sources (SVG masters + candidates)
 samples/                example workout files
 ```

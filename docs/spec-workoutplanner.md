@@ -1,5 +1,11 @@
 # TrainerPro ⇄ WorkoutPlanner Integration Spec (V1 — "Connected Library")
 
+> **Status:** current integration behavior and historical V1 delivery spec.
+> WorkoutPlanner remains an external workout source, but future reconciliation
+> with the provider-neutral model follows [`PRODUCT.md`](PRODUCT.md) and
+> [`workout-platform.md`](workout-platform.md). ZWO remains the current adapter,
+> not the future canonical workout representation.
+
 Chosen design: mock `assets/mocks/mock-v1-connected-library.svg` — a
 **WorkoutPlanner tab** inside TrainerPro's Workouts screen: log in once, list
 the planner's workouts, **Ride** them in TrainerPro, **Edit ↗** them in the
@@ -22,7 +28,7 @@ WorkoutPlanner (source of truth: authoring, storage)   TrainerPro (execution)
 └─────────────────────────────┘                        └──────────────────────┘
 ```
 
-- **ZWO is the interchange format.** WorkoutPlanner already generates it
+- **ZWO is the current integration adapter.** WorkoutPlanner already generates it
   (`src/visitor.ts` → `ZwiftDataVisitor`); TrainerPro already parses it
   (`tp-core::parse::zwo`). Neither side writes new format code.
 - TrainerPro NEVER parses the planner's DSL and NEVER implements an editor.

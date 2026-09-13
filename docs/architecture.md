@@ -4,6 +4,11 @@ Companion diagrams to the overview in the [README](../README.md). The full
 build spec is [`SPEC.md`](SPEC.md); design rationale and rejected alternatives
 are in [`ALTERNATIVES.md`](ALTERNATIVES.md).
 
+> **Scope:** this document describes current implemented flows. The accepted
+> connected-workout target architecture is in
+> [`workout-platform.md`](workout-platform.md), and the product behavior it
+> serves is in [`PRODUCT.md`](PRODUCT.md).
+
 ## Workout source plugin interface
 
 Workout providers are plugins around one interchange format: **ZWO**. A source

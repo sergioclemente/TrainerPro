@@ -59,13 +59,21 @@ to restructure, however good the feature is:
 
 Two conventions worth knowing:
 
-- **ZWO is the interchange format.** Every workout source ultimately produces
-  ZWO text and funnels through `workout_sources::ride_from_zwo` — sources never touch
-  import, database, or player code directly.
+- **ZWO is the current implementation's source interchange format.** Existing
+  sources funnel through `workout_sources::ride_from_zwo`. New connected-
+  workout work must follow the semantic model and transition sequence in
+  [`docs/PRODUCT.md`](docs/PRODUCT.md) and
+  [`docs/workout-platform.md`](docs/workout-platform.md); do not extend ZWO as
+  the future canonical model.
 - **The UI is push-only.** The frontend never polls; state arrives via the
   Tauri event stream (see `wireEvents()` in `frontend/state.ts`).
 
 ## Adding a workout source
+
+The steps below apply to the current source-plugin architecture. Provider-sync
+work on the roadmap uses capability-specific connectors and the canonical
+WorkoutDefinition pipeline described in
+[`docs/workout-platform.md`](docs/workout-platform.md).
 
 1. Backend: a module that produces ZWO text and calls
    `workout_sources::ride_from_zwo` (see `workout_planner_source.rs` /
