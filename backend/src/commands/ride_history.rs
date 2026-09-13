@@ -6,6 +6,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::app_error::AppError;
 use crate::app_state::AppState;
+use crate::database::activities as activity_db;
 
 type R<T> = Result<T, AppError>;
 
@@ -26,28 +27,27 @@ pub struct RideRow {
 #[tauri::command]
 pub async fn list_rides(state: State<'_, AppState>) -> R<Vec<RideRow>> {
     let conn = state.db.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT id, workout_name, started_at, timer_s, avg_power, np, tss, avg_hr,
-                completed_pct, fit_path
-         FROM rides ORDER BY started_at DESC",
-    )?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(RideRow {
-                id: r.get(0)?,
-                workout_name: r.get(1)?,
-                started_at: r.get(2)?,
-                timer_s: r.get(3)?,
-                avg_power: r.get(4)?,
-                np: r.get(5)?,
-                tss: r.get(6)?,
-                avg_hr: r.get(7)?,
-                completed_pct: r.get(8)?,
-                fit_path: r.get(9)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    Ok(activity_db::list(&conn)?
+        .into_iter()
+        .map(RideRow::from)
+        .collect())
+}
+
+impl From<activity_db::ActivityListRow> for RideRow {
+    fn from(row: activity_db::ActivityListRow) -> Self {
+        RideRow {
+            id: row.id,
+            workout_name: row.workout_name,
+            started_at: row.started_at,
+            timer_s: row.timer_s,
+            avg_power: row.avg_power,
+            np: row.np,
+            tss: row.tss,
+            avg_hr: row.avg_hr,
+            completed_pct: row.completed_pct,
+            fit_path: row.fit_path,
+        }
+    }
 }
 
 /// Deletes a ride from history: the SQLite row plus the app's own .fit and
@@ -55,21 +55,13 @@ pub async fn list_rides(state: State<'_, AppState>) -> R<Vec<RideRow>> {
 /// As…) is left alone.
 #[tauri::command]
 pub async fn delete_ride(state: State<'_, AppState>, id: String) -> R<()> {
-    let paths: Option<(String, String)> = {
+    let paths = {
         let conn = state.db.lock().unwrap();
-        let p = conn
-            .query_row(
-                "SELECT fit_path, journal_path FROM rides WHERE id = ?1",
-                [&id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .ok();
-        conn.execute("DELETE FROM rides WHERE id = ?1", [&id])?;
-        p
+        activity_db::delete(&conn, &id)?
     };
-    if let Some((fit, journal)) = paths {
-        let _ = std::fs::remove_file(fit);
-        let _ = std::fs::remove_file(journal);
+    if let Some(paths) = paths {
+        let _ = std::fs::remove_file(paths.fit_path);
+        let _ = std::fs::remove_file(paths.journal_path);
     }
     Ok(())
 }
@@ -78,8 +70,8 @@ pub async fn delete_ride(state: State<'_, AppState>, id: String) -> R<()> {
 pub async fn save_fit_as(state: State<'_, AppState>, id: String, dest_path: String) -> R<()> {
     let fit: String = {
         let conn = state.db.lock().unwrap();
-        conn.query_row("SELECT fit_path FROM rides WHERE id = ?1", [&id], |r| r.get(0))
-            .map_err(|_| AppError::new("not_found", "ride not found"))?
+        activity_db::fit_path(&conn, &id)?
+            .ok_or_else(|| AppError::new("not_found", "ride not found"))?
     };
     std::fs::copy(fit, dest_path)?;
     Ok(())
@@ -89,8 +81,8 @@ pub async fn save_fit_as(state: State<'_, AppState>, id: String, dest_path: Stri
 pub async fn reveal_fit(app: AppHandle, state: State<'_, AppState>, id: String) -> R<()> {
     let fit: String = {
         let conn = state.db.lock().unwrap();
-        conn.query_row("SELECT fit_path FROM rides WHERE id = ?1", [&id], |r| r.get(0))
-            .map_err(|_| AppError::new("not_found", "ride not found"))?
+        activity_db::fit_path(&conn, &id)?
+            .ok_or_else(|| AppError::new("not_found", "ride not found"))?
     };
     app.opener()
         .reveal_item_in_dir(&fit)

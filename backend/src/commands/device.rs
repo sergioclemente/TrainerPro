@@ -8,6 +8,7 @@ use tp_ble::{SimHrm, SimTrainer};
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
+use crate::database::devices as device_db;
 
 type R<T> = Result<T, AppError>;
 
@@ -53,13 +54,8 @@ pub async fn connect_device(
     let role_e = role_from(&role)?;
     let already_saved = {
         let conn = state.db.lock().unwrap();
-        conn.query_row(
-            "SELECT platform_id FROM devices WHERE role = ?1",
-            [&role],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .is_some_and(|saved| saved == platform_id)
+        device_db::platform_id_for_role(&conn, &role)?
+            .is_some_and(|saved| saved == platform_id)
     };
     if already_saved {
         state.hub.maintain(role_e, &platform_id).await?;
@@ -67,12 +63,12 @@ pub async fn connect_device(
     }
     let dev_name = state.hub.connect(role_e, &platform_id).await?;
     let conn = state.db.lock().unwrap();
-    conn.execute(
-        "INSERT INTO devices(role, platform_id, name, last_connected_at)
-         VALUES(?1, ?2, ?3, ?4)
-         ON CONFLICT(role) DO UPDATE SET platform_id = excluded.platform_id,
-           name = excluded.name, last_connected_at = excluded.last_connected_at",
-        rusqlite::params![role, platform_id, name.unwrap_or(dev_name), now_unix_ms() as i64],
+    device_db::upsert(
+        &conn,
+        &role,
+        &platform_id,
+        &name.unwrap_or(dev_name),
+        now_unix_ms() as i64,
     )?;
     Ok(())
 }
@@ -87,39 +83,37 @@ pub async fn disconnect_device(state: State<'_, AppState>, role: String) -> R<()
 pub async fn forget_device(state: State<'_, AppState>, role: String) -> R<()> {
     state.hub.disconnect(role_from(&role)?).await?;
     let conn = state.db.lock().unwrap();
-    conn.execute("DELETE FROM devices WHERE role = ?1", [&role])?;
+    device_db::delete(&conn, &role)?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn get_device_state(state: State<'_, AppState>) -> R<Vec<DeviceSlot>> {
-    let saved: Vec<(String, String, String)> = {
+    let saved = {
         let conn = state.db.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT role, platform_id, name FROM devices")?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        rows
+        device_db::list(&conn)?
     };
     #[cfg(not(feature = "simulator"))]
     let saved: Vec<_> = saved
         .into_iter()
-        .filter(|(_, platform_id, _)| platform_id != SimTrainer::ID && platform_id != SimHrm::ID)
+        .filter(|device| {
+            device.platform_id != SimTrainer::ID && device.platform_id != SimHrm::ID
+        })
         .collect();
-    let find = |role: &str| saved.iter().find(|(r, _, _)| r == role);
+    let find = |role: &str| saved.iter().find(|device| device.role == role);
     let trainer_connected = state.hub.trainer_connected();
     let hrm_connected = state.hub.heart_rate_monitor_connected();
     Ok(vec![
         DeviceSlot {
             role: Role::Trainer,
-            saved_name: find("trainer").map(|(_, _, n)| n.clone()),
-            saved_platform_id: find("trainer").map(|(_, p, _)| p.clone()),
+            saved_name: find("trainer").map(|device| device.name.clone()),
+            saved_platform_id: find("trainer").map(|device| device.platform_id.clone()),
             connected: trainer_connected,
         },
         DeviceSlot {
             role: Role::Hrm,
-            saved_name: find("hrm").map(|(_, _, n)| n.clone()),
-            saved_platform_id: find("hrm").map(|(_, p, _)| p.clone()),
+            saved_name: find("hrm").map(|device| device.name.clone()),
+            saved_platform_id: find("hrm").map(|device| device.platform_id.clone()),
             connected: hrm_connected,
         },
     ])

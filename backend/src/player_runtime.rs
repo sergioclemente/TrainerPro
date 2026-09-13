@@ -21,8 +21,9 @@ use tp_core::metrics::{normalized_power, session_totals, tss};
 use tp_core::model::Workout;
 
 use crate::app_error::AppError;
-use crate::heart_rate_monitor::HeartRateMonitor;
 use crate::app_state::{now_unix_ms, AppState};
+use crate::database::activities as activity_db;
+use crate::heart_rate_monitor::HeartRateMonitor;
 use crate::trainer::Trainer;
 
 const PLAYER_COMMAND_CAPACITY: usize = 16;
@@ -714,35 +715,33 @@ impl Runtime {
         }
         .min(100.0);
 
+        let fit_path_string = fit_path.to_string_lossy().into_owned();
         {
             let conn = state.db.lock().unwrap();
-            conn.execute(
-                "INSERT INTO rides (id, workout_id, workout_name, started_at, elapsed_s,
-                   timer_s, avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence,
-                   kj, ftp_used, intensity_final, fit_path, journal_path, completed_pct)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
-                rusqlite::params![
-                    self.ride_id,
-                    self.workout_id,
-                    data.header.workout_name,
-                    self.header_started_ms as i64,
-                    totals.elapsed_s,
-                    totals.timer_s,
-                    totals.avg_power,
-                    totals.max_power,
-                    totals.np,
-                    totals.if_,
-                    totals.tss,
-                    totals.avg_hr,
-                    totals.max_hr,
-                    totals.avg_cadence,
-                    totals.kj,
-                    data.header.ftp,
-                    self.engine.intensity(),
-                    fit_path.to_string_lossy(),
-                    self.journal_path,
+            activity_db::insert(
+                &conn,
+                &activity_db::NewActivity {
+                    id: &self.ride_id,
+                    workout_id: Some(&self.workout_id),
+                    workout_name: &data.header.workout_name,
+                    started_at_ms: self.header_started_ms as i64,
+                    elapsed_s: totals.elapsed_s,
+                    timer_s: totals.timer_s,
+                    avg_power: totals.avg_power,
+                    max_power: totals.max_power,
+                    np: totals.np,
+                    if_: totals.if_,
+                    tss: totals.tss,
+                    avg_hr: totals.avg_hr,
+                    max_hr: totals.max_hr,
+                    avg_cadence: totals.avg_cadence,
+                    kj: totals.kj,
+                    ftp_used: data.header.ftp,
+                    intensity_final: self.engine.intensity(),
+                    fit_path: &fit_path_string,
+                    journal_path: &self.journal_path,
                     completed_pct,
-                ],
+                },
             )?;
         }
 
@@ -761,7 +760,7 @@ impl Runtime {
             max_hr: totals.max_hr,
             kj: totals.kj,
             completed_pct,
-            fit_path: fit_path.to_string_lossy().into_owned(),
+            fit_path: fit_path_string,
             laps: laps
                 .iter()
                 .map(|l| LapRow {

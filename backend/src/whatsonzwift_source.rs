@@ -304,17 +304,26 @@ pub fn parse_collection_page(html: &str) -> Vec<(String, Workout)> {
 // Commands
 // ---------------------------------------------------------------------------
 
-fn db_get(state: &State<'_, AppState>, key: &str) -> Option<crate::workout_source_cache::Cached> {
+fn db_get(state: &State<'_, AppState>, key: &str) -> Option<crate::database::source_cache::Cached> {
     let conn = state.db.lock().unwrap();
-    crate::workout_source_cache::get(&conn, "woz", key)
+    crate::database::source_cache::get(&conn, "woz", key)
+        .ok()
+        .flatten()
 }
 
 fn db_put(state: &State<'_, AppState>, key: &str, value: &str) {
     let conn = state.db.lock().unwrap();
-    crate::workout_source_cache::put(&conn, "woz", key, None, value, crate::app_state::now_unix_ms() as i64);
+    let _ = crate::database::source_cache::put(
+        &conn,
+        "woz",
+        key,
+        None,
+        value,
+        crate::app_state::now_unix_ms() as i64,
+    );
 }
 
-fn fresh(c: &crate::workout_source_cache::Cached) -> bool {
+fn fresh(c: &crate::database::source_cache::Cached) -> bool {
     (crate::app_state::now_unix_ms() as i64) - c.fetched_at_ms < TTL_MS
 }
 

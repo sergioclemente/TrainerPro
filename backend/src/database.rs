@@ -1,8 +1,16 @@
-//! SQLite schema + migrations. SPEC.md §8. Files are truth; the DB is the
-//! queryable index.
+//! SQLite ownership boundary: schema, migrations, and focused data access.
+//! SPEC.md §8 currently treats files as workout truth; the connected-workout
+//! roadmap changes that later. Until then this module preserves the existing
+//! schema while keeping raw SQL out of commands and runtimes.
 
 use rusqlite::Connection;
 use std::path::Path;
+
+pub mod activities;
+pub mod devices;
+pub mod settings;
+pub mod source_cache;
+pub mod workouts;
 
 const MIGRATIONS: &[&str] = &[
     // v1
@@ -59,10 +67,15 @@ const MIGRATIONS: &[&str] = &[
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
+    prepare(conn)
+}
+
+fn prepare(conn: Connection) -> rusqlite::Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
-    let version: i64 =
-        conn.query_row("SELECT user_version FROM pragma_user_version", [], |r| r.get(0))?;
+    let version: i64 = conn.query_row("SELECT user_version FROM pragma_user_version", [], |r| {
+        r.get(0)
+    })?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
         conn.execute_batch(sql)?;
         conn.pragma_update(None, "user_version", (i + 1) as i64)?;
@@ -70,16 +83,8 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-/// Settings defaults, SPEC §8.
-pub fn get_setting(conn: &Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).ok()
-}
-
-pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO settings(key, value) VALUES(?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [key, value],
-    )?;
-    Ok(())
+#[cfg(test)]
+pub(super) fn test_connection() -> Connection {
+    prepare(Connection::open_in_memory().expect("open in-memory database"))
+        .expect("prepare in-memory database")
 }

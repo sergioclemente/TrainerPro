@@ -15,6 +15,7 @@ use tp_ble::{
 };
 
 use crate::app_state::AppState;
+use crate::database::devices as device_db;
 use crate::device_owner::DeviceStatus;
 use crate::heart_rate_monitor::{HeartRateConnector, HeartRateMonitor};
 use crate::trainer::{Trainer, TrainerConnector};
@@ -338,15 +339,7 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
         let state = app.state::<AppState>();
         let saved_rows: Vec<(String, String)> = {
             let conn = state.db.lock().unwrap();
-            let Ok(mut stmt) = conn.prepare("SELECT role, platform_id FROM devices") else {
-                return;
-            };
-            match stmt
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
-            {
+            match device_db::list_role_platform_ids(&conn) {
                 Ok(saved) => saved,
                 Err(_) => return,
             }

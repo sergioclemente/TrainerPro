@@ -14,7 +14,6 @@ mod player_runtime;
 mod trainer;
 mod whatsonzwift_source;
 mod workout_planner_source;
-mod workout_source_cache;
 mod workout_sources;
 
 use tauri::Manager;

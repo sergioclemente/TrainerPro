@@ -231,7 +231,9 @@ pub struct PlannerListResult {
 
 fn read_cached_list(state: &State<'_, AppState>) -> Option<PlannerListResult> {
     let conn = state.db.lock().unwrap();
-    let c = crate::workout_source_cache::get(&conn, "planner", "list")?;
+    let c = crate::database::source_cache::get(&conn, "planner", "list")
+        .ok()
+        .flatten()?;
     let rows: Vec<PlannerWorkout> = serde_json::from_str(&c.value).ok()?;
     Some(PlannerListResult { rows, from_cache: true, fetched_at_ms: c.fetched_at_ms })
 }
@@ -258,7 +260,7 @@ pub async fn planner_list(state: State<'_, AppState>) -> Result<PlannerListResul
             *state.planner_cache.lock().unwrap() = list.clone();
             let now = crate::app_state::now_unix_ms() as i64;
             let conn = state.db.lock().unwrap();
-            crate::workout_source_cache::put(
+            let _ = crate::database::source_cache::put(
                 &conn,
                 "planner",
                 "list",
@@ -295,7 +297,13 @@ pub async fn planner_ride(
             // workout — possibly stale, so say so.
             let cached = {
                 let conn = state.db.lock().unwrap();
-                crate::workout_source_cache::get(&conn, "planner", &format!("preview:{wid}"))
+                crate::database::source_cache::get(
+                    &conn,
+                    "planner",
+                    &format!("preview:{wid}"),
+                )
+                .ok()
+                .flatten()
             }
             .and_then(|c| serde_json::from_str::<StoredPreview>(&c.value).ok());
             match cached {
@@ -354,7 +362,13 @@ pub async fn planner_preview(
         // L2: persistent cache (survives restarts; enables offline).
         let db_hit = {
             let conn = state.db.lock().unwrap();
-            crate::workout_source_cache::get(&conn, "planner", &format!("preview:{wid}"))
+            crate::database::source_cache::get(
+                &conn,
+                "planner",
+                &format!("preview:{wid}"),
+            )
+            .ok()
+            .flatten()
         };
         if let Some(c) = db_hit {
             if c.content_hash.as_deref() == Some(key.as_str()) {
@@ -394,7 +408,7 @@ pub async fn planner_preview(
     state.planner_previews.lock().unwrap().insert(wid, (sha.clone(), preview.clone()));
     {
         let conn = state.db.lock().unwrap();
-        crate::workout_source_cache::put(
+        let _ = crate::database::source_cache::put(
             &conn,
             "planner",
             &format!("preview:{wid}"),

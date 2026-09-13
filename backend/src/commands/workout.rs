@@ -11,6 +11,7 @@ use tp_core::parse::{parse_ergmrc, parse_zwo, Parsed};
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
+use crate::database::workouts as workout_db;
 
 type R<T> = Result<T, AppError>;
 
@@ -118,8 +119,7 @@ pub fn import_content(
     // Duplicate: same bytes → return existing entry. SPEC §3.3.
     let existing: Option<String> = {
         let conn = state.db.lock().unwrap();
-        conn.query_row("SELECT id FROM workouts WHERE sha256 = ?1", [&sha], |r| r.get(0))
-            .ok()
+        workout_db::find_id_by_sha256(&conn, &sha)?
     };
     if let Some(id) = existing {
         let summary = get_workout_summary(state, &id)?;
@@ -136,25 +136,25 @@ pub fn import_content(
     std::fs::write(&dest, content)?;
 
     let graph = graph_points(w, ftp);
+    let graph_json = serde_json::to_string(&graph).unwrap();
+    let file_path = dest.to_string_lossy().into_owned();
     {
         let conn = state.db.lock().unwrap();
-        conn.execute(
-            "INSERT INTO workouts (id, name, description, source_format, file_path, sha256,
-               duration_s, est_if, est_tss, graph_json, imported_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-            rusqlite::params![
-                id,
-                w.name,
-                w.description,
-                fmt_str(w.source_format),
-                dest.to_string_lossy(),
-                sha,
-                w.duration_s(),
+        workout_db::insert(
+            &conn,
+            &workout_db::NewWorkout {
+                id: &id,
+                name: &w.name,
+                description: &w.description,
+                source_format: fmt_str(w.source_format),
+                file_path: &file_path,
+                sha256: &sha,
+                duration_s: w.duration_s(),
                 est_if,
                 est_tss,
-                serde_json::to_string(&graph).unwrap(),
-                now_unix_ms() as i64,
-            ],
+                graph_json: &graph_json,
+                imported_at_ms: now_unix_ms() as i64,
+            },
         )?;
     }
     Ok(ImportResult {
@@ -206,50 +206,29 @@ pub async fn create_workout(
 
 fn get_workout_summary(state: &State<'_, AppState>, id: &str) -> R<WorkoutSummary> {
     let conn = state.db.lock().unwrap();
-    conn.query_row(
-        "SELECT id, name, description, source_format, duration_s, est_if, est_tss, graph_json, origin
-         FROM workouts WHERE id = ?1",
-        [id],
-        |r| {
-            Ok(WorkoutSummary {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                description: r.get(2)?,
-                source_format: r.get(3)?,
-                duration_s: r.get(4)?,
-                est_if: r.get::<_, Option<f64>>(5)?.unwrap_or(0.0),
-                est_tss: r.get::<_, Option<f64>>(6)?.unwrap_or(0.0),
-                graph: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
-                origin: r.get(8)?,
-            })
-        },
-    )
-    .map_err(|_| AppError::new("not_found", format!("workout {id} not found")))
+    let row = workout_db::get(&conn, id)?
+        .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?;
+    Ok(summary_from_row(row))
+}
+
+fn summary_from_row(row: workout_db::WorkoutRow) -> WorkoutSummary {
+    WorkoutSummary {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        source_format: row.source_format,
+        duration_s: row.duration_s,
+        est_if: row.est_if.unwrap_or(0.0),
+        est_tss: row.est_tss.unwrap_or(0.0),
+        graph: serde_json::from_str(&row.graph_json).unwrap_or_default(),
+        origin: row.origin,
+    }
 }
 
 #[tauri::command]
 pub async fn list_workouts(state: State<'_, AppState>) -> R<Vec<WorkoutSummary>> {
     let conn = state.db.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT id, name, description, source_format, duration_s, est_if, est_tss, graph_json, origin
-         FROM workouts ORDER BY imported_at DESC",
-    )?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(WorkoutSummary {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                description: r.get(2)?,
-                source_format: r.get(3)?,
-                duration_s: r.get(4)?,
-                est_if: r.get::<_, Option<f64>>(5)?.unwrap_or(0.0),
-                est_tss: r.get::<_, Option<f64>>(6)?.unwrap_or(0.0),
-                graph: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
-                origin: r.get(8)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    Ok(workout_db::list(&conn)?.into_iter().map(summary_from_row).collect())
 }
 
 /// Removes the workout from the library: drops the SQLite row and deletes
@@ -259,11 +238,7 @@ pub async fn list_workouts(state: State<'_, AppState>) -> R<Vec<WorkoutSummary>>
 pub async fn delete_workout(state: State<'_, AppState>, id: String) -> R<()> {
     let file: Option<String> = {
         let conn = state.db.lock().unwrap();
-        let f = conn
-            .query_row("SELECT file_path FROM workouts WHERE id = ?1", [&id], |r| r.get(0))
-            .ok();
-        conn.execute("DELETE FROM workouts WHERE id = ?1", [&id])?;
-        f
+        workout_db::delete(&conn, &id)?
     };
     if let Some(f) = file {
         let _ = std::fs::remove_file(f);
@@ -388,8 +363,8 @@ pub async fn get_workout_detail(state: State<'_, AppState>, id: String) -> R<Wor
 pub fn load_workout_model(state: &State<'_, AppState>, id: &str) -> R<Workout> {
     let path: String = {
         let conn = state.db.lock().unwrap();
-        conn.query_row("SELECT file_path FROM workouts WHERE id = ?1", [id], |r| r.get(0))
-            .map_err(|_| AppError::new("not_found", format!("workout {id} not found")))?
+        workout_db::file_path(&conn, id)?
+            .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
     };
     let path = PathBuf::from(path);
     let content = std::fs::read_to_string(&path)?;

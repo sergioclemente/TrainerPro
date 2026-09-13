@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::app_error::AppError;
 use crate::app_state::AppState;
 use crate::commands::{player, workout};
+use crate::database::workouts as workout_db;
 use crate::player_runtime::PlayerState;
 
 /// ZWO text → existing import pipeline (sha256 dedup) → provenance tag →
@@ -38,9 +39,12 @@ pub async fn ride_from_zwo(
 
     {
         let conn = state.db.lock().unwrap();
-        conn.execute(
-            "UPDATE workouts SET origin = ?1, origin_id = ?2, origin_ref = ?3 WHERE id = ?4",
-            rusqlite::params![origin, origin_id, origin_ref, import.summary.id],
+        workout_db::set_origin(
+            &conn,
+            &import.summary.id,
+            origin,
+            origin_id,
+            origin_ref,
         )?;
     }
     for w in import.warnings.iter().take(3) {
