@@ -6,6 +6,10 @@ description = "TrainerPro — indoor cycling workout player"
 license = "MIT"
 repository = "https://github.com/sergioclemente/TrainerPro"
 
+[features]
+default = []
+simulator = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

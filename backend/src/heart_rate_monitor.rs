@@ -2,17 +2,22 @@
 
 use crate::device_owner::{
     self as device, ConnectionAttempt, DeviceState, DeviceStatus, Measurement, Reply,
-    COMMAND_CAPACITY,
-    MEASUREMENT_CAPACITY,
+    COMMAND_CAPACITY, MEASUREMENT_CAPACITY,
 };
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::time::Instant;
-use tp_ble::{BleError, ConnectionStatus, HeartRateConnection, HeartRateMeasurement};
+use tp_ble::{
+    BleError, ConnectionPriority, ConnectionStatus, HeartRateConnection, HeartRateMeasurement,
+};
 
 #[async_trait::async_trait]
 pub trait HeartRateConnector: Send + Sync {
-    async fn connect(&self, platform_id: &str) -> Result<Box<dyn HeartRateConnection>, BleError>;
+    async fn connect(
+        &self,
+        platform_id: &str,
+        priority: ConnectionPriority,
+    ) -> Result<Box<dyn HeartRateConnection>, BleError>;
 }
 
 /// One selected device at a time, with stable subscriptions across reconnects.
@@ -25,7 +30,12 @@ pub struct HeartRateMonitor {
 }
 
 enum Request {
-    Connect(String, Option<u64>, Reply<String>),
+    Connect {
+        platform_id: String,
+        expected_generation: Option<u64>,
+        priority: ConnectionPriority,
+        reply: Option<Reply<String>>,
+    },
     Disconnect(Reply<()>),
 }
 
@@ -56,18 +66,32 @@ impl HeartRateMonitor {
     }
 
     pub async fn connect(&self, platform_id: &str) -> Result<String, BleError> {
-        self.request(|reply| Request::Connect(platform_id.into(), None, reply))
-            .await
+        self.request(|reply| Request::Connect {
+            platform_id: platform_id.into(),
+            expected_generation: None,
+            priority: ConnectionPriority::Foreground,
+            reply: Some(reply),
+        })
+        .await
     }
 
-    /// Startup retries must not supersede a later user selection or disconnect.
-    pub async fn connect_if_generation(
+    /// Select a saved device and keep trying until it connects or a later user
+    /// action invalidates this generation.
+    pub async fn maintain_if_generation(
         &self,
         platform_id: &str,
         generation: u64,
-    ) -> Result<String, BleError> {
-        self.request(|reply| Request::Connect(platform_id.into(), Some(generation), reply))
+        initial_priority: ConnectionPriority,
+    ) -> Result<(), BleError> {
+        self.commands
+            .send(Request::Connect {
+                platform_id: platform_id.into(),
+                expected_generation: Some(generation),
+                priority: initial_priority,
+                reply: None,
+            })
             .await
+            .map_err(|_| BleError::Disconnected)
     }
 
     /// Cancels retries immediately. Completion also waits for any in-flight
@@ -113,8 +137,9 @@ async fn run(
     let mut connect_reply: Option<Reply<String>> = None;
     let mut disconnect_replies: Vec<Reply<()>> = Vec::new();
     let mut retry_at = None;
-    // None means an explicit initial attempt; Some means automatic recovery.
+    // None means a one-shot explicit attempt; Some tracks automatic recovery.
     let mut retry_attempt: Option<u32> = None;
+    let mut next_priority = ConnectionPriority::Foreground;
 
     loop {
         tokio::select! {
@@ -132,9 +157,14 @@ async fn run(
                     return;
                 };
                 match request {
-                    Request::Connect(platform_id, expected_generation, reply) => {
+                    Request::Connect {
+                        platform_id,
+                        expected_generation,
+                        priority,
+                        reply,
+                    } => {
                         if expected_generation.is_some_and(|generation| generation != state.generation) {
-                            let _ = reply.send(Err(BleError::Disconnected));
+                            if let Some(reply) = reply { let _ = reply.send(Err(BleError::Disconnected)); }
                             continue;
                         }
                         if let Some(reply) = connect_reply.take() { let _ = reply.send(Err(BleError::Disconnected)); }
@@ -146,11 +176,12 @@ async fn run(
                         if let Err(error) = retire(&mut connection, &mut connection_status, &mut connection_measurements).await {
                             state.status = DeviceStatus::Disconnected;
                             status_tx.send_replace(state.clone());
-                            let _ = reply.send(Err(error));
+                            if let Some(reply) = reply { let _ = reply.send(Err(error)); }
                             retry_at = None;
                         } else {
-                            connect_reply = Some(reply);
-                            retry_attempt = None;
+                            retry_attempt = reply.is_none().then_some(0);
+                            connect_reply = reply;
+                            next_priority = priority;
                             retry_at = Some(Instant::now());
                         }
                     }
@@ -173,14 +204,17 @@ async fn run(
             _ = device::wait_for_retry(retry_at), if pending.is_none() => {
                 retry_at = None;
                 if let Some(platform_id) = state.platform_id.clone() {
-                    if let Some(attempt) = retry_attempt {
-                        state.status = DeviceStatus::Reconnecting { attempt: attempt + 1 };
+                    if retry_attempt.is_some() {
+                        state.status = DeviceStatus::Reconnecting;
                         status_tx.send_replace(state.clone());
                     }
                     let connector = connector.clone();
+                    let priority = next_priority;
                     pending = Some(ConnectionAttempt {
                         generation: state.generation,
-                        future: Box::pin(async move { connector.connect(&platform_id).await }),
+                        future: Box::pin(async move {
+                            connector.connect(&platform_id, priority).await
+                        }),
                     });
                 }
             }
@@ -224,6 +258,7 @@ async fn run(
                         tracing::warn!("heart_rate_monitor connection failed: {error}");
                         if let Some(attempt) = retry_attempt {
                             retry_attempt = Some(attempt + 1);
+                            next_priority = ConnectionPriority::Background;
                             retry_at = Some(Instant::now() + device::retry_delay(attempt + 1));
                         } else {
                             state.status = DeviceStatus::Disconnected;
@@ -236,7 +271,7 @@ async fn run(
             status = device::connection_status(&mut connection_status) => {
                 if status == ConnectionStatus::Disconnected {
                     state.generation += 1;
-                    state.status = DeviceStatus::Reconnecting { attempt: 0 };
+                    state.status = DeviceStatus::Reconnecting;
                     status_tx.send_replace(state.clone());
                     // The status stream is authoritative: this link is already
                     // gone. Do not wait on a redundant CoreBluetooth disconnect,
@@ -245,6 +280,7 @@ async fn run(
                     connection_measurements = None;
                     connection = None;
                     retry_attempt = Some(0);
+                    next_priority = ConnectionPriority::Background;
                     retry_at = Some(Instant::now() + device::retry_delay(0));
                 }
             }
@@ -259,7 +295,7 @@ async fn run(
                     Err(broadcast::error::RecvError::Closed) => {
                         // A closed measurement stream is also a failed connection.
                         state.generation += 1;
-                        state.status = DeviceStatus::Reconnecting { attempt: 0 };
+                        state.status = DeviceStatus::Reconnecting;
                         status_tx.send_replace(state.clone());
                         if let Err(error) = retire(
                             &mut connection,
@@ -269,6 +305,7 @@ async fn run(
                             tracing::warn!("heart-rate cleanup after measurement stream closed failed: {error}");
                         }
                         retry_attempt = Some(0);
+                        next_priority = ConnectionPriority::Background;
                         retry_at = Some(Instant::now() + device::retry_delay(0));
                     }
                 }
@@ -349,6 +386,7 @@ mod tests {
     #[derive(Default)]
     struct FakeConnector {
         connections: Mutex<Vec<FakeConnectionControl>>,
+        priorities: Mutex<Vec<ConnectionPriority>>,
     }
 
     #[async_trait::async_trait]
@@ -356,7 +394,9 @@ mod tests {
         async fn connect(
             &self,
             _platform_id: &str,
+            priority: ConnectionPriority,
         ) -> Result<Box<dyn HeartRateConnection>, BleError> {
+            self.priorities.lock().unwrap().push(priority);
             let control = FakeConnectionControl::new();
             self.connections.lock().unwrap().push(control.clone());
             Ok(Box::new(FakeConnection { control }))
@@ -367,6 +407,62 @@ mod tests {
         fn connection(&self, index: usize) -> FakeConnectionControl {
             self.connections.lock().unwrap()[index].clone()
         }
+    }
+
+    #[derive(Default)]
+    struct FlakyConnector {
+        attempts: AtomicUsize,
+        priorities: Mutex<Vec<ConnectionPriority>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HeartRateConnector for FlakyConnector {
+        async fn connect(
+            &self,
+            _platform_id: &str,
+            priority: ConnectionPriority,
+        ) -> Result<Box<dyn HeartRateConnection>, BleError> {
+            self.priorities.lock().unwrap().push(priority);
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(BleError::NotFound);
+            }
+            Ok(Box::new(FakeConnection {
+                control: FakeConnectionControl::new(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_device_keeps_trying_after_initial_failure() {
+        let connector = Arc::new(FlakyConnector::default());
+        let monitor = HeartRateMonitor::new(connector.clone());
+        let mut state_rx = monitor.subscribe_state();
+
+        monitor
+            .maintain_if_generation(
+                "saved-hrm",
+                monitor.state().generation,
+                ConnectionPriority::Startup,
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if state_rx.borrow_and_update().is_connected() {
+                    break;
+                }
+                state_rx.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("saved HRM did not retry");
+
+        assert_eq!(connector.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            connector.priorities.lock().unwrap().as_slice(),
+            [ConnectionPriority::Startup, ConnectionPriority::Background]
+        );
+        assert_eq!(monitor.state().platform_id.as_deref(), Some("saved-hrm"));
     }
 
     #[tokio::test]

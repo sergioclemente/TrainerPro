@@ -5,23 +5,23 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::{AppHandle, Emitter, Manager};
-use tracing::{info, warn};
+use tracing::warn;
 
+#[cfg(feature = "simulator")]
+use tp_ble::ScanResult;
 use tp_ble::{
-    BleError, DeviceManager, HeartRateConnection, Role, ScanResult, SimHrm, SimTrainer,
+    BleError, ConnectionPriority, DeviceManager, HeartRateConnection, Role, SimHrm, SimTrainer,
     TrainerConnection,
 };
 
+use crate::app_state::AppState;
 use crate::device_owner::DeviceStatus;
 use crate::heart_rate_monitor::{HeartRateConnector, HeartRateMonitor};
-use crate::app_state::AppState;
 use crate::trainer::{Trainer, TrainerConnector};
 
 const SCAN_DURATION_S: u64 = 10;
 const DEVICE_MEASUREMENT_INTERVAL_S: u64 = 1;
 const STARTUP_RECONNECT_DELAY_MS: u64 = 1_500;
-const STARTUP_RECONNECT_ATTEMPTS: u32 = 2;
-const STARTUP_RECONNECT_RETRY_S: u64 = 5;
 
 struct TrainerConnections {
     manager: Arc<DeviceManager>,
@@ -29,31 +29,55 @@ struct TrainerConnections {
 
 #[async_trait]
 impl TrainerConnector for TrainerConnections {
-    async fn connect(&self, platform_id: &str) -> Result<Box<dyn TrainerConnection>, BleError> {
+    async fn connect(
+        &self,
+        platform_id: &str,
+        priority: ConnectionPriority,
+    ) -> Result<Box<dyn TrainerConnection>, BleError> {
         if platform_id == SimTrainer::ID {
-            self.manager.cancel_scan().await;
-            return Ok(Box::new(SimTrainer::new()));
+            #[cfg(not(feature = "simulator"))]
+            return Err(BleError::NotFound);
+            #[cfg(feature = "simulator")]
+            {
+                self.manager.quiesce_scan(priority).await;
+                return Ok(Box::new(SimTrainer::new()));
+            }
         }
-        Ok(Box::new(self.manager.connect_trainer(platform_id).await?))
+        Ok(Box::new(
+            self.manager.connect_trainer(platform_id, priority).await?,
+        ))
     }
 }
 
 struct HeartRateConnections {
     manager: Arc<DeviceManager>,
+    #[cfg(feature = "simulator")]
     trainer: Trainer,
 }
 
 #[async_trait]
 impl HeartRateConnector for HeartRateConnections {
-    async fn connect(&self, platform_id: &str) -> Result<Box<dyn HeartRateConnection>, BleError> {
+    async fn connect(
+        &self,
+        platform_id: &str,
+        priority: ConnectionPriority,
+    ) -> Result<Box<dyn HeartRateConnection>, BleError> {
         if platform_id == SimHrm::ID {
-            self.manager.cancel_scan().await;
-            return Ok(Box::new(SimHrm::new(self.trainer.measurement_stream())));
+            #[cfg(not(feature = "simulator"))]
+            return Err(BleError::NotFound);
+            #[cfg(feature = "simulator")]
+            {
+                self.manager.quiesce_scan(priority).await;
+                return Ok(Box::new(SimHrm::new(self.trainer.measurement_stream())));
+            }
         }
-        Ok(Box::new(self.manager.connect_hrm(platform_id).await?))
+        Ok(Box::new(
+            self.manager.connect_hrm(platform_id, priority).await?,
+        ))
     }
 }
 
+#[derive(Clone)]
 pub struct DeviceHub {
     manager: Arc<DeviceManager>,
     trainer: Trainer,
@@ -68,6 +92,7 @@ impl Default for DeviceHub {
         }));
         let heart_rate_monitor = HeartRateMonitor::new(Arc::new(HeartRateConnections {
             manager: manager.clone(),
+            #[cfg(feature = "simulator")]
             trainer: trainer.clone(),
         }));
         Self {
@@ -82,27 +107,24 @@ impl Default for DeviceHub {
 pub struct DeviceStatusPayload {
     pub role: Role,
     pub status: String,
-    pub attempt: Option<u32>,
     pub name: Option<String>,
 }
 
-fn status_str(status: DeviceStatus) -> (String, Option<u32>) {
+fn status_str(status: DeviceStatus) -> String {
     match status {
-        DeviceStatus::Disconnected => ("disconnected".into(), None),
-        DeviceStatus::Connecting => ("connecting".into(), None),
-        DeviceStatus::Connected => ("connected".into(), None),
-        DeviceStatus::Reconnecting { attempt } => ("reconnecting".into(), Some(attempt)),
+        DeviceStatus::Disconnected => "disconnected".into(),
+        DeviceStatus::Connecting => "connecting".into(),
+        DeviceStatus::Connected => "connected".into(),
+        DeviceStatus::Reconnecting => "reconnecting".into(),
     }
 }
 
 fn emit_device_status(app: &AppHandle, role: Role, status: DeviceStatus, name: Option<String>) {
-    let (status, attempt) = status_str(status);
     let _ = app.emit(
         "device_status",
         DeviceStatusPayload {
             role,
-            status,
-            attempt,
+            status: status_str(status),
             name,
         },
     );
@@ -134,27 +156,32 @@ impl DeviceHub {
         spawn_heart_rate_measurement_forwarder(app, self.heart_rate_monitor.clone());
     }
 
-    /// Time-boxed scan; simulator entries appear before physical devices.
-    pub async fn scan(&self, app: AppHandle, role: Role) -> Result<(), BleError> {
-        let sim = match role {
-            Role::Trainer => ScanResult {
-                platform_id: SimTrainer::ID.into(),
-                name: "Simulated KICKR".into(),
-                rssi: None,
-                role,
-            },
-            Role::Hrm => ScanResult {
-                platform_id: SimHrm::ID.into(),
-                name: "Simulated HRM".into(),
-                rssi: None,
-                role,
-            },
-        };
-        let _ = app.emit("scan_result", &sim);
+    /// One time-boxed scan discovers trainer and heart-rate advertisements.
+    pub async fn scan(&self, app: AppHandle) -> Result<(), BleError> {
+        #[cfg(feature = "simulator")]
+        {
+            let simulators = [
+                ScanResult {
+                    platform_id: SimTrainer::ID.into(),
+                    name: "Simulated KICKR".into(),
+                    rssi: None,
+                    role: Role::Trainer,
+                },
+                ScanResult {
+                    platform_id: SimHrm::ID.into(),
+                    name: "Simulated HRM".into(),
+                    rssi: None,
+                    role: Role::Hrm,
+                },
+            ];
+            for simulator in simulators {
+                let _ = app.emit("scan_result", &simulator);
+            }
+        }
 
         let app_for_result = app.clone();
         self.manager
-            .scan(role, SCAN_DURATION_S, move |result| {
+            .scan(SCAN_DURATION_S, move |result| {
                 let _ = app_for_result.emit("scan_result", &result);
             })
             .await
@@ -164,6 +191,43 @@ impl DeviceHub {
         match role {
             Role::Trainer => self.trainer.connect(platform_id).await,
             Role::Hrm => self.heart_rate_monitor.connect(platform_id).await,
+        }
+    }
+
+    /// Resume the saved selection and keep retrying until it connects or the
+    /// user disconnects, forgets it, or selects a replacement.
+    pub async fn maintain(&self, role: Role, platform_id: &str) -> Result<(), BleError> {
+        let generation = match role {
+            Role::Trainer => self.trainer.state().generation,
+            Role::Hrm => self.heart_rate_monitor.state().generation,
+        };
+        self.maintain_if_generation(
+            role,
+            platform_id,
+            generation,
+            ConnectionPriority::Foreground,
+        )
+        .await
+    }
+
+    async fn maintain_if_generation(
+        &self,
+        role: Role,
+        platform_id: &str,
+        generation: u64,
+        priority: ConnectionPriority,
+    ) -> Result<(), BleError> {
+        match role {
+            Role::Trainer => {
+                self.trainer
+                    .maintain_if_generation(platform_id, generation, priority)
+                    .await
+            }
+            Role::Hrm => {
+                self.heart_rate_monitor
+                    .maintain_if_generation(platform_id, generation, priority)
+                    .await
+            }
         }
     }
 
@@ -265,13 +329,14 @@ fn spawn_heart_rate_measurement_forwarder(app: AppHandle, monitor: HeartRateMoni
     });
 }
 
-/// On startup, try the saved devices in trainer-then-HRM order. Once an
-/// initial connection succeeds, each owner maintains its own reconnect loop.
+/// Discover both saved physical devices in one scan. Hand each role to its
+/// owner as soon as it appears so setup can start while discovery continues.
+/// Missing devices retry privately.
 pub fn spawn_startup_reconnect(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(STARTUP_RECONNECT_DELAY_MS)).await;
         let state = app.state::<AppState>();
-        let mut saved: Vec<(String, String)> = {
+        let saved_rows: Vec<(String, String)> = {
             let conn = state.db.lock().unwrap();
             let Ok(mut stmt) = conn.prepare("SELECT role, platform_id FROM devices") else {
                 return;
@@ -286,76 +351,97 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
                 Err(_) => return,
             }
         };
-        saved.sort_by_key(|(role, _)| if role == "trainer" { 0 } else { 1 });
+        let saved: Vec<(Role, String)> = saved_rows
+            .into_iter()
+            .filter_map(|(role, platform_id)| match role.as_str() {
+                "trainer" => Some((Role::Trainer, platform_id)),
+                "hrm" => Some((Role::Hrm, platform_id)),
+                _ => None,
+            })
+            .collect();
 
-        for (role_name, platform_id) in saved {
-            let role = match role_name.as_str() {
-                "trainer" => Role::Trainer,
-                "hrm" => Role::Hrm,
-                _ => continue,
-            };
-            let initial_state = match role {
-                Role::Trainer => state.hub.trainer().state(),
-                Role::Hrm => state.hub.heart_rate_monitor().state(),
-            };
-            // Any earlier user action owns this role, including an explicit
-            // disconnect. Startup recovery must never supersede it.
-            if initial_state.generation != 0 || initial_state.platform_id.is_some() {
+        let trainer_state = state.hub.trainer().state();
+        let hrm_state = state.hub.heart_rate_monitor().state();
+
+        // Simulators are an explicit QA choice and never auto-connect. Startup
+        // also yields a role once the user has acted on it.
+        let physical: Vec<(Role, String)> = saved
+            .into_iter()
+            .filter(|(role, platform_id)| {
+                let owner_state = match role {
+                    Role::Trainer => &trainer_state,
+                    Role::Hrm => &hrm_state,
+                };
+                owner_state.generation == 0
+                    && owner_state.platform_id.is_none()
+                    && !matches!(
+                        (role, platform_id.as_str()),
+                        (Role::Trainer, SimTrainer::ID) | (Role::Hrm, SimHrm::ID)
+                    )
+            })
+            .collect();
+        let trainer_generation = trainer_state.generation;
+        let hrm_generation = hrm_state.generation;
+        let callback_targets = physical.clone();
+        let callback_hub = state.hub.clone();
+        let found = match state
+            .hub
+            .manager
+            .discover_saved(&physical, move |role| {
+                let Some((_, platform_id)) = callback_targets
+                    .iter()
+                    .find(|(target_role, _)| *target_role == role)
+                else {
+                    return;
+                };
+                let generation = match role {
+                    Role::Trainer => trainer_generation,
+                    Role::Hrm => hrm_generation,
+                };
+                let platform_id = platform_id.clone();
+                let hub = callback_hub.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = hub
+                        .maintain_if_generation(
+                            role,
+                            &platform_id,
+                            generation,
+                            ConnectionPriority::Startup,
+                        )
+                        .await
+                    {
+                        warn!("could not start saved-device recovery: {error}");
+                    }
+                });
+            })
+            .await
+        {
+            Ok(found) => found,
+            Err(error) => {
+                warn!("startup saved-device discovery failed: {error}");
+                Vec::new()
+            }
+        };
+
+        for (role, platform_id) in physical {
+            if found.contains(&role) {
                 continue;
             }
-            let mut expected_generation = initial_state.generation;
-            for attempt in 1..=STARTUP_RECONNECT_ATTEMPTS {
-                let owner_state = match role {
-                    Role::Trainer => state.hub.trainer().state(),
-                    Role::Hrm => state.hub.heart_rate_monitor().state(),
-                };
-                if owner_state.is_connected()
-                    || owner_state.generation != expected_generation
-                    || (attempt == 1 && owner_state.platform_id.is_some())
-                    || (attempt > 1
-                        && owner_state.platform_id.as_deref() != Some(platform_id.as_str()))
-                {
-                    break;
-                }
-                let result = match role {
-                    Role::Trainer => {
-                        state
-                            .hub
-                            .trainer()
-                            .connect_if_generation(&platform_id, owner_state.generation)
-                            .await
-                    }
-                    Role::Hrm => {
-                        state
-                            .hub
-                            .heart_rate_monitor()
-                            .connect_if_generation(&platform_id, owner_state.generation)
-                            .await
-                    }
-                };
-                match result {
-                    Ok(name) => {
-                        info!("startup reconnect: {role_name} \"{name}\" connected");
-                        break;
-                    }
-                    Err(error) => {
-                        warn!("startup reconnect {role_name} attempt {attempt} failed: {error}");
-                        if attempt < STARTUP_RECONNECT_ATTEMPTS {
-                            let failed_state = match role {
-                                Role::Trainer => state.hub.trainer().state(),
-                                Role::Hrm => state.hub.heart_rate_monitor().state(),
-                            };
-                            if failed_state.platform_id.as_deref() != Some(platform_id.as_str()) {
-                                break;
-                            }
-                            expected_generation = failed_state.generation;
-                            tokio::time::sleep(std::time::Duration::from_secs(
-                                STARTUP_RECONNECT_RETRY_S,
-                            ))
-                            .await;
-                        }
-                    }
-                }
+            let generation = match role {
+                Role::Trainer => trainer_generation,
+                Role::Hrm => hrm_generation,
+            };
+            let result = state
+                .hub
+                .maintain_if_generation(
+                    role,
+                    &platform_id,
+                    generation,
+                    ConnectionPriority::Background,
+                )
+                .await;
+            if let Err(error) = result {
+                warn!("could not start saved-device recovery: {error}");
             }
         }
     });

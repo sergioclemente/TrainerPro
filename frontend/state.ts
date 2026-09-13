@@ -64,7 +64,7 @@ interface Store {
   workouts: WorkoutSummary[];
   devices: DeviceSlot[];
   scanResults: ScanResult[];
-  scanning: Role | null;
+  scanning: boolean;
   deviceStatus: Record<Role, DeviceStatusEvent | null>;
   deviceMeasurement: Record<Role, DeviceMeasurement | null>;
   player: PlayerState | null;
@@ -108,7 +108,7 @@ export const useStore = create<Store>((set, get) => ({
   workouts: [],
   devices: [],
   scanResults: [],
-  scanning: null,
+  scanning: false,
   deviceStatus: { trainer: null, hrm: null },
   deviceMeasurement: { trainer: null, hrm: null },
   player: null,
@@ -232,14 +232,12 @@ export async function wireEvents(): Promise<void> {
 
   await listen<ScanResult>("scan_result", (e) => {
     const cur = s.getState().scanResults;
-    if (!cur.some((r) => r.platform_id === e.payload.platform_id)) {
+    if (!cur.some((r) => r.platform_id === e.payload.platform_id && r.role === e.payload.role)) {
       s.setState({ scanResults: [...cur, e.payload] });
     }
   });
 
-  await listen<{ role: Role }>("scan_done", (e) => {
-    if (s.getState().scanning === e.payload.role) s.setState({ scanning: null });
-  });
+  await listen("scan_done", () => s.setState({ scanning: false }));
 
   await listen<DeviceStatusEvent>("device_status", (e) => {
     s.setState({
