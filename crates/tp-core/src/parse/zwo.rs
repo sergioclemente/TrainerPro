@@ -14,9 +14,9 @@
 
 use roxmltree::Node;
 
-use super::{ParseError, ParseWarning, Parsed};
+use super::{ParseError, ParseWarning, Parsed, SourceFormat};
 use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN, TEXT_EVENT_DEFAULT_S};
-use crate::model::{PowerTarget, Segment, SourceFormat, TextEvent, Workout};
+use crate::model::{ExecutableWorkout, PowerTarget, Segment, TextEvent};
 
 pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
     // Real-world exporters emit unescaped '&' in titles/messages
@@ -187,13 +187,13 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
     text_events.sort_by_key(|e| e.offset_s);
 
     Ok(Parsed {
-        workout: Workout {
+        workout: ExecutableWorkout {
             name,
             description,
-            source_format: SourceFormat::Zwo,
             segments,
             text_events,
         },
+        source_format: SourceFormat::Zwo,
         warnings,
     })
 }
@@ -446,7 +446,7 @@ mod tests {
             w.description,
             "Warmup, sweet spot, VO2 bursts, free ride, cooldown."
         );
-        assert_eq!(w.source_format, SourceFormat::Zwo);
+        assert_eq!(parsed.source_format, SourceFormat::Zwo);
         assert!(parsed.warnings.is_empty(), "unexpected: {:?}", parsed.warnings);
 
         // 1 warmup + 1 steady + 3×(on,off) + 1 ramp + 1 freeride + 1 cooldown
@@ -865,14 +865,13 @@ mod tests {
 #[cfg(test)]
 mod writer_tests {
     use super::*;
-    use crate::model::{PowerTarget, Segment, SourceFormat, TextEvent, Workout};
+    use crate::model::{ExecutableWorkout, PowerTarget, Segment, TextEvent};
 
     #[test]
     fn to_zwo_roundtrips_through_parse_zwo() {
-        let w = Workout {
+        let w = ExecutableWorkout {
             name: "RT <&> test".into(),
             description: "desc".into(),
-            source_format: SourceFormat::Zwo,
             segments: vec![
                 Segment::Ramp {
                     duration_s: 300,
@@ -913,10 +912,10 @@ mod writer_tests {
     }
 }
 
-/// Serialize a Workout back to ZWO XML (flat segments — repeats stay
+/// Serialize an executable workout back to ZWO XML (flat segments — repeats stay
 /// expanded). Lets any source's parsed model enter the files-are-truth
 /// import pipeline. Round-trips through `parse_zwo`.
-pub fn to_zwo(w: &Workout) -> String {
+pub fn to_zwo(w: &ExecutableWorkout) -> String {
     fn frac(p: &PowerTarget) -> String {
         match p {
             PowerTarget::PercentFtp(f) => format!("{f:.3}"),

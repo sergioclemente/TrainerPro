@@ -152,10 +152,11 @@ Research snapshot (2026-09-13):
 ## Workout representation and ownership
 
 SQLite is the authoritative local store for normalized workout definitions,
-schedules, activities, provider links, and sync state. A versioned semantic
-JSON document represents a workout definition inside SQLite and across
-TrainerPro APIs. It should be straightforward for deterministic code and LLMs
-to read and produce.
+schedules, activities, provider links, and sync state. **TrainerPro Workout
+(TPW)** is the versioned semantic JSON format representing a workout definition
+inside SQLite and across TrainerPro APIs. It should be straightforward for
+deterministic code and LLMs to read and produce. TPW/1 is specified in
+[`TPW.md`](TPW.md).
 
 The JSON model should borrow proven ideas from provider step trees, including
 nested repetitions, time or distance lengths, target ranges, ramps, cadence,
@@ -216,7 +217,8 @@ The following are accepted unless new product evidence changes them:
 4. Recommendations display a training-focus tag, not a selection reason.
 5. Workout definition, scheduled workout, workout session, and activity are
    distinct concepts.
-6. SQLite plus versioned semantic JSON is the canonical local workout store.
+6. SQLite plus versioned TPW semantic JSON is the canonical local workout
+   store.
 7. Workout and activity file formats are integration details at system
    boundaries.
 8. External providers are expected to supply most workouts; local authoring is

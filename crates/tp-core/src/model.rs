@@ -60,25 +60,17 @@ pub struct TextEvent {
     pub duration_s: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SourceFormat {
-    Zwo,
-    Erg,
-    Mrc,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Workout {
+pub struct ExecutableWorkout {
     pub name: String,
     pub description: String,
-    pub source_format: SourceFormat,
     /// Flat segment list; interval repeats are pre-expanded by the parser.
     pub segments: Vec<Segment>,
     /// Sorted by `offset_s`; offsets are workout-absolute.
     pub text_events: Vec<TextEvent>,
 }
 
-impl Workout {
+impl ExecutableWorkout {
     pub fn duration_s(&self) -> u32 {
         self.segments.iter().map(Segment::duration_s).sum()
     }
@@ -125,11 +117,10 @@ impl Workout {
 mod tests {
     use super::*;
 
-    fn wk(segments: Vec<Segment>) -> Workout {
-        Workout {
+    fn wk(segments: Vec<Segment>) -> ExecutableWorkout {
+        ExecutableWorkout {
             name: "t".into(),
             description: String::new(),
-            source_format: SourceFormat::Zwo,
             segments,
             text_events: vec![],
         }

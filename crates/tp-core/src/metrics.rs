@@ -3,7 +3,7 @@
 
 use crate::consts::NP_WINDOW_S;
 use crate::journal::{RideData, RideEventKind};
-use crate::model::Workout;
+use crate::model::ExecutableWorkout;
 
 /// Coggan-style 7-zone mapping from watts at a given FTP.
 /// Boundaries (% FTP): Z1 <55, Z2 55–75, Z3 76–90, Z4 91–105, Z5 106–120,
@@ -204,7 +204,7 @@ pub fn session_totals(data: &RideData, ftp: u16) -> SessionTotals {
 /// Library-display estimate for a workout at a given FTP: simulate the
 /// target power series at 1 Hz (FreeRide counts as 0 W), run NP/IF/TSS.
 /// Returns (IF, TSS).
-pub fn estimate_if_tss(workout: &Workout, ftp: u16) -> (f64, f64) {
+pub fn estimate_if_tss(workout: &ExecutableWorkout, ftp: u16) -> (f64, f64) {
     let duration_s = workout.duration_s();
     if duration_s == 0 || ftp == 0 {
         return (0.0, 0.0);
@@ -220,7 +220,7 @@ pub fn estimate_if_tss(workout: &Workout, ftp: u16) -> (f64, f64) {
 mod tests {
     use super::*;
     use crate::journal::{JournalHeader, RideEvent, Sample};
-    use crate::model::{PowerTarget, Segment, SourceFormat};
+    use crate::model::{PowerTarget, Segment};
 
     const EPS: f64 = 1e-9;
 
@@ -255,11 +255,10 @@ mod tests {
         }
     }
 
-    fn workout(segments: Vec<Segment>) -> Workout {
-        Workout {
+    fn workout(segments: Vec<Segment>) -> ExecutableWorkout {
+        ExecutableWorkout {
             name: "w".into(),
             description: String::new(),
-            source_format: SourceFormat::Zwo,
             segments,
             text_events: vec![],
         }

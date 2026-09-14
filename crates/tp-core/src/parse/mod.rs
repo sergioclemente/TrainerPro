@@ -6,7 +6,14 @@ pub mod zwo;
 pub use ergmrc::parse_ergmrc;
 pub use zwo::parse_zwo;
 
-use crate::model::Workout;
+use crate::model::ExecutableWorkout;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceFormat {
+    Zwo,
+    Erg,
+    Mrc,
+}
 
 /// Non-fatal issue found while parsing (unknown element, clamped value…).
 /// Surfaced once in the import UI; never aborts a parse.
@@ -17,7 +24,8 @@ pub struct ParseWarning {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parsed {
-    pub workout: Workout,
+    pub workout: ExecutableWorkout,
+    pub source_format: SourceFormat,
     pub warnings: Vec<ParseWarning>,
 }
 

@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use tp_core::model::{PowerTarget, Segment, SourceFormat, Workout};
+use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
 
 use crate::app_error::AppError;
 use crate::player_runtime::PlayerState;
@@ -251,7 +251,7 @@ pub fn parse_textbar(line: &str) -> Option<Vec<Segment>> {
 
 /// Parse a collection page: h3-titled workout sections, each with textbars.
 /// Workouts with any unparseable line (e.g. running pace) are skipped.
-pub fn parse_collection_page(html: &str) -> Vec<(String, Workout)> {
+pub fn parse_collection_page(html: &str) -> Vec<(String, ExecutableWorkout)> {
     let h3 = regex::Regex::new(r"<h3[^>]*>(.*?)</h3>").unwrap();
     let bar = regex::Regex::new(r#"<div class="textbar"[^>]*>(.*?)</div>"#).unwrap();
 
@@ -287,10 +287,9 @@ pub fn parse_collection_page(html: &str) -> Vec<(String, Workout)> {
             }
         }
         if ok && any && !segments.is_empty() {
-            let w = Workout {
+            let w = ExecutableWorkout {
                 name: title.clone(),
                 description: String::new(),
-                source_format: SourceFormat::Zwo,
                 segments,
                 text_events: vec![],
             };
@@ -376,7 +375,7 @@ pub async fn woz_collections(
     }
 }
 
-type CollectionEntries = Vec<(Workout, WozWorkout)>;
+type CollectionEntries = Vec<(ExecutableWorkout, WozWorkout)>;
 
 fn load_collection_from_db(state: &State<'_, AppState>, collection: &str) -> Option<CollectionEntries> {
     db_get(state, &format!("collection:{collection}"))
@@ -422,7 +421,7 @@ pub async fn woz_workouts(
             "no ridable bike workouts found in this collection",
         ));
     }
-    let entries: Vec<(Workout, WozWorkout)> = parsed
+    let entries: Vec<(ExecutableWorkout, WozWorkout)> = parsed
         .into_iter()
         .enumerate()
         .map(|(idx, (title, w))| {

@@ -29,7 +29,7 @@ flowchart LR
     DB[(SQLite)]
 
     subgraph CORE[tp-core - pure domain]
-        DEF[WorkoutDefinition JSON model]
+        DEF[TPW WorkoutDefinition]
         COMPILE[Definition compiler]
         EXEC[ExecutableWorkout]
         SESSION[WorkoutSession engine]
@@ -110,11 +110,12 @@ the same PR.
 
 ## Canonical workout representation
 
-WorkoutDefinition is versioned semantic JSON stored in SQLite. The first schema
-should support only meaning with real consumers:
+WorkoutDefinition is the in-code representation of TrainerPro Workout (TPW),
+the versioned semantic JSON stored in SQLite. TPW/1 is specified in
+[`TPW.md`](TPW.md) and supports only meaning with real consumers:
 
 - sport and descriptive metadata;
-- time- and, when required by a real provider, distance-based steps;
+- time-based steps;
 - steady targets and target ranges;
 - ramps;
 - nested repetitions;
@@ -122,9 +123,11 @@ should support only meaning with real consumers:
 - cadence targets and coaching text; and
 - a training-focus tag or provider label when available.
 
-Heart-rate, pace, open-duration, and other step semantics should enter the
-canonical model when a selected provider or execution path needs them, not in a
-speculative universal format.
+The sport-specific prescription boundary allows a later TPW version to add
+running pace or speed and incline for treadmill control. Heart-rate,
+open-duration, and other step semantics should enter the canonical model when
+a selected provider or execution path needs them, not in a speculative
+universal format.
 
 Provider identity, remote revisions, schedule placement, recommendation rank,
 and activity measurements do not belong inside WorkoutDefinition. They have
@@ -148,7 +151,7 @@ The conceptual storage model is:
 
 | Stored concept | Important relationships and state |
 |---|---|
-| Workout definitions | Semantic JSON schema version, ownership, lifecycle timestamps |
+| Workout definitions | TPW version, ownership, lifecycle timestamps |
 | Scheduled workouts | Definition reference or provider snapshot, scheduled local date/time, provider link, remote revision, sync status |
 | Activities | Optional definition/session/scheduled-workout references, start/end and summaries, recording/export locations, provider links |
 | Provider connections | Provider kind, non-secret configuration, credential reference, enabled capabilities, sync status/cursor |
@@ -290,7 +293,7 @@ and repository status as required by [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Decisions intentionally deferred
 
-- the exact WorkoutDefinition JSON schema and migration DDL;
+- the WorkoutDefinition persistence migration DDL;
 - the normalized training-focus taxonomy and provider-label mapping;
 - scheduled overdue/horizon policy and precise Next Up grouping;
 - single versus multiple active planning authorities;

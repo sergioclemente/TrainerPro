@@ -18,7 +18,7 @@ use tp_core::journal::{
     compute_laps, replay, JournalHeader, JournalWriter, RideEvent, RideEventKind, Sample,
 };
 use tp_core::metrics::{normalized_power, session_totals, tss};
-use tp_core::model::Workout;
+use tp_core::model::ExecutableWorkout;
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
@@ -121,7 +121,7 @@ fn phase_str(p: Phase) -> &'static str {
 pub async fn spawn(
     app: AppHandle,
     workout_id: String,
-    workout: Workout,
+    workout: ExecutableWorkout,
 ) -> Result<PlayerHandle, AppError> {
     let state = app.state::<AppState>();
     let trainer = state.hub.trainer().clone();

@@ -61,10 +61,10 @@ Two conventions worth knowing:
 
 - **ZWO is the current implementation's source interchange format.** Existing
   sources funnel through `workout_sources::ride_from_zwo`. New connected-
-  workout work must follow the semantic model and transition sequence in
-  [`docs/PRODUCT.md`](docs/PRODUCT.md) and
-  [`docs/workout-platform.md`](docs/workout-platform.md); do not extend ZWO as
-  the future canonical model.
+workout work must follow the TPW semantic model and transition sequence in
+[`docs/TPW.md`](docs/TPW.md), [`docs/PRODUCT.md`](docs/PRODUCT.md), and
+[`docs/workout-platform.md`](docs/workout-platform.md); do not extend ZWO as
+the future canonical model.
 - **The UI is push-only.** The frontend never polls; state arrives via the
   Tauri event stream (see `wireEvents()` in `frontend/state.ts`).
 

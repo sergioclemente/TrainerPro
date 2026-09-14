@@ -52,7 +52,8 @@ TrainerPro/
 │   │   │   ├── ride_history.rs
 │   │   │   ├── settings.rs
 │   │   │   └── workout.rs
-│   │   ├── database.rs
+│   │   ├── database.rs        # schema/migrations + database module root
+│   │   ├── database/          # focused SQL access modules
 │   │   ├── device_hub.rs
 │   │   ├── device_owner.rs
 │   │   ├── heart_rate_monitor.rs
@@ -60,12 +61,12 @@ TrainerPro/
 │   │   ├── trainer.rs
 │   │   ├── whatsonzwift_source.rs
 │   │   ├── workout_planner_source.rs
-│   │   ├── workout_source_cache.rs
 │   │   └── workout_sources.rs
 │   └── tauri.conf.json
 ├── crates/
 │   ├── tp-core/                # PURE: no I/O, no BLE, no tauri deps
-│   │   ├── src/model.rs        # Workout, Segment, PowerTarget…
+│   │   ├── src/workout_definition.rs # semantic JSON + pure compiler
+│   │   ├── src/model.rs        # executable workout, segments, targets
 │   │   ├── src/parse/zwo.rs
 │   │   ├── src/parse/ergmrc.rs
 │   │   ├── src/engine.rs       # player state machine
@@ -99,7 +100,22 @@ every function is callable from a plain unit test. `tp-ble` depends on
 
 ---
 
-## 2. Core data model (`tp-core::model`)
+## 2. Workout definition and executable model (`tp-core`)
+
+`WorkoutDefinition` is the in-code representation of **TrainerPro Workout
+(TPW)**, the provider-neutral semantic JSON format that becomes canonical in
+the persistence migration. TPW/1 is cycling-only and is specified normatively
+in [`TPW.md`](TPW.md). Its sport-discriminated prescription leaves a clean
+versioned extension point for future running and treadmill control without
+putting speculative fields into cycling steps.
+
+TPW contains prescription and descriptive metadata. Provider IDs, schedule
+placement, recommendation rank, sync state, and activity measurements remain
+outside it because they have different lifecycles. Compilation validates TPW,
+expands repeats, resolves ranges for the current ERG player, and produces an
+`ExecutableWorkout`.
+
+`ExecutableWorkout` is the flattened input consumed by the player engine:
 
 ```rust
 pub enum PowerTarget { PercentFtp(f64) /* 0.05..=3.0 */, Watts(u16) }
@@ -112,17 +128,14 @@ pub enum Segment {
 
 pub struct TextEvent { pub offset_s: u32, pub message: String, pub duration_s: u32 /* default 10 */ }
 
-pub enum SourceFormat { Zwo, Erg, Mrc }
-
-pub struct Workout {
+pub struct ExecutableWorkout {
     pub name: String,
     pub description: String,
-    pub source_format: SourceFormat,
     pub segments: Vec<Segment>,       // flat; repeats pre-expanded
     pub text_events: Vec<TextEvent>,  // offsets relative to workout start
 }
 
-impl Workout {
+impl ExecutableWorkout {
     pub fn duration_s(&self) -> u32;
     /// Resolve target at absolute offset t (None inside FreeRide).
     /// intensity is the live bias, 0.50..=1.50, applied to PercentFtp only.
@@ -136,15 +149,21 @@ Ramp → linear interpolation by elapsed fraction, resolved per-endpoint then
 interpolated in watts; round half-up to whole watts; clamp 0..=2000. Mixed
 `Watts` targets ignore intensity bias (bias applies to `PercentFtp` only).
 
+File provenance is not execution state. `SourceFormat { Zwo, Erg, Mrc }`
+therefore belongs to the parser result alongside `ExecutableWorkout`, rather
+than inside the executable model.
+
 ---
 
 ## 3. Workout parsers (`tp-core::parse`)
 
-General contract: `parse_zwo(&str) -> Result<Workout, ParseError>` /
-`parse_ergmrc(&str, ext_hint) -> Result<Workout, ParseError>`. A file either
-parses into ≥1 segment or fails with a message naming the line/element.
-Unknown elements/attributes are **collected as warnings, never errors**;
-warnings surface once in the import UI.
+General contract: `parse_zwo` and `parse_ergmrc` return `Parsed`, containing an
+`ExecutableWorkout`, its `SourceFormat`, and non-fatal warnings. A file either
+parses into at least one segment or fails with a message naming the
+line/element. Unknown elements/attributes are **collected as warnings, never
+errors**; warnings surface once in the import UI. File parsers remain boundary
+adapters; the following persistence migration will normalize their output into
+WorkoutDefinition before storing it.
 
 ### 3.1 ZWO (Zwift XML)
 

@@ -24,7 +24,13 @@ pub struct AppState {
     /// whatsonzwift caches (per app run).
     pub woz_collections: Mutex<Option<Vec<crate::whatsonzwift_source::WozCollection>>>,
     pub woz_cache: Mutex<
-        std::collections::HashMap<String, Vec<(tp_core::model::Workout, crate::whatsonzwift_source::WozWorkout)>>,
+        std::collections::HashMap<
+            String,
+            Vec<(
+                tp_core::model::ExecutableWorkout,
+                crate::whatsonzwift_source::WozWorkout,
+            )>,
+        >,
     >,
 }
 

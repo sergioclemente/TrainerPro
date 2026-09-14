@@ -18,14 +18,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN};
+use crate::consts::{
+    POWER_FRACTION_MAX, POWER_FRACTION_MIN, WORKOUT_REPEAT_COUNT_MAX,
+};
 
 /// Longest single interval the builder accepts (4 h). Guards against a stray
 /// keystroke turning 60 into 60000 rather than expressing a real limit.
 pub const MAX_SEGMENT_S: u32 = 4 * 3600;
-/// Most repetitions one Repeat may carry.
-pub const MAX_REPEAT_COUNT: u32 = 100;
-
 /// Percent-of-FTP bounds, mirroring the model's fraction bounds so we never
 /// emit a value the parser would clamp and warn about.
 pub const MIN_POWER_PCT: f64 = POWER_FRACTION_MIN * 100.0;
@@ -138,8 +137,10 @@ fn validate_node(node: &BuildNode, inside_repeat: bool) -> Result<(), BuildError
             if inside_repeat {
                 return err("a repeat cannot contain another repeat");
             }
-            if *count < 1 || *count > MAX_REPEAT_COUNT {
-                return err(format!("repeat count must be 1..={MAX_REPEAT_COUNT}, got {count}"));
+            if *count < 1 || *count > WORKOUT_REPEAT_COUNT_MAX {
+                return err(format!(
+                    "repeat count must be 1..={WORKOUT_REPEAT_COUNT_MAX}, got {count}"
+                ));
             }
             if children.is_empty() {
                 return err("a repeat needs at least one interval inside it");

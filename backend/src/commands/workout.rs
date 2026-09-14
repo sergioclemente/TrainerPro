@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use serde::Serialize;
 use sha2::Digest;
 use tauri::State;
-use tp_core::model::{PowerTarget, Segment, SourceFormat, Workout};
-use tp_core::parse::{parse_ergmrc, parse_zwo, Parsed};
+use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
+use tp_core::parse::{parse_ergmrc, parse_zwo, Parsed, SourceFormat};
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
@@ -48,7 +48,7 @@ fn fmt_str(f: SourceFormat) -> &'static str {
 }
 
 /// Graph polyline for thumbnails/player: (t_s, %FTP) breakpoints. SPEC §3.3.
-pub fn graph_points(w: &Workout, ftp: u16) -> Vec<(u32, f64)> {
+pub fn graph_points(w: &ExecutableWorkout, ftp: u16) -> Vec<(u32, f64)> {
     let pct = |p: &PowerTarget| match p {
         PowerTarget::PercentFtp(f) => f * 100.0,
         PowerTarget::Watts(watts) => f64::from(*watts) / f64::from(ftp.max(1)) * 100.0,
@@ -146,7 +146,7 @@ pub fn import_content(
                 id: &id,
                 name: &w.name,
                 description: &w.description,
-                source_format: fmt_str(w.source_format),
+                source_format: fmt_str(parsed.source_format),
                 file_path: &file_path,
                 sha256: &sha,
                 duration_s: w.duration_s(),
@@ -162,7 +162,7 @@ pub fn import_content(
             id,
             name: w.name.clone(),
             description: w.description.clone(),
-            source_format: fmt_str(w.source_format).into(),
+            source_format: fmt_str(parsed.source_format).into(),
             duration_s: w.duration_s(),
             est_if,
             est_tss,
@@ -263,7 +263,7 @@ pub struct SegmentRow {
     pub cadence_rpm: Option<u16>,
 }
 
-pub fn segment_rows(w: &Workout, ftp: u16) -> Vec<SegmentRow> {
+pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
     let pct = |p: &PowerTarget| match p {
         PowerTarget::PercentFtp(f) => f * 100.0,
         PowerTarget::Watts(watts) => f64::from(*watts) / f64::from(ftp.max(1)) * 100.0,
@@ -360,7 +360,7 @@ pub async fn get_workout_detail(state: State<'_, AppState>, id: String) -> R<Wor
 
 /// Load the full workout model (re-parsed from the stored file — files are
 /// truth, SPEC §8).
-pub fn load_workout_model(state: &State<'_, AppState>, id: &str) -> R<Workout> {
+pub fn load_workout_model(state: &State<'_, AppState>, id: &str) -> R<ExecutableWorkout> {
     let path: String = {
         let conn = state.db.lock().unwrap();
         workout_db::file_path(&conn, id)?

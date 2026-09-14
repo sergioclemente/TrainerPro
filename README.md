@@ -125,7 +125,7 @@ interface, ride data flow, cross-platform notes) ·
 [`docs/PRODUCT.md`](docs/PRODUCT.md) (product direction and vocabulary) ·
 [`docs/ROADMAP.md`](docs/ROADMAP.md) (outcome sequence) ·
 [`docs/workout-platform.md`](docs/workout-platform.md) (target software design
-and PR plan) ·
+and PR plan) · [`docs/TPW.md`](docs/TPW.md) (TrainerPro Workout format) ·
 [`docs/SPEC.md`](docs/SPEC.md) (build spec) ·
 [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) (decision records) ·
 [`docs/garmin-access.md`](docs/garmin-access.md) (export integration status) ·

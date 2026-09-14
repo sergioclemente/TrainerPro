@@ -216,11 +216,15 @@ training-focus tag such as Recovery Ride or Endurance Base rather than an
 algorithmic selection reason.
 
 For internal representation, Intervals.icu's text workout syntax is compact and
-LLM-friendly but is a provider parser contract, while its structured
-`workout_doc` is not a dependable public write contract. ZWO is similarly a
-useful adapter rather than a product model. A small versioned semantic JSON
-model in SQLite gives the player, sync connectors, UI, and future MCP service a
-shared contract without introducing a new crate.
+LLM-friendly but is a provider parser contract. Its structured `workout_doc` is
+[documented for downloads](https://forum.intervals.icu/t/downloading-planned-workouts-from-the-api/93737),
+while its [calendar write guidance](https://forum.intervals.icu/t/uploading-planned-workouts-to-intervals-icu/63624)
+uses description syntax or uploaded workout formats, so `workout_doc` is not a
+dependable public round-trip contract. ZWO is similarly a useful adapter rather
+than a product model. TrainerPro Workout (TPW), a small versioned semantic JSON
+format in SQLite, gives the player, sync connectors, UI, and future MCP service
+a shared contract without introducing a new crate. TPW/1 is specified in
+[`TPW.md`](TPW.md).
 
 **What would change my mind:** a broadly adopted, versioned, documented, and
 round-trip-safe provider-neutral workout schema could replace TrainerPro's JSON

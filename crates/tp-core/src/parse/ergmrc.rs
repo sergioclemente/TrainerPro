@@ -13,11 +13,11 @@
 //! - Errors (with line numbers): non-monotonic time, <2 data rows,
 //!   unparseable row.
 
-use super::{ParseError, ParseWarning, Parsed};
+use super::{ParseError, ParseWarning, Parsed, SourceFormat};
 use crate::consts::{
     MAX_TARGET_WATTS, POWER_FRACTION_MAX, POWER_FRACTION_MIN, TEXT_EVENT_DEFAULT_S,
 };
-use crate::model::{PowerTarget, Segment, SourceFormat, TextEvent, Workout};
+use crate::model::{ExecutableWorkout, PowerTarget, Segment, TextEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Units {
@@ -351,13 +351,13 @@ pub fn parse_ergmrc(input: &str, ext_hint: Option<&str>) -> Result<Parsed, Parse
     };
 
     Ok(Parsed {
-        workout: Workout {
+        workout: ExecutableWorkout {
             name,
             description,
-            source_format,
             segments,
             text_events,
         },
+        source_format,
         warnings,
     })
 }
@@ -393,7 +393,7 @@ MINUTES PERCENT
     #[test]
     fn mrc_percent_happy_path() {
         let p = ok(MRC_SS, Some("mrc"));
-        assert_eq!(p.workout.source_format, SourceFormat::Mrc);
+        assert_eq!(p.source_format, SourceFormat::Mrc);
         assert_eq!(p.workout.name, "Sweet Spot 3x12");
         assert_eq!(p.workout.description, "Sweet Spot 3x12");
         assert_eq!(
@@ -430,7 +430,7 @@ MINUTES WATTS
 [END COURSE DATA]
 ";
         let p = ok(input, Some("erg"));
-        assert_eq!(p.workout.source_format, SourceFormat::Erg);
+        assert_eq!(p.source_format, SourceFormat::Erg);
         assert_eq!(
             p.workout.segments,
             vec![
@@ -462,7 +462,7 @@ MINUTES WATTS
 [END COURSE DATA]
 ";
         let p = ok(input, Some("mrc"));
-        assert_eq!(p.workout.source_format, SourceFormat::Erg);
+        assert_eq!(p.source_format, SourceFormat::Erg);
         assert_eq!(
             p.workout.segments[0],
             Segment::Steady {
@@ -491,7 +491,7 @@ DESCRIPTION = No Columns
 [END COURSE DATA]
 ";
         let p = ok(input, Some("erg"));
-        assert_eq!(p.workout.source_format, SourceFormat::Erg);
+        assert_eq!(p.source_format, SourceFormat::Erg);
         assert_eq!(
             p.workout.segments[0],
             Segment::Steady {
@@ -504,7 +504,7 @@ DESCRIPTION = No Columns
         assert!(p.warnings.is_empty(), "warnings: {:?}", p.warnings);
 
         let p = ok(input, Some("mrc"));
-        assert_eq!(p.workout.source_format, SourceFormat::Mrc);
+        assert_eq!(p.source_format, SourceFormat::Mrc);
         assert_eq!(
             p.workout.segments[0],
             Segment::Steady {
@@ -524,7 +524,7 @@ DESCRIPTION = No Columns
 [END COURSE DATA]
 ";
         let p = ok(input, None);
-        assert_eq!(p.workout.source_format, SourceFormat::Mrc);
+        assert_eq!(p.source_format, SourceFormat::Mrc);
         assert!(
             p.warnings.iter().any(|w| w.message.contains("assuming PERCENT")),
             "warnings: {:?}",
@@ -769,7 +769,7 @@ minutes percent
 [End Course Data]
 ";
         let p = ok(input, None);
-        assert_eq!(p.workout.source_format, SourceFormat::Mrc);
+        assert_eq!(p.source_format, SourceFormat::Mrc);
         assert_eq!(p.workout.segments.len(), 1);
     }
 

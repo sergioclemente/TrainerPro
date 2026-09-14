@@ -29,8 +29,8 @@ workout definition that compiles into the existing execution engine.
 
 - Move raw SQL out of IPC commands, device/runtime services, and provider code
   into focused backend data-access modules.
-- Add a versioned semantic WorkoutDefinition JSON model in `tp-core` and a pure
-  compiler to the executable workout model.
+- Add the versioned TrainerPro Workout (TPW) `WorkoutDefinition` JSON model in
+  `tp-core` and a pure compiler to the executable workout model.
 - Make SQLite authoritative for workout definitions and their provenance.
 - Treat ZWO, ERG, MRC, provider text, and provider JSON as import/export
   adapters.
