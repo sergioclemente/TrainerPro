@@ -280,8 +280,8 @@ pub async fn planner_list(state: State<'_, AppState>) -> Result<PlannerListResul
     }
 }
 
-/// Fetch ZWO → existing import pipeline (sha256 dedup) → tag origin →
-/// load into the player. spec §B2.
+/// Fetch ZWO → normalize into TPW → tag origin → load into the player.
+/// spec §B2.
 #[tauri::command]
 pub async fn planner_ride(
     app: AppHandle,

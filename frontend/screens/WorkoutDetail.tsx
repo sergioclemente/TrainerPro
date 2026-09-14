@@ -172,13 +172,10 @@ export default function WorkoutDetail() {
   }
 
   async function del() {
-    // Import copies files into the app's library folder, so this only
-    // removes TrainerPro's copy — the file you imported from is untouched.
     if (
       !confirm(
         `Remove “${d.name}” from your TrainerPro library?\n\n` +
-          `This deletes the app's copy only. The original file you imported ` +
-          `stays where it is on disk.`,
+          `The original file you imported, if any, stays where it is on disk.`,
       )
     )
       return;

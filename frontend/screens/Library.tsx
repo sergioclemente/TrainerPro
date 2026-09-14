@@ -49,7 +49,7 @@ export default function Library() {
           duration_s: d.summary.duration_s,
           est_if: d.summary.est_if,
           est_tss: d.summary.est_tss,
-          tags: "",
+          tags: d.summary.training_focus ?? "",
           origin: d.summary.origin,
           graph: d.summary.graph,
           segments: d.segments,

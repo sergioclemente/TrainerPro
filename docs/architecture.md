@@ -9,13 +9,11 @@ are in [`ALTERNATIVES.md`](ALTERNATIVES.md).
 > [`workout-platform.md`](workout-platform.md), and the product behavior it
 > serves is in [`PRODUCT.md`](PRODUCT.md).
 
-## Workout source plugin interface
+## Workout source normalization
 
-Workout providers are plugins around one interchange format: **ZWO**. A source
-either *is* a ZWO file (local import), *serves* ZWO (WorkoutPlanner), or
-*builds a workout model and serializes it* with tp-core's ZWO writer
-(whatsonzwift). Every source funnels into the same pipeline — none of them
-touch import, database, or player code directly.
+Workout sources normalize into **TrainerPro Workout (TPW)** before persistence.
+Local ZWO/ERG/MRC files and WorkoutPlanner's ZWO response are boundary payloads;
+What's on Zwift already builds a semantic model. None becomes workout identity.
 
 ```mermaid
 flowchart TD
@@ -26,27 +24,29 @@ flowchart TD
         FUTURE["Future source...<br/>one tab component +<br/>one backend module"]
     end
 
-    ZWO["ZWO text<br/>the interchange format"]
-    PIPE["workout_sources::ride_from_zwo<br/>import + sha256 dedup<br/>provenance tag: origin, origin_ref"]
-    LIB[("Workout library<br/>files + SQLite")]
+    ADAPTERS["Boundary adapters<br/>ZWO / ERG / MRC / source model"]
+    TPW["TPW WorkoutDefinition<br/>validate + canonical JSON"]
+    DB[("SQLite<br/>workout_definitions")]
+    COMPILE["Compile to<br/>ExecutableWorkout"]
     PLAYER["Player runtime"]
     FIT["FIT file to Garmin Connect"]
 
-    LOCAL -->|file picker / drag-drop| PIPE
-    WP -->|GET /workout_file| ZWO
-    WOZ -->|to_zwo| ZWO
-    FUTURE -.-> ZWO
-    ZWO --> PIPE
-    PIPE --> LIB
-    LIB --> PLAYER
+    LOCAL -->|file picker / drag-drop| ADAPTERS
+    WP -->|GET /workout_file| ADAPTERS
+    WOZ --> ADAPTERS
+    FUTURE -.-> TPW
+    ADAPTERS --> TPW
+    TPW --> DB
+    DB --> COMPILE
+    COMPILE --> PLAYER
     PLAYER --> FIT
 ```
 
 Adding a source = one frontend tab component registered in `frontend/sources.ts`,
-plus a backend module that produces ZWO text and calls
-`workout_sources::ride_from_zwo`. Provenance columns (`origin`, `origin_ref`) tag
-imported rows so the library shows badges and future features (results
-push-back, re-sync) know where a workout came from.
+plus a backend module that produces `WorkoutDefinition` or maps its supported
+payload through a boundary adapter. Provenance columns (`origin`, `origin_ref`)
+remain the current source badges; provider links and sync state replace them in
+the connected-provider phase.
 
 ## Device connection lifecycle
 

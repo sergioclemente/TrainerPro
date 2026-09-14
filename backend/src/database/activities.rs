@@ -1,7 +1,4 @@
-//! Activity persistence over the legacy `rides` table.
-//!
-//! The table name remains unchanged in this behavior-preserving SQL-boundary
-//! refactor. The later activity/session reconciliation owns that migration.
+//! Activity persistence.
 
 use rusqlite::{Connection, OptionalExtension};
 
@@ -27,7 +24,7 @@ pub struct ActivityArtifacts {
 
 pub struct NewActivity<'a> {
     pub id: &'a str,
-    pub workout_id: Option<&'a str>,
+    pub workout_definition_id: Option<&'a str>,
     pub workout_name: &'a str,
     pub started_at_ms: i64,
     pub elapsed_s: u32,
@@ -50,13 +47,13 @@ pub struct NewActivity<'a> {
 
 pub fn insert(conn: &Connection, activity: &NewActivity<'_>) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO rides (id, workout_id, workout_name, started_at, elapsed_s,
+        "INSERT INTO activities (id, workout_definition_id, workout_name, started_at, elapsed_s,
            timer_s, avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence,
            kj, ftp_used, intensity_final, fit_path, journal_path, completed_pct)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
         rusqlite::params![
             activity.id,
-            activity.workout_id,
+            activity.workout_definition_id,
             activity.workout_name,
             activity.started_at_ms,
             activity.elapsed_s,
@@ -84,7 +81,7 @@ pub fn list(conn: &Connection) -> rusqlite::Result<Vec<ActivityListRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, workout_name, started_at, timer_s, avg_power, np, tss, avg_hr,
                 completed_pct, fit_path
-         FROM rides ORDER BY started_at DESC",
+         FROM activities ORDER BY started_at DESC",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(ActivityListRow {
@@ -105,7 +102,7 @@ pub fn list(conn: &Connection) -> rusqlite::Result<Vec<ActivityListRow>> {
 
 pub fn artifacts(conn: &Connection, id: &str) -> rusqlite::Result<Option<ActivityArtifacts>> {
     conn.query_row(
-        "SELECT fit_path, journal_path FROM rides WHERE id = ?1",
+        "SELECT fit_path, journal_path FROM activities WHERE id = ?1",
         [id],
         |row| {
             Ok(ActivityArtifacts {
@@ -118,7 +115,7 @@ pub fn artifacts(conn: &Connection, id: &str) -> rusqlite::Result<Option<Activit
 }
 
 pub fn fit_path(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row("SELECT fit_path FROM rides WHERE id = ?1", [id], |row| {
+    conn.query_row("SELECT fit_path FROM activities WHERE id = ?1", [id], |row| {
         row.get(0)
     })
     .optional()
@@ -126,7 +123,7 @@ pub fn fit_path(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>>
 
 pub fn delete(conn: &Connection, id: &str) -> rusqlite::Result<Option<ActivityArtifacts>> {
     let artifacts = artifacts(conn, id)?;
-    conn.execute("DELETE FROM rides WHERE id = ?1", [id])?;
+    conn.execute("DELETE FROM activities WHERE id = ?1", [id])?;
     Ok(artifacts)
 }
 
@@ -137,7 +134,7 @@ mod tests {
     fn fixture<'a>(id: &'a str, fit_path: &'a str, started_at_ms: i64) -> NewActivity<'a> {
         NewActivity {
             id,
-            workout_id: None,
+            workout_definition_id: None,
             workout_name: "Endurance",
             started_at_ms,
             elapsed_s: 3600,

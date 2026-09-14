@@ -129,9 +129,9 @@ dependency-rot in fitness-format crates is a real observed problem.
 ## D6. Workout format scope
 
 *Historical v1 choice: ZWO + ERG/MRC in, expanded flat model internally.* The
-current app still follows this path. It is superseded for connected-workout
-development by the semantic JSON and boundary-adapter decision in
-[`PRODUCT.md`](PRODUCT.md); see D10 below.
+formats remain supported input adapters, but TPW now supersedes them for
+persistence and connected-workout development. See [`PRODUCT.md`](PRODUCT.md)
+and D10 below.
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -150,10 +150,9 @@ today's planned workout" is a killer daily-use feature.
 ## D7. Storage & data layer
 
 *Historical v1 choice: files on disk (workouts, FIT, journal) + SQLite index.*
-The current app still follows this path. It is superseded for workout
-definitions and application metadata by the SQLite-authoritative direction in
-[`PRODUCT.md`](PRODUCT.md). Crash journals and generated FIT activity artifacts
-remain a separate robustness/export question.
+TPW workout definitions are now authoritative in SQLite. Crash journals and
+generated FIT files remain activity robustness/export artifacts rather than a
+second workout store. See [`PRODUCT.md`](PRODUCT.md).
 
 | Option | Pros | Cons |
 |---|---|---|

@@ -59,12 +59,12 @@ to restructure, however good the feature is:
 
 Two conventions worth knowing:
 
-- **ZWO is the current implementation's source interchange format.** Existing
-  sources funnel through `workout_sources::ride_from_zwo`. New connected-
-workout work must follow the TPW semantic model and transition sequence in
-[`docs/TPW.md`](docs/TPW.md), [`docs/PRODUCT.md`](docs/PRODUCT.md), and
-[`docs/workout-platform.md`](docs/workout-platform.md); do not extend ZWO as
-the future canonical model.
+- **TPW is the canonical workout representation.** ZWO, ERG, and MRC are
+  boundary formats normalized into TPW before persistence. Connected-workout
+  work must follow [`docs/TPW.md`](docs/TPW.md),
+  [`docs/PRODUCT.md`](docs/PRODUCT.md), and
+  [`docs/workout-platform.md`](docs/workout-platform.md); do not extend a file
+  format as the product model.
 - **The UI is push-only.** The frontend never polls; state arrives via the
   Tauri event stream (see `wireEvents()` in `frontend/state.ts`).
 
@@ -75,9 +75,9 @@ work on the roadmap uses capability-specific connectors and the canonical
 WorkoutDefinition pipeline described in
 [`docs/workout-platform.md`](docs/workout-platform.md).
 
-1. Backend: a module that produces ZWO text and calls
-   `workout_sources::ride_from_zwo` (see `workout_planner_source.rs` /
-   `whatsonzwift_source.rs` as examples).
+1. Backend: a module that produces `WorkoutDefinition`, or adapts a provider's
+   supported boundary payload into one, then uses the shared source pipeline
+   (see `workout_planner_source.rs` / `whatsonzwift_source.rs` as examples).
    Config lives in the schemaless `SourceConfig` bag — no DB migration needed.
 2. Frontend: one tab component + one descriptor appended to
    `frontend/sources.ts`. The Libraries settings form is generated from the

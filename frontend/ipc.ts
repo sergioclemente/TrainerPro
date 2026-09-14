@@ -8,7 +8,7 @@ export interface WorkoutSummary {
   id: string;
   name: string;
   description: string;
-  source_format: string;
+  training_focus: string | null;
   duration_s: number;
   est_if: number;
   est_tss: number;

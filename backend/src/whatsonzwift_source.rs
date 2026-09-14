@@ -478,9 +478,17 @@ pub async fn woz_ride(
             }
         }
     };
-    let zwo = tp_core::parse::zwo::to_zwo(&workout);
+    let definition = tp_core::workout_definition::WorkoutDefinition::from_executable(workout)?;
     let origin_ref = format!("{collection}#{idx}");
-    sources::ride_from_zwo(app, &state, &zwo, "whatsonzwift", &origin_ref, None).await
+    sources::ride_from_definition(
+        app,
+        &state,
+        &definition,
+        "whatsonzwift",
+        &origin_ref,
+        None,
+    )
+    .await
 }
 
 /// Attribution / browse-out: open the collection on whatsonzwift.com.

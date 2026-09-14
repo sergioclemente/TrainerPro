@@ -126,6 +126,103 @@ struct DefinitionHeader {
 }
 
 impl WorkoutDefinition {
+    /// Normalize the current flat cycling execution model into TPW.
+    ///
+    /// This preserves executable meaning but cannot recover authoring
+    /// structure, such as repeats or target ranges, that was already flattened
+    /// by a boundary parser.
+    pub fn from_executable(workout: ExecutableWorkout) -> Result<Self, WorkoutDefinitionError> {
+        let ExecutableWorkout {
+            name,
+            description,
+            segments,
+            mut text_events,
+        } = workout;
+        text_events.sort_by_key(|event| event.offset_s);
+
+        let mut steps = Vec::with_capacity(segments.len());
+        let mut event_index = 0usize;
+        let mut step_start_seconds = 0u64;
+        for (step_index, segment) in segments.into_iter().enumerate() {
+            let duration_seconds = segment.duration_s();
+            let step_end_seconds = step_start_seconds + u64::from(duration_seconds);
+            let mut cues = Vec::new();
+
+            while let Some(event) = text_events.get(event_index) {
+                let event_offset = u64::from(event.offset_s);
+                if event_offset < step_start_seconds {
+                    return invalid(
+                        format!("text_events[{event_index}].offset_s"),
+                        "must not precede its executable segment",
+                    );
+                }
+                if event_offset >= step_end_seconds {
+                    break;
+                }
+                cues.push(WorkoutCue {
+                    offset_seconds: (event_offset - step_start_seconds) as u32,
+                    message: event.message.clone(),
+                    display_seconds: event.duration_s,
+                });
+                event_index += 1;
+            }
+
+            let step = match segment {
+                Segment::Steady {
+                    power, cadence_rpm, ..
+                } => CyclingStep::Steady {
+                    duration_seconds,
+                    power: definition_power(power),
+                    cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
+                    cues,
+                },
+                Segment::Ramp {
+                    start,
+                    end,
+                    cadence_rpm,
+                    ..
+                } => CyclingStep::Ramp {
+                    duration_seconds,
+                    start_power: definition_power(start),
+                    end_power: definition_power(end),
+                    cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
+                    cues,
+                },
+                Segment::FreeRide { .. } => CyclingStep::FreeRide {
+                    duration_seconds,
+                    cues,
+                },
+            };
+            steps.push(step);
+            step_start_seconds = step_end_seconds;
+
+            if duration_seconds == 0 {
+                return invalid(
+                    format!("prescription.steps[{step_index}].duration_seconds"),
+                    "must be at least 1",
+                );
+            }
+        }
+
+        if event_index != text_events.len() {
+            return invalid(
+                format!("text_events[{event_index}].offset_s"),
+                "must fall within the executable workout",
+            );
+        }
+
+        let definition = Self {
+            format: WorkoutFormat::Tpw,
+            version: TPW_VERSION,
+            title: name,
+            description,
+            training_focus: None,
+            prescription: WorkoutPrescription::Cycling { steps },
+        };
+        definition.validate()?;
+        Ok(definition)
+    }
+
     pub fn from_json(json: &str) -> Result<Self, WorkoutDefinitionError> {
         let header: DefinitionHeader =
             serde_json::from_str(json).map_err(|error| WorkoutDefinitionError::InvalidJson {
@@ -219,6 +316,15 @@ impl WorkoutDefinition {
             segments,
             text_events,
         })
+    }
+}
+
+fn definition_power(target: PowerTarget) -> CyclingPowerTarget {
+    match target {
+        PowerTarget::PercentFtp(fraction) => CyclingPowerTarget::PercentFtp {
+            percent: fraction * 100.0,
+        },
+        PowerTarget::Watts(watts) => CyclingPowerTarget::Watts { watts },
     }
 }
 
@@ -738,6 +844,36 @@ mod tests {
                 crate::engine::Effect::SetTarget(140),
             ]
         );
+    }
+
+    #[test]
+    fn normalizes_flat_executable_workout_without_file_provenance() {
+        let executable = ExecutableWorkout {
+            name: "Imported workout".into(),
+            description: "From a boundary parser".into(),
+            segments: vec![
+                Segment::Steady {
+                    duration_s: 60,
+                    power: PowerTarget::PercentFtp(0.75),
+                    cadence_rpm: Some(90),
+                },
+                Segment::FreeRide { duration_s: 30 },
+            ],
+            text_events: vec![TextEvent {
+                offset_s: 65,
+                message: "Choose your effort".into(),
+                duration_s: 8,
+            }],
+        };
+
+        let definition = WorkoutDefinition::from_executable(executable.clone()).unwrap();
+        assert_eq!(definition.title, "Imported workout");
+        assert_eq!(definition.compile().unwrap(), executable);
+        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let CyclingStep::FreeRide { cues, .. } = &steps[1] else {
+            panic!("expected free-ride step");
+        };
+        assert_eq!(cues[0].offset_seconds, 5);
     }
 
     #[test]

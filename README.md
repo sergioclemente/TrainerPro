@@ -57,11 +57,12 @@ flowchart TD
         SOURCES["Workout source plugin layer"]
         RUNTIME["Player runtime<br/>engine ticks / ERG loop / recorder"]
         HUB["Device hub<br/>device policy + stable role owners"]
-        STORAGE[("SQLite index +<br/>files as truth")]
+        STORAGE[("SQLite TPW definitions +<br/>activity index")]
     end
 
     subgraph CORE["tp-core - pure Rust, no I/O"]
         PARSERS["Parsers: ZWO / ERG / MRC<br/>Writer: ZWO"]
+        TPW["TPW definition<br/>validation + compiler"]
         ENGINE["Workout engine<br/>deterministic state machine"]
         METRICS["Metrics: NP / IF / TSS / zones"]
         JOURNAL["Crash-safe ride journal"]
@@ -88,6 +89,12 @@ flowchart TD
     IPC --> RUNTIME
     IPC --> HUB
     SOURCES --> PARSERS
+    SOURCES --> TPW
+    PARSERS --> TPW
+    TPW --> STORAGE
+    STORAGE --> TPW
+    TPW --> RUNTIME
+    RUNTIME --> STORAGE
     RUNTIME --> ENGINE
     RUNTIME --> JOURNAL
     RUNTIME --> METRICS

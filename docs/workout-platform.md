@@ -162,7 +162,7 @@ they can be computed as a read model from definitions and activities. Persist
 or cache them only when an external recommender needs stable identity, expiry,
 dismissal, or sync behavior.
 
-SQLite becomes authoritative for workout definitions and application metadata.
+SQLite is authoritative for workout definitions and application metadata.
 Crash-safe append journals and generated FIT files may remain appropriate
 activity artifacts; the activity is still the database entity. Whether final
 sample streams eventually move into SQLite is a separate measured decision and
@@ -293,7 +293,6 @@ and repository status as required by [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Decisions intentionally deferred
 
-- the WorkoutDefinition persistence migration DDL;
 - the normalized training-focus taxonomy and provider-label mapping;
 - scheduled overdue/horizon policy and precise Next Up grouping;
 - single versus multiple active planning authorities;

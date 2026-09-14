@@ -1,12 +1,12 @@
 # TrainerPro — Implementation Spec (v1)
 
-> **Status:** current v1 implementation baseline. This spec intentionally
-> describes the file/library-first system that exists today. The accepted next
-> product direction is [`PRODUCT.md`](PRODUCT.md), sequenced in
+> **Status:** current implementation baseline. The UI remains library-first,
+> while TPW and SQLite are now authoritative for workout definitions. The
+> accepted next product direction is [`PRODUCT.md`](PRODUCT.md), sequenced in
 > [`ROADMAP.md`](ROADMAP.md), with target software boundaries in
 > [`workout-platform.md`](workout-platform.md). Update the relevant sections of
-> this spec as those migration PRs land; do not treat the historical workout
-> storage and navigation choices below as the target design.
+> this spec as those migrations land; do not treat the remaining historical
+> navigation choices below as the target design.
 
 A macOS-first desktop indoor-cycling workout player. Load a structured workout
 file (ZWO / ERG / MRC), control a Wahoo smart trainer over BLE FTMS in ERG
@@ -31,7 +31,7 @@ document first.
 | Distance in FIT | **Off by default** (setting exists; virtual flat-road model when on) |
 | FreeRide segments | Switch trainer to simulation mode, grade 0 %; record only, no target |
 | Recording | JSONL journal during ride → FIT encoded at ride end |
-| Storage | Files are truth; SQLite is index/cache |
+| Storage | TPW definitions are authoritative in SQLite; JSONL/FIT remain activity artifacts |
 
 ---
 
@@ -162,8 +162,8 @@ General contract: `parse_zwo` and `parse_ergmrc` return `Parsed`, containing an
 parses into at least one segment or fails with a message naming the
 line/element. Unknown elements/attributes are **collected as warnings, never
 errors**; warnings surface once in the import UI. File parsers remain boundary
-adapters; the following persistence migration will normalize their output into
-WorkoutDefinition before storing it.
+adapters; their flat executable output is normalized into TPW before it is
+stored.
 
 ### 3.1 ZWO (Zwift XML)
 
@@ -224,11 +224,11 @@ MINUTES PERCENT          ← column spec: PERCENT ⇒ %FTP, WATTS ⇒ absolute
 
 ### 3.3 Import flow
 
-`import_workout(path)`: read file → parse → copy original into
-`<appdata>/workouts/<uuid>.<ext>` → compute duration/IF/TSS estimate + graph
-polyline (array of `[t_s, pct_ftp]` breakpoints) → insert SQLite row → return
-summary + warnings. Duplicate detection: SHA-256 of file bytes; re-import of
-identical bytes returns the existing entry.
+`import_workout(path)`: read a ZWO/ERG/MRC boundary file → parse to the flat
+execution model → normalize to TPW → persist the TPW JSON in SQLite → compile
+for the current FTP → return duration/IF/TSS, graph, and warnings. The source
+file is not copied or used as workout identity. Re-importing the same canonical
+TPW document returns the existing definition.
 
 ---
 
@@ -517,19 +517,24 @@ browser). FIT is also always auto-saved at `<appdata>/rides/<ride_uuid>.fit`.
 ## 8. Persistence (backend)
 
 App data dir: `~/Library/Application Support/com.trainerpro.desktop/` (Tauri
-`app_data_dir`); subdirs `workouts/`, `rides/`; DB `trainerpro.sqlite3`. The
-development QA flavor uses `com.trainerpro.desktop.qa` so its data remains
-isolated from an installed production app.
+`app_data_dir`); active activity artifacts live under `rides/`; DB
+`trainerpro.sqlite3`. A `workouts/` directory left by the legacy file-backed
+model is no longer read or managed. The QA flavor remains isolated under
+`com.trainerpro.desktop.qa`.
 
 ```sql
-CREATE TABLE workouts (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-  source_format TEXT NOT NULL, file_path TEXT NOT NULL, sha256 TEXT NOT NULL UNIQUE,
-  duration_s INTEGER NOT NULL, est_if REAL, est_tss REAL,
-  graph_json TEXT NOT NULL, imported_at INTEGER NOT NULL);
+CREATE TABLE workout_definitions (
+  id TEXT PRIMARY KEY,
+  tpw_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  origin TEXT,
+  origin_id INTEGER,
+  origin_ref TEXT);
 
-CREATE TABLE rides (
-  id TEXT PRIMARY KEY, workout_id TEXT REFERENCES workouts(id) ON DELETE SET NULL,
+CREATE TABLE activities (
+  id TEXT PRIMARY KEY,
+  workout_definition_id TEXT REFERENCES workout_definitions(id) ON DELETE SET NULL,
   workout_name TEXT NOT NULL, started_at INTEGER NOT NULL,
   elapsed_s INTEGER NOT NULL, timer_s INTEGER NOT NULL,
   avg_power INTEGER, max_power INTEGER, np INTEGER, if_ REAL, tss REAL,
@@ -558,7 +563,9 @@ fetch code, no schema change.
 Enabled gates both the Workouts tab and any fetch. The old typed `planner`
 settings key migrates into `sources.planner` on first load (creds preserved).
 This registry is the reuse surface for trainer-coach's own load sources.
-Migrations: `user_version` pragma + numbered migration list from day one.
+Migrations: `user_version` pragma + numbered migration list from day one. The
+TPW migration resets legacy workout rows and clears their activity references,
+while retaining activity history, FIT/journal paths, settings, and devices.
 
 ---
 

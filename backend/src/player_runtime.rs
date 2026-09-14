@@ -722,7 +722,7 @@ impl Runtime {
                 &conn,
                 &activity_db::NewActivity {
                     id: &self.ride_id,
-                    workout_id: Some(&self.workout_id),
+                    workout_definition_id: Some(&self.workout_id),
                     workout_name: &data.header.workout_name,
                     started_at_ms: self.header_started_ms as i64,
                     elapsed_s: totals.elapsed_s,

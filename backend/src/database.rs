@@ -1,7 +1,4 @@
 //! SQLite ownership boundary: schema, migrations, and focused data access.
-//! SPEC.md §8 currently treats files as workout truth; the connected-workout
-//! roadmap changes that later. Until then this module preserves the existing
-//! schema while keeping raw SQL out of commands and runtimes.
 
 use rusqlite::Connection;
 use std::path::Path;
@@ -10,7 +7,7 @@ pub mod activities;
 pub mod devices;
 pub mod settings;
 pub mod source_cache;
-pub mod workouts;
+pub mod workout_definitions;
 
 const MIGRATIONS: &[&str] = &[
     // v1
@@ -63,6 +60,47 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE rides ADD COLUMN icu_activity_id TEXT;
     ",
+    // v6: TPW becomes workout truth. Legacy workout rows are deliberately
+    // not converted; activity history remains, detached from reset workouts.
+    "
+    CREATE TABLE workout_definitions (
+      id TEXT PRIMARY KEY,
+      tpw_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      origin TEXT,
+      origin_id INTEGER,
+      origin_ref TEXT
+    );
+
+    CREATE TABLE activities (
+      id TEXT PRIMARY KEY,
+      workout_definition_id TEXT REFERENCES workout_definitions(id) ON DELETE SET NULL,
+      workout_name TEXT NOT NULL, started_at INTEGER NOT NULL,
+      elapsed_s INTEGER NOT NULL, timer_s INTEGER NOT NULL,
+      avg_power INTEGER, max_power INTEGER, np INTEGER, if_ REAL, tss REAL,
+      avg_hr INTEGER, max_hr INTEGER, avg_cadence INTEGER, kj INTEGER,
+      ftp_used INTEGER NOT NULL, intensity_final REAL NOT NULL,
+      fit_path TEXT NOT NULL, journal_path TEXT NOT NULL, completed_pct REAL NOT NULL,
+      icu_activity_id TEXT
+    );
+
+    INSERT INTO activities (
+      id, workout_definition_id, workout_name, started_at, elapsed_s, timer_s,
+      avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence, kj,
+      ftp_used, intensity_final, fit_path, journal_path, completed_pct,
+      icu_activity_id
+    )
+    SELECT
+      id, NULL, workout_name, started_at, elapsed_s, timer_s,
+      avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence, kj,
+      ftp_used, intensity_final, fit_path, journal_path, completed_pct,
+      icu_activity_id
+    FROM rides;
+
+    DROP TABLE rides;
+    DROP TABLE workouts;
+    ",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -70,15 +108,17 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     prepare(conn)
 }
 
-fn prepare(conn: Connection) -> rusqlite::Result<Connection> {
+fn prepare(mut conn: Connection) -> rusqlite::Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     let version: i64 = conn.query_row("SELECT user_version FROM pragma_user_version", [], |r| {
         r.get(0)
     })?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
-        conn.execute_batch(sql)?;
-        conn.pragma_update(None, "user_version", (i + 1) as i64)?;
+        let transaction = conn.transaction()?;
+        transaction.execute_batch(sql)?;
+        transaction.pragma_update(None, "user_version", (i + 1) as i64)?;
+        transaction.commit()?;
     }
     Ok(conn)
 }
@@ -87,4 +127,105 @@ fn prepare(conn: Connection) -> rusqlite::Result<Connection> {
 pub(super) fn test_connection() -> Connection {
     prepare(Connection::open_in_memory().expect("open in-memory database"))
         .expect("prepare in-memory database")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tpw_migration_resets_workouts_but_preserves_activities_and_settings() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (index, sql) in MIGRATIONS.iter().take(5).enumerate() {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", (index + 1) as i64)
+                .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO workouts (
+               id, name, description, source_format, file_path, sha256,
+               duration_s, est_if, est_tss, graph_json, imported_at
+             ) VALUES ('legacy', 'Legacy', '', 'zwo', '/tmp/legacy.zwo',
+                       'hash', 60, 0.7, 1.0, '[]', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO rides (
+               id, workout_id, workout_name, started_at, elapsed_s, timer_s,
+               ftp_used, intensity_final, fit_path, journal_path, completed_pct
+             ) VALUES ('activity', 'legacy', 'Legacy', 1, 60, 60, 200, 1.0,
+                       '/tmp/activity.fit', '/tmp/activity.jsonl', 100.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('profile', 'saved')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO devices (role, platform_id, name)
+             VALUES ('trainer', 'trainer-id', 'Saved trainer')",
+            [],
+        )
+        .unwrap();
+
+        let conn = prepare(conn).unwrap();
+
+        let definitions: i64 = conn
+            .query_row("SELECT count(*) FROM workout_definitions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(definitions, 0);
+        let activity: (Option<String>, String, String, String) = conn
+            .query_row(
+                "SELECT workout_definition_id, workout_name, fit_path, journal_path
+                 FROM activities WHERE id = 'activity'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            activity,
+            (
+                None,
+                "Legacy".into(),
+                "/tmp/activity.fit".into(),
+                "/tmp/activity.jsonl".into(),
+            )
+        );
+        let setting: String = conn
+            .query_row("SELECT value FROM settings WHERE key = 'profile'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(setting, "saved");
+        let device: String = conn
+            .query_row(
+                "SELECT name FROM devices WHERE role = 'trainer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(device, "Saved trainer");
+        let legacy_ride_tables: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema
+                 WHERE type = 'table' AND name = 'rides'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_ride_tables, 0);
+        assert_eq!(
+            conn.query_row("SELECT user_version FROM pragma_user_version", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            MIGRATIONS.len() as i64
+        );
+    }
 }
