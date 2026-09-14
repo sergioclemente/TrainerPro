@@ -121,7 +121,7 @@ export default function SettingsScreen() {
               {settings.export_dir && <button onClick={clearExportDir}>Reset</button>}
             </div>
             <p className="muted footnote" style={{ marginTop: 0 }}>
-              Finished rides always save into the app's data folder; when an export
+              Completed activities always save into the app's data folder; when an export
               folder is set, a copy with a friendly name is written there too.
             </p>
           </div>

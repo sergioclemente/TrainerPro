@@ -3,14 +3,14 @@
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
+  ActivityRow,
+  ActivitySummary,
   DeviceMeasurement,
   DeviceSlot,
   DeviceStatusEvent,
   PlannerPreview,
   PlannerWorkout,
   PlayerState,
-  RideRow,
-  RideSummary,
   Role,
   ScanResult,
   Settings,
@@ -23,7 +23,7 @@ export type Screen =
   | "library"
   | "libraries"
   | "devices"
-  | "history"
+  | "activities"
   | "settings"
   | "player"
   | "summary"
@@ -70,9 +70,9 @@ interface Store {
   player: PlayerState | null;
   measurement: PlayerMeasurement | null;
   textEvent: { message: string; duration_s: number } | null;
-  summary: RideSummary | null;
+  summary: ActivitySummary | null;
   detail: WorkoutDetailView | null;
-  rides: RideRow[];
+  activities: ActivityRow[];
   // Planner state lives here (not in the tab component) so navigating to the
   // detail view and back does NOT re-sync or re-fetch previews.
   plannerRows: PlannerWorkout[];
@@ -94,7 +94,7 @@ interface Store {
   go: (s: Screen) => void;
   refreshWorkouts: () => Promise<void>;
   refreshDevices: () => Promise<void>;
-  refreshRides: () => Promise<void>;
+  refreshActivities: () => Promise<void>;
   refreshSettings: () => Promise<void>;
   pushToast: (level: Toast["level"], message: string) => void;
   dismissToast: (id: number) => void;
@@ -116,7 +116,7 @@ export const useStore = create<Store>((set, get) => ({
   textEvent: null,
   summary: null,
   detail: null,
-  rides: [],
+  activities: [],
   plannerRows: [],
   plannerPreviews: {},
   plannerStatus: "idle",
@@ -170,7 +170,7 @@ export const useStore = create<Store>((set, get) => ({
   go: (s) => set({ screen: s }),
   refreshWorkouts: async () => set({ workouts: await ipc.listWorkouts() }),
   refreshDevices: async () => set({ devices: await ipc.getDeviceState() }),
-  refreshRides: async () => set({ rides: await ipc.listRides() }),
+  refreshActivities: async () => set({ activities: await ipc.listActivities() }),
   refreshSettings: async () => set({ settings: await ipc.getSettings() }),
   pushToast: (level, message) => {
     const id = ++toastSeq;
@@ -262,10 +262,10 @@ export async function wireEvents(): Promise<void> {
     }, e.payload.duration_s * 1000);
   });
 
-  await listen<RideSummary>("ride_finished", (e) => {
+  await listen<ActivitySummary>("activity_recorded", (e) => {
     void ipc.clearRide();
     s.setState({ summary: e.payload, screen: "summary", player: null });
-    void s.getState().refreshRides();
+    void s.getState().refreshActivities();
   });
 
   await listen<{ level: Toast["level"]; message: string }>("toast", (e) =>

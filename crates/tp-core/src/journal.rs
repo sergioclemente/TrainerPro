@@ -1,11 +1,15 @@
-//! Ride journal: JSONL line types, writer/reader over caller-supplied
+//! Workout-session journal: JSONL line types, writer/reader over caller-supplied
 //! `io::Write`/`io::Read` (tp-core stays I/O-agnostic; the backend opens the
 //! file and fsyncs). SPEC.md §6.
 //!
-//! Line format (exactly one JSON object per line, short keys):
+//! Line format (exactly one JSON object per line, compact type envelope and
+//! explicit payload fields):
 //!   {"h":{...header...}}
-//!   {"s":{"t":1234567,"p":215,"c":92,"hr":148,"tgt":220}}   // absent key = no data
-//!   {"e":{"t":...,"k":"start","seg":4}}                      // seg only for "lap"
+//!   {"s":{"t_ms":1234567,"power_w":215,"cadence_rpm":92,
+//!         "heart_rate_bpm":148,"target_power_w":220,
+//!         "target_cadence_rpm":95}} // absent key = no data
+//!   {"e":{"t_ms":...,"kind":"start","segment_index":4}}
+//!                                      // segment_index only for "lap"
 //!
 //! Samples are NOT written while paused; pause/resume events bracket gaps.
 //! Replay tolerates a truncated final line (crash mid-write).
@@ -15,10 +19,12 @@ use std::io;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JournalHeader {
-    pub ride_id: String,
+    pub workout_session_id: String,
+    pub workout_definition_id: String,
+    pub workout_definition_snapshot_json: String,
     pub started_unix_ms: u64,
     pub workout_name: String,
-    pub ftp: u16,
+    pub ftp_w: u16,
     pub weight_kg: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trainer: Option<String>,
@@ -27,25 +33,31 @@ pub struct JournalHeader {
     pub app_ver: String,
 }
 
-/// One 1 Hz sample. `t_ms` = ms since ride start (wall clock, includes
-/// pauses in the timeline but no samples are emitted during pause).
+/// One 1 Hz sample. `t_ms` = ms since workout execution starts (wall clock,
+/// including pauses, though no samples are emitted during pause).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Sample {
-    #[serde(rename = "t")]
     pub t_ms: u64,
-    #[serde(rename = "p", skip_serializing_if = "Option::is_none")]
-    pub power: Option<u16>,
-    #[serde(rename = "c", skip_serializing_if = "Option::is_none")]
-    pub cadence: Option<u16>,
-    #[serde(rename = "hr", skip_serializing_if = "Option::is_none")]
-    pub hr: Option<u16>,
-    #[serde(rename = "tgt", skip_serializing_if = "Option::is_none")]
-    pub target: Option<u16>,
+    /// Measured trainer power.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_w: Option<u16>,
+    /// Measured cadence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cadence_rpm: Option<u16>,
+    /// Measured heart rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heart_rate_bpm: Option<u16>,
+    /// Resolved workout power prescription after FTP/intensity adjustment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_power_w: Option<u16>,
+    /// Compiled workout cadence prescription.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_cadence_rpm: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RideEventKind {
+pub enum SessionEventKind {
     Start,
     Pause,
     Resume,
@@ -55,22 +67,20 @@ pub enum RideEventKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RideEvent {
-    #[serde(rename = "t")]
+pub struct SessionEvent {
     pub t_ms: u64,
-    #[serde(rename = "k")]
-    pub kind: RideEventKind,
+    pub kind: SessionEventKind,
     /// Segment index just finished; present for `Lap` only.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub seg: Option<usize>,
+    pub segment_index: Option<usize>,
 }
 
 /// Fully replayed journal.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RideData {
+pub struct SessionRecording {
     pub header: JournalHeader,
     pub samples: Vec<Sample>,
-    pub events: Vec<RideEvent>,
+    pub events: Vec<SessionEvent>,
 }
 
 /// Per-lap aggregates computed from samples between lap boundaries
@@ -81,11 +91,11 @@ pub struct Lap {
     pub start_ms: u64,
     pub end_ms: u64,
     pub timer_ms: u64,
-    pub avg_power: Option<u16>,
-    pub max_power: Option<u16>,
-    pub avg_hr: Option<u16>,
-    pub max_hr: Option<u16>,
-    pub avg_cadence: Option<u16>,
+    pub average_power_w: Option<u16>,
+    pub max_power_w: Option<u16>,
+    pub average_heart_rate_bpm: Option<u16>,
+    pub max_heart_rate_bpm: Option<u16>,
+    pub average_cadence_rpm: Option<u16>,
     pub calories_kcal: u16,
 }
 
@@ -108,7 +118,7 @@ enum Line {
     #[serde(rename = "s")]
     Sample(Sample),
     #[serde(rename = "e")]
-    Event(RideEvent),
+    Event(SessionEvent),
 }
 
 /// Borrowing twin of [`Line`] for serialization without cloning.
@@ -119,7 +129,7 @@ enum LineRef<'a> {
     #[serde(rename = "s")]
     Sample(&'a Sample),
     #[serde(rename = "e")]
-    Event(&'a RideEvent),
+    Event(&'a SessionEvent),
 }
 
 /// Appends lines to a caller-supplied writer. The caller is responsible for
@@ -141,7 +151,7 @@ impl<W: io::Write> JournalWriter<W> {
         self.write_line(&LineRef::Sample(s))
     }
 
-    pub fn write_event(&mut self, e: &RideEvent) -> Result<(), JournalError> {
+    pub fn write_event(&mut self, e: &SessionEvent) -> Result<(), JournalError> {
         self.write_line(&LineRef::Event(e))
     }
 
@@ -162,7 +172,7 @@ impl<W: io::Write> JournalWriter<W> {
 
 /// Replay a journal. Tolerates a truncated/corrupt final line (dropped with
 /// no error); any earlier malformed line is `JournalError::Malformed`.
-pub fn replay<R: io::BufRead>(mut reader: R) -> Result<RideData, JournalError> {
+pub fn replay<R: io::BufRead>(mut reader: R) -> Result<SessionRecording, JournalError> {
     // Read raw byte lines ourselves (not `BufRead::lines`) so a final line
     // truncated mid-UTF-8-sequence is tolerated instead of erroring.
     let mut raw_lines: Vec<Vec<u8>> = Vec::new();
@@ -177,7 +187,7 @@ pub fn replay<R: io::BufRead>(mut reader: R) -> Result<RideData, JournalError> {
 
     let mut header: Option<JournalHeader> = None;
     let mut samples: Vec<Sample> = Vec::new();
-    let mut events: Vec<RideEvent> = Vec::new();
+    let mut events: Vec<SessionEvent> = Vec::new();
     let last_idx = raw_lines.len().saturating_sub(1);
 
     for (i, mut buf) in raw_lines.into_iter().enumerate() {
@@ -224,7 +234,7 @@ pub fn replay<R: io::BufRead>(mut reader: R) -> Result<RideData, JournalError> {
     }
 
     let header = header.ok_or(JournalError::MissingHeader)?;
-    Ok(RideData {
+    Ok(SessionRecording {
         header,
         samples,
         events,
@@ -232,21 +242,21 @@ pub fn replay<R: io::BufRead>(mut reader: R) -> Result<RideData, JournalError> {
 }
 
 /// Compute laps from replayed data (see `Lap` doc for boundary rules).
-pub fn compute_laps(data: &RideData) -> Vec<Lap> {
+pub fn compute_laps(data: &SessionRecording) -> Vec<Lap> {
     let start = data
         .events
         .iter()
-        .find(|e| e.kind == RideEventKind::Start)
+        .find(|e| e.kind == SessionEventKind::Start)
         .map(|e| e.t_ms)
         .unwrap_or(0);
     let end_event = data
         .events
         .iter()
-        .find(|e| e.kind == RideEventKind::End)
+        .find(|e| e.kind == SessionEventKind::End)
         .map(|e| e.t_ms);
-    // Crash case (no End event): the ride effectively ends at the last thing
-    // we ever heard — final sample or final event, whichever is later.
-    let ride_end = end_event.unwrap_or_else(|| {
+    // Crash case (no End event): the session effectively ends at the last
+    // thing recorded — final sample or final event, whichever is later.
+    let session_end = end_event.unwrap_or_else(|| {
         data.samples
             .last()
             .map(|s| s.t_ms)
@@ -257,29 +267,29 @@ pub fn compute_laps(data: &RideData) -> Vec<Lap> {
             .max(start)
     });
 
-    // Boundaries: start, each interior Lap event, ride end.
+    // Boundaries: start, each interior Lap event, session end.
     let mut boundaries = vec![start];
     boundaries.extend(
         data.events
             .iter()
-            .filter(|e| e.kind == RideEventKind::Lap && e.t_ms > start && e.t_ms < ride_end)
+            .filter(|e| e.kind == SessionEventKind::Lap && e.t_ms > start && e.t_ms < session_end)
             .map(|e| e.t_ms),
     );
     boundaries.sort_unstable();
     boundaries.dedup();
-    boundaries.push(ride_end);
+    boundaries.push(session_end);
 
-    // Pause→resume intervals; an unpaired Pause extends to ride end.
+    // Pause→resume intervals; an unpaired Pause extends to session end.
     let mut pauses: Vec<(u64, u64)> = Vec::new();
     let mut open_pause: Option<u64> = None;
     for e in &data.events {
         match e.kind {
-            RideEventKind::Pause => {
+            SessionEventKind::Pause => {
                 if open_pause.is_none() {
                     open_pause = Some(e.t_ms);
                 }
             }
-            RideEventKind::Resume => {
+            SessionEventKind::Resume => {
                 if let Some(p) = open_pause.take() {
                     pauses.push((p, e.t_ms.max(p)));
                 }
@@ -288,7 +298,7 @@ pub fn compute_laps(data: &RideData) -> Vec<Lap> {
         }
     }
     if let Some(p) = open_pause {
-        pauses.push((p, ride_end.max(p)));
+        pauses.push((p, session_end.max(p)));
     }
 
     let lap_count = boundaries.len() - 1;
@@ -299,7 +309,7 @@ pub fn compute_laps(data: &RideData) -> Vec<Lap> {
             continue;
         }
         // Samples: [s, e) for interior laps; the final lap is end-inclusive so
-        // a sample coinciding with the ride end (crash case) is not lost.
+        // a sample coinciding with the session end (crash case) is not lost.
         let is_final = i == lap_count - 1;
         let lap_samples: Vec<&Sample> = data
             .samples
@@ -312,13 +322,19 @@ pub fn compute_laps(data: &RideData) -> Vec<Lap> {
             .map(|&(ps, pe)| pe.min(e).saturating_sub(ps.max(s)))
             .sum();
 
-        let powers: Vec<u16> = lap_samples.iter().filter_map(|smp| smp.power).collect();
-        let hrs: Vec<u16> = lap_samples.iter().filter_map(|smp| smp.hr).collect();
-        let cadences: Vec<u16> = lap_samples.iter().filter_map(|smp| smp.cadence).collect();
+        let powers: Vec<u16> = lap_samples.iter().filter_map(|smp| smp.power_w).collect();
+        let heart_rates: Vec<u16> = lap_samples
+            .iter()
+            .filter_map(|smp| smp.heart_rate_bpm)
+            .collect();
+        let cadences: Vec<u16> = lap_samples
+            .iter()
+            .filter_map(|smp| smp.cadence_rpm)
+            .collect();
 
         // kJ of the lap (1 Hz samples ⇒ each sample is 1/SAMPLE_HZ joule-seconds
         // per watt); calories = kJ, rounded (kJ ≈ kcal cycling convention).
-        let kj: f64 = powers.iter().map(|&p| f64::from(p)).sum::<f64>()
+        let work_kj: f64 = powers.iter().map(|&p| f64::from(p)).sum::<f64>()
             / f64::from(crate::consts::SAMPLE_HZ)
             / 1000.0;
 
@@ -326,12 +342,12 @@ pub fn compute_laps(data: &RideData) -> Vec<Lap> {
             start_ms: s,
             end_ms: e,
             timer_ms: (e - s).saturating_sub(paused_ms),
-            avg_power: mean_u16(&powers),
-            max_power: powers.iter().copied().max(),
-            avg_hr: mean_u16(&hrs),
-            max_hr: hrs.iter().copied().max(),
-            avg_cadence: mean_u16(&cadences),
-            calories_kcal: kj.round() as u16,
+            average_power_w: mean_u16(&powers),
+            max_power_w: powers.iter().copied().max(),
+            average_heart_rate_bpm: mean_u16(&heart_rates),
+            max_heart_rate_bpm: heart_rates.iter().copied().max(),
+            average_cadence_rpm: mean_u16(&cadences),
+            calories_kcal: work_kj.round() as u16,
         });
     }
     laps
@@ -352,10 +368,12 @@ mod tests {
 
     fn header() -> JournalHeader {
         JournalHeader {
-            ride_id: "abc-123".into(),
+            workout_session_id: "session-abc-123".into(),
+            workout_definition_id: "definition-abc-123".into(),
+            workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: 1_700_000_000_000,
             workout_name: "Sweet Spot".into(),
-            ftp: 250,
+            ftp_w: 250,
             weight_kg: 72.0,
             trainer: Some("KICKR CORE 1234".into()),
             hrm: Some("TICKR 5678".into()),
@@ -363,33 +381,40 @@ mod tests {
         }
     }
 
-    fn sample(t_ms: u64, p: Option<u16>, c: Option<u16>, hr: Option<u16>, tgt: Option<u16>) -> Sample {
+    fn sample(
+        t_ms: u64,
+        power_w: Option<u16>,
+        cadence_rpm: Option<u16>,
+        heart_rate_bpm: Option<u16>,
+        target_power_w: Option<u16>,
+    ) -> Sample {
         Sample {
             t_ms,
-            power: p,
-            cadence: c,
-            hr,
-            target: tgt,
+            power_w,
+            cadence_rpm,
+            heart_rate_bpm,
+            target_power_w,
+            target_cadence_rpm: None,
         }
     }
 
-    fn event(t_ms: u64, kind: RideEventKind) -> RideEvent {
-        RideEvent {
+    fn event(t_ms: u64, kind: SessionEventKind) -> SessionEvent {
+        SessionEvent {
             t_ms,
             kind,
-            seg: None,
+            segment_index: None,
         }
     }
 
-    fn lap_event(t_ms: u64, seg: usize) -> RideEvent {
-        RideEvent {
+    fn lap_event(t_ms: u64, segment_index: usize) -> SessionEvent {
+        SessionEvent {
             t_ms,
-            kind: RideEventKind::Lap,
-            seg: Some(seg),
+            kind: SessionEventKind::Lap,
+            segment_index: Some(segment_index),
         }
     }
 
-    fn written(header: &JournalHeader, samples: &[Sample], events: &[RideEvent]) -> Vec<u8> {
+    fn written(header: &JournalHeader, samples: &[Sample], events: &[SessionEvent]) -> Vec<u8> {
         let mut w = JournalWriter::new(Vec::new(), header).unwrap();
         for s in samples {
             w.write_sample(s).unwrap();
@@ -409,8 +434,10 @@ mod tests {
         assert_eq!(
             text,
             concat!(
-                r#"{"h":{"ride_id":"abc-123","started_unix_ms":1700000000000,"#,
-                r#""workout_name":"Sweet Spot","ftp":250,"weight_kg":72.0,"#,
+                r#"{"h":{"workout_session_id":"session-abc-123","workout_definition_id":"definition-abc-123","#,
+                r#""workout_definition_snapshot_json":"{\"format\":\"TPW\",\"version\":1}","#,
+                r#""started_unix_ms":1700000000000,"#,
+                r#""workout_name":"Sweet Spot","ftp_w":250,"weight_kg":72.0,"#,
                 r#""trainer":"KICKR CORE 1234","hrm":"TICKR 5678","app_ver":"0.1.0"}}"#,
                 "\n"
             )
@@ -428,8 +455,10 @@ mod tests {
         assert_eq!(
             text,
             concat!(
-                r#"{"h":{"ride_id":"abc-123","started_unix_ms":1700000000000,"#,
-                r#""workout_name":"Sweet Spot","ftp":250,"weight_kg":72.0,"app_ver":"0.1.0"}}"#,
+                r#"{"h":{"workout_session_id":"session-abc-123","workout_definition_id":"definition-abc-123","#,
+                r#""workout_definition_snapshot_json":"{\"format\":\"TPW\",\"version\":1}","#,
+                r#""started_unix_ms":1700000000000,"#,
+                r#""workout_name":"Sweet Spot","ftp_w":250,"weight_kg":72.0,"app_ver":"0.1.0"}}"#,
                 "\n"
             )
         );
@@ -437,14 +466,22 @@ mod tests {
 
     #[test]
     fn sample_line_exact_format_full() {
+        let mut sample = sample(1_234_567, Some(215), Some(92), Some(148), Some(220));
+        sample.target_cadence_rpm = Some(95);
         let bytes = written(
             &header(),
-            &[sample(1_234_567, Some(215), Some(92), Some(148), Some(220))],
+            &[sample],
             &[],
         );
         let text = String::from_utf8(bytes).unwrap();
         let line = text.lines().nth(1).unwrap();
-        assert_eq!(line, r#"{"s":{"t":1234567,"p":215,"c":92,"hr":148,"tgt":220}}"#);
+        assert_eq!(
+            line,
+            concat!(
+                r#"{"s":{"t_ms":1234567,"power_w":215,"cadence_rpm":92,"#,
+                r#""heart_rate_bpm":148,"target_power_w":220,"target_cadence_rpm":95}}"#
+            )
+        );
     }
 
     #[test]
@@ -452,7 +489,7 @@ mod tests {
         let bytes = written(&header(), &[sample(5000, None, None, None, None)], &[]);
         let text = String::from_utf8(bytes).unwrap();
         let line = text.lines().nth(1).unwrap();
-        assert_eq!(line, r#"{"s":{"t":5000}}"#);
+        assert_eq!(line, r#"{"s":{"t_ms":5000}}"#);
     }
 
     #[test]
@@ -460,7 +497,7 @@ mod tests {
         let bytes = written(&header(), &[sample(2000, Some(180), None, Some(140), None)], &[]);
         let text = String::from_utf8(bytes).unwrap();
         let line = text.lines().nth(1).unwrap();
-        assert_eq!(line, r#"{"s":{"t":2000,"p":180,"hr":140}}"#);
+        assert_eq!(line, r#"{"s":{"t_ms":2000,"power_w":180,"heart_rate_bpm":140}}"#);
     }
 
     #[test]
@@ -469,22 +506,28 @@ mod tests {
             &header(),
             &[],
             &[
-                event(0, RideEventKind::Start),
-                event(60_000, RideEventKind::Pause),
-                event(65_000, RideEventKind::Resume),
+                event(0, SessionEventKind::Start),
+                event(60_000, SessionEventKind::Pause),
+                event(65_000, SessionEventKind::Resume),
                 lap_event(600_000, 4),
-                event(700_000, RideEventKind::FreerideEnter),
-                event(900_000, RideEventKind::End),
+                event(700_000, SessionEventKind::FreerideEnter),
+                event(900_000, SessionEventKind::End),
             ],
         );
         let text = String::from_utf8(bytes).unwrap();
         let lines: Vec<&str> = text.lines().skip(1).collect();
-        assert_eq!(lines[0], r#"{"e":{"t":0,"k":"start"}}"#);
-        assert_eq!(lines[1], r#"{"e":{"t":60000,"k":"pause"}}"#);
-        assert_eq!(lines[2], r#"{"e":{"t":65000,"k":"resume"}}"#);
-        assert_eq!(lines[3], r#"{"e":{"t":600000,"k":"lap","seg":4}}"#);
-        assert_eq!(lines[4], r#"{"e":{"t":700000,"k":"freeride_enter"}}"#);
-        assert_eq!(lines[5], r#"{"e":{"t":900000,"k":"end"}}"#);
+        assert_eq!(lines[0], r#"{"e":{"t_ms":0,"kind":"start"}}"#);
+        assert_eq!(lines[1], r#"{"e":{"t_ms":60000,"kind":"pause"}}"#);
+        assert_eq!(lines[2], r#"{"e":{"t_ms":65000,"kind":"resume"}}"#);
+        assert_eq!(
+            lines[3],
+            r#"{"e":{"t_ms":600000,"kind":"lap","segment_index":4}}"#
+        );
+        assert_eq!(
+            lines[4],
+            r#"{"e":{"t_ms":700000,"kind":"freeride_enter"}}"#
+        );
+        assert_eq!(lines[5], r#"{"e":{"t_ms":900000,"kind":"end"}}"#);
     }
 
     // ---- roundtrip ----------------------------------------------------------
@@ -498,9 +541,9 @@ mod tests {
             sample(2000, None, Some(85), None, None),
         ];
         let events = vec![
-            event(0, RideEventKind::Start),
+            event(0, SessionEventKind::Start),
             lap_event(1500, 0),
-            event(3000, RideEventKind::End),
+            event(3000, SessionEventKind::End),
         ];
         let mut w = JournalWriter::new(Vec::new(), &h).unwrap();
         w.write_event(&events[0]).unwrap();
@@ -538,7 +581,7 @@ mod tests {
             &[sample(0, Some(100), None, None, None), sample(1000, Some(110), None, None, None)],
             &[],
         );
-        bytes.extend_from_slice(br#"{"s":{"t":2000,"p":1"#); // crash mid-write, no newline
+        bytes.extend_from_slice(br#"{"s":{"t_ms":2000,"power_w":1"#); // crash mid-write
         let data = replay(Cursor::new(bytes)).unwrap();
         assert_eq!(data.samples.len(), 2);
         assert_eq!(data.samples[1].t_ms, 1000);
@@ -548,7 +591,7 @@ mod tests {
     fn truncated_final_line_mid_utf8_tolerated() {
         let mut bytes = written(&header(), &[sample(0, Some(100), None, None, None)], &[]);
         // Cut a multi-byte UTF-8 char in half: "…" is E2 80 A6.
-        bytes.extend_from_slice(b"{\"s\":{\"t\":2000,\"x\":\"\xE2\x80");
+        bytes.extend_from_slice(b"{\"s\":{\"t_ms\":2000,\"x\":\"\xE2\x80");
         let data = replay(Cursor::new(bytes)).unwrap();
         assert_eq!(data.samples.len(), 1);
     }
@@ -565,7 +608,7 @@ mod tests {
     fn malformed_earlier_line_errors_with_context() {
         let mut bytes = written(&header(), &[sample(0, Some(100), None, None, None)], &[]);
         bytes.extend_from_slice(b"garbage not json\n");
-        bytes.extend_from_slice(br#"{"s":{"t":2000}}"#);
+        bytes.extend_from_slice(br#"{"s":{"t_ms":2000}}"#);
         bytes.push(b'\n');
         let err = replay(Cursor::new(bytes)).unwrap_err();
         match err {
@@ -584,7 +627,7 @@ mod tests {
 
     #[test]
     fn missing_header_samples_only() {
-        let bytes = b"{\"s\":{\"t\":0,\"p\":100}}\n{\"s\":{\"t\":1000,\"p\":110}}\n".to_vec();
+        let bytes = b"{\"s\":{\"t_ms\":0,\"power_w\":100}}\n{\"s\":{\"t_ms\":1000,\"power_w\":110}}\n".to_vec();
         let err = replay(Cursor::new(bytes)).unwrap_err();
         assert!(matches!(err, JournalError::MissingHeader));
     }
@@ -592,7 +635,7 @@ mod tests {
     #[test]
     fn missing_header_truncated_header_line() {
         // Crash while writing the very first (header) line.
-        let bytes = br#"{"h":{"ride_id":"abc","start"#.to_vec();
+        let bytes = br#"{"h":{"workout_session_id":"abc","start"#.to_vec();
         let err = replay(Cursor::new(bytes)).unwrap_err();
         assert!(matches!(err, JournalError::MissingHeader));
     }
@@ -610,7 +653,7 @@ mod tests {
     fn blank_lines_skipped() {
         let mut bytes = written(&header(), &[sample(0, Some(100), None, None, None)], &[]);
         bytes.extend_from_slice(b"\n");
-        bytes.extend_from_slice(br#"{"s":{"t":1000,"p":110}}"#);
+        bytes.extend_from_slice(br#"{"s":{"t_ms":1000,"power_w":110}}"#);
         bytes.push(b'\n');
         let data = replay(Cursor::new(bytes)).unwrap();
         assert_eq!(data.samples.len(), 2);
@@ -618,8 +661,8 @@ mod tests {
 
     // ---- compute_laps -------------------------------------------------------
 
-    fn ride(samples: Vec<Sample>, events: Vec<RideEvent>) -> RideData {
-        RideData {
+    fn recording(samples: Vec<Sample>, events: Vec<SessionEvent>) -> SessionRecording {
+        SessionRecording {
             header: header(),
             samples,
             events,
@@ -633,24 +676,24 @@ mod tests {
             .map(|k| sample(k * 1000, Some(100 + (k as u16) * 10), None, None, None))
             .collect();
         let events = vec![
-            event(0, RideEventKind::Start),
+            event(0, SessionEventKind::Start),
             lap_event(5000, 0),
-            event(10_000, RideEventKind::End),
+            event(10_000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&ride(samples, events));
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 2);
 
         assert_eq!(laps[0].start_ms, 0);
         assert_eq!(laps[0].end_ms, 5000);
         assert_eq!(laps[0].timer_ms, 5000);
-        assert_eq!(laps[0].avg_power, Some(120)); // 100..140
-        assert_eq!(laps[0].max_power, Some(140));
+        assert_eq!(laps[0].average_power_w, Some(120)); // 100..140
+        assert_eq!(laps[0].max_power_w, Some(140));
 
         assert_eq!(laps[1].start_ms, 5000);
         assert_eq!(laps[1].end_ms, 10_000);
         assert_eq!(laps[1].timer_ms, 5000);
-        assert_eq!(laps[1].avg_power, Some(170)); // 150..190
-        assert_eq!(laps[1].max_power, Some(190));
+        assert_eq!(laps[1].average_power_w, Some(170)); // 150..190
+        assert_eq!(laps[1].max_power_w, Some(190));
     }
 
     #[test]
@@ -661,14 +704,14 @@ mod tests {
             sample(6000, Some(100), None, None, None),
         ];
         let events = vec![
-            event(0, RideEventKind::Start),
+            event(0, SessionEventKind::Start),
             lap_event(5000, 0),
-            event(7000, RideEventKind::End),
+            event(7000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&ride(samples, events));
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 2);
-        assert_eq!(laps[0].max_power, Some(100));
-        assert_eq!(laps[1].max_power, Some(500));
+        assert_eq!(laps[0].max_power_w, Some(100));
+        assert_eq!(laps[1].max_power_w, Some(500));
     }
 
     #[test]
@@ -683,12 +726,12 @@ mod tests {
             sample(9000, Some(100), None, None, None),
         ];
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(3000, RideEventKind::Pause),
-            event(7000, RideEventKind::Resume),
-            event(10_000, RideEventKind::End),
+            event(0, SessionEventKind::Start),
+            event(3000, SessionEventKind::Pause),
+            event(7000, SessionEventKind::Resume),
+            event(10_000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&ride(samples, events));
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 1);
         assert_eq!(laps[0].end_ms - laps[0].start_ms, 10_000);
         assert_eq!(laps[0].timer_ms, 6000); // 10 s elapsed − 4 s paused
@@ -698,28 +741,28 @@ mod tests {
     fn pause_gap_split_across_laps() {
         // Pause 4000..8000 straddles the lap boundary at 6000.
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(4000, RideEventKind::Pause),
+            event(0, SessionEventKind::Start),
+            event(4000, SessionEventKind::Pause),
             lap_event(6000, 0),
-            event(8000, RideEventKind::Resume),
-            event(12_000, RideEventKind::End),
+            event(8000, SessionEventKind::Resume),
+            event(12_000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&ride(vec![], events));
+        let laps = compute_laps(&recording(vec![], events));
         assert_eq!(laps.len(), 2);
         assert_eq!(laps[0].timer_ms, 4000); // 6 s − 2 s paused
         assert_eq!(laps[1].timer_ms, 4000); // 6 s − 2 s paused
     }
 
     #[test]
-    fn unpaired_pause_extends_to_ride_end() {
+    fn unpaired_pause_extends_to_session_end() {
         // Crash while paused: Pause never resumed, no End event.
         let samples = vec![
             sample(0, Some(100), None, None, None),
             sample(1000, Some(100), None, None, None),
             sample(2000, Some(100), None, None, None),
         ];
-        let events = vec![event(0, RideEventKind::Start), event(3000, RideEventKind::Pause)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::Pause)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 1);
         assert_eq!(laps[0].end_ms, 3000); // last event is the latest timestamp
         assert_eq!(laps[0].timer_ms, 3000); // zero-length open pause at the very end
@@ -732,15 +775,15 @@ mod tests {
             sample(1000, None, None, Some(160), None),
             sample(2000, Some(201), Some(80), None, None),
         ];
-        let events = vec![event(0, RideEventKind::Start), event(3000, RideEventKind::End)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::End)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 1);
         let lap = laps[0];
-        assert_eq!(lap.avg_power, Some(151)); // (100+201)/2 = 150.5 → 151
-        assert_eq!(lap.max_power, Some(201));
-        assert_eq!(lap.avg_hr, Some(155));
-        assert_eq!(lap.max_hr, Some(160));
-        assert_eq!(lap.avg_cadence, Some(85));
+        assert_eq!(lap.average_power_w, Some(151)); // (100+201)/2 = 150.5 → 151
+        assert_eq!(lap.max_power_w, Some(201));
+        assert_eq!(lap.average_heart_rate_bpm, Some(155));
+        assert_eq!(lap.max_heart_rate_bpm, Some(160));
+        assert_eq!(lap.average_cadence_rpm, Some(85));
     }
 
     #[test]
@@ -749,15 +792,15 @@ mod tests {
             sample(0, None, None, None, None),
             sample(1000, None, None, None, None),
         ];
-        let events = vec![event(0, RideEventKind::Start), event(2000, RideEventKind::End)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(0, SessionEventKind::Start), event(2000, SessionEventKind::End)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 1);
         let lap = laps[0];
-        assert_eq!(lap.avg_power, None);
-        assert_eq!(lap.max_power, None);
-        assert_eq!(lap.avg_hr, None);
-        assert_eq!(lap.max_hr, None);
-        assert_eq!(lap.avg_cadence, None);
+        assert_eq!(lap.average_power_w, None);
+        assert_eq!(lap.max_power_w, None);
+        assert_eq!(lap.average_heart_rate_bpm, None);
+        assert_eq!(lap.max_heart_rate_bpm, None);
+        assert_eq!(lap.average_cadence_rpm, None);
         assert_eq!(lap.calories_kcal, 0);
     }
 
@@ -767,22 +810,22 @@ mod tests {
         let samples: Vec<Sample> = (0..300)
             .map(|k| sample(k * 1000, Some(250), None, None, None))
             .collect();
-        let events = vec![event(0, RideEventKind::Start), event(300_000, RideEventKind::End)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(0, SessionEventKind::Start), event(300_000, SessionEventKind::End)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps[0].calories_kcal, 75);
 
         // Rounding: 3 s at 250 W = 0.75 kJ → 1 kcal; 2 s at 250 W = 0.5 kJ → 1 (half up).
         let samples: Vec<Sample> = (0..3)
             .map(|k| sample(k * 1000, Some(250), None, None, None))
             .collect();
-        let events = vec![event(0, RideEventKind::Start), event(3000, RideEventKind::End)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::End)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps[0].calories_kcal, 1);
 
         // 1 s at 250 W = 0.25 kJ → 0 kcal.
         let samples = vec![sample(0, Some(250), None, None, None)];
-        let events = vec![event(0, RideEventKind::Start), event(1000, RideEventKind::End)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(0, SessionEventKind::Start), event(1000, SessionEventKind::End)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps[0].calories_kcal, 0);
     }
 
@@ -791,8 +834,8 @@ mod tests {
         let samples: Vec<Sample> = (0..9)
             .map(|k| sample(k * 1000, Some(100), None, None, None))
             .collect();
-        let events = vec![event(0, RideEventKind::Start), lap_event(5000, 0)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(0, SessionEventKind::Start), lap_event(5000, 0)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 2);
         assert_eq!(laps[0].start_ms, 0);
         assert_eq!(laps[0].end_ms, 5000);
@@ -802,7 +845,7 @@ mod tests {
         assert_eq!(laps[1].timer_ms, 3000);
         // Sample at t == end (8000) is included in the final lap.
         assert_eq!(laps[1].calories_kcal, (4.0f64 * 100.0 / 1000.0).round() as u16);
-        assert_eq!(laps[1].avg_power, Some(100));
+        assert_eq!(laps[1].average_power_w, Some(100));
     }
 
     #[test]
@@ -810,17 +853,17 @@ mod tests {
         let samples: Vec<Sample> = (0..5)
             .map(|k| sample(k * 1000, Some(200), None, None, None))
             .collect();
-        let laps = compute_laps(&ride(samples, vec![]));
+        let laps = compute_laps(&recording(samples, vec![]));
         assert_eq!(laps.len(), 1);
         assert_eq!(laps[0].start_ms, 0);
         assert_eq!(laps[0].end_ms, 4000);
         assert_eq!(laps[0].timer_ms, 4000);
-        assert_eq!(laps[0].avg_power, Some(200));
+        assert_eq!(laps[0].average_power_w, Some(200));
     }
 
     #[test]
-    fn empty_ride_yields_no_laps() {
-        let laps = compute_laps(&ride(vec![], vec![]));
+    fn empty_session_yields_no_laps() {
+        let laps = compute_laps(&recording(vec![], vec![]));
         assert!(laps.is_empty());
     }
 
@@ -829,12 +872,12 @@ mod tests {
         // Lap events coinciding with start or end must not create zero-length laps.
         let samples = vec![sample(0, Some(100), None, None, None)];
         let events = vec![
-            event(0, RideEventKind::Start),
+            event(0, SessionEventKind::Start),
             lap_event(0, 0),
             lap_event(5000, 1),
-            event(5000, RideEventKind::End),
+            event(5000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&ride(samples, events));
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 1);
         assert_eq!((laps[0].start_ms, laps[0].end_ms), (0, 5000));
     }
@@ -846,8 +889,8 @@ mod tests {
             sample(500, Some(100), None, None, None),
             sample(1500, Some(200), None, None, None),
         ];
-        let events = vec![event(500, RideEventKind::Start), event(2000, RideEventKind::End)];
-        let laps = compute_laps(&ride(samples, events));
+        let events = vec![event(500, SessionEventKind::Start), event(2000, SessionEventKind::End)];
+        let laps = compute_laps(&recording(samples, events));
         assert_eq!(laps.len(), 1);
         assert_eq!(laps[0].start_ms, 500);
         assert_eq!(laps[0].end_ms, 2000);

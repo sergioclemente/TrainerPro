@@ -335,18 +335,19 @@ pub struct WorkoutDetail {
 #[tauri::command]
 pub async fn get_workout_detail(state: State<'_, AppState>, id: String) -> R<WorkoutDetail> {
     let summary = get_workout_summary(&state, &id)?;
-    let workout = load_workout_model(&state, &id)?;
+    let workout = load_workout_definition(&state, &id)?.compile()?;
     let ftp = state.settings().profile.ftp;
     Ok(WorkoutDetail { summary, segments: segment_rows(&workout, ftp) })
 }
 
-/// Load and compile the canonical TPW definition from SQLite.
-pub fn load_workout_model(state: &State<'_, AppState>, id: &str) -> R<ExecutableWorkout> {
+/// Load and validate the canonical TPW definition from SQLite. Session setup
+/// owns the point-in-time snapshot and compilation used for execution.
+pub fn load_workout_definition(state: &State<'_, AppState>, id: &str) -> R<WorkoutDefinition> {
     let tpw_json = {
         let conn = state.db.lock().unwrap();
         definition_db::get(&conn, id)?
             .map(|row| row.tpw_json)
             .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
     };
-    Ok(WorkoutDefinition::from_json(&tpw_json)?.compile()?)
+    Ok(WorkoutDefinition::from_json(&tpw_json)?)
 }

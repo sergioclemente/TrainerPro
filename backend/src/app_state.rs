@@ -211,8 +211,8 @@ impl AppState {
         Ok(())
     }
 
-    pub fn rides_dir(&self) -> PathBuf {
-        self.data_dir.join("rides")
+    pub fn activities_dir(&self) -> PathBuf {
+        self.data_dir.join("activities")
     }
 }
 

@@ -38,7 +38,8 @@ export interface ScanResult {
 
 export interface PlayerState {
   phase: "ready" | "riding" | "paused" | "finished";
-  workout_id: string;
+  workout_session_id: string;
+  workout_definition_id: string;
   workout_name: string;
   workout_duration_s: number;
   seg_idx: number | null;
@@ -48,11 +49,14 @@ export interface PlayerState {
   /** Time actually ridden: pauses and skipped spans excluded. */
   ride_s: number;
   intensity: number;
-  target: number | null;
-  avg_power: number | null;
+  /** Resolved workout power prescription after FTP/intensity adjustment. */
+  target_power_w: number | null;
+  /** Compiled workout cadence prescription. */
+  target_cadence_rpm: number | null;
+  average_power_w: number | null;
   /** Live session totals, same maths as the post-ride summary. */
-  np: number | null;
-  tss: number | null;
+  normalized_power_w: number | null;
+  training_stress_score: number | null;
   /** Efficiency factor: NP / average HR. Null without an HRM. */
   ef: number | null;
   kcal: number | null;
@@ -69,39 +73,39 @@ export interface PlayerMeasurement {
 export interface LapRow {
   start_s: number;
   duration_s: number;
-  avg_power: number | null;
-  max_power: number | null;
-  avg_hr: number | null;
+  average_power_w: number | null;
+  max_power_w: number | null;
+  average_heart_rate_bpm: number | null;
 }
 
-export interface RideSummary {
-  ride_id: string;
+export interface ActivitySummary {
+  activity_id: string;
   workout_name: string;
-  started_at: number;
+  started_at_unix_ms: number;
   elapsed_s: number;
   timer_s: number;
-  avg_power: number | null;
-  max_power: number | null;
-  np: number | null;
-  if_: number | null;
-  tss: number | null;
-  avg_hr: number | null;
-  max_hr: number | null;
-  kj: number;
+  average_power_w: number | null;
+  max_power_w: number | null;
+  normalized_power_w: number | null;
+  intensity_factor: number | null;
+  training_stress_score: number | null;
+  average_heart_rate_bpm: number | null;
+  max_heart_rate_bpm: number | null;
+  work_kj: number;
   completed_pct: number;
   fit_path: string;
   laps: LapRow[];
 }
 
-export interface RideRow {
+export interface ActivityRow {
   id: string;
   workout_name: string;
-  started_at: number;
+  started_at_unix_ms: number;
   timer_s: number;
-  avg_power: number | null;
-  np: number | null;
-  tss: number | null;
-  avg_hr: number | null;
+  average_power_w: number | null;
+  normalized_power_w: number | null;
+  training_stress_score: number | null;
+  average_heart_rate_bpm: number | null;
   completed_pct: number;
   fit_path: string;
 }
@@ -241,12 +245,12 @@ export const ipc = {
   skipSegment: () => invoke<void>("skip_segment"),
   setIntensity: (pct: number) => invoke<void>("set_intensity", { pct }),
   setErg: (enabled: boolean) => invoke<void>("set_erg", { enabled }),
-  endRide: () => invoke<RideSummary>("end_ride"),
+  endRide: () => invoke<ActivitySummary>("end_ride"),
   clearRide: () => invoke<void>("clear_ride"),
   getPlayerState: () => invoke<PlayerState | null>("get_player_state"),
 
-  listRides: () => invoke<RideRow[]>("list_rides"),
-  deleteRide: (id: string) => invoke<void>("delete_ride", { id }),
+  listActivities: () => invoke<ActivityRow[]>("list_activities"),
+  deleteActivity: (id: string) => invoke<void>("delete_activity", { id }),
   saveFitAs: (id: string, destPath: string) => invoke<void>("save_fit_as", { id, destPath }),
   revealFit: (id: string) => invoke<void>("reveal_fit", { id }),
   openGarminImport: () => invoke<void>("open_garmin_import"),

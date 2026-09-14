@@ -101,6 +101,31 @@ const MIGRATIONS: &[&str] = &[
     DROP TABLE rides;
     DROP TABLE workouts;
     ",
+    // v7: an activity is the immutable result of a workout session. Existing
+    // activities predate session identity and use their activity id as the
+    // best available session id; they have no recoverable workout snapshot.
+    "
+    ALTER TABLE activities ADD COLUMN workout_session_id TEXT;
+    ALTER TABLE activities ADD COLUMN workout_definition_snapshot_json TEXT;
+    UPDATE activities SET workout_session_id = id;
+    CREATE UNIQUE INDEX activities_workout_session_id
+      ON activities(workout_session_id);
+    ",
+    // v8: persisted activity measurements name their meaning and units.
+    "
+    ALTER TABLE activities RENAME COLUMN started_at TO started_at_unix_ms;
+    ALTER TABLE activities RENAME COLUMN avg_power TO average_power_w;
+    ALTER TABLE activities RENAME COLUMN max_power TO max_power_w;
+    ALTER TABLE activities RENAME COLUMN np TO normalized_power_w;
+    ALTER TABLE activities RENAME COLUMN if_ TO intensity_factor;
+    ALTER TABLE activities RENAME COLUMN tss TO training_stress_score;
+    ALTER TABLE activities RENAME COLUMN avg_hr TO average_heart_rate_bpm;
+    ALTER TABLE activities RENAME COLUMN max_hr TO max_heart_rate_bpm;
+    ALTER TABLE activities RENAME COLUMN avg_cadence TO average_cadence_rpm;
+    ALTER TABLE activities RENAME COLUMN kj TO work_kj;
+    ALTER TABLE activities RENAME COLUMN ftp_used TO ftp_used_w;
+    ALTER TABLE activities RENAME COLUMN intensity_final TO final_intensity_multiplier;
+    ",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -180,19 +205,34 @@ mod tests {
             })
             .unwrap();
         assert_eq!(definitions, 0);
-        let activity: (Option<String>, String, String, String) = conn
+        let activity: (Option<String>, String, Option<String>, String, i64, String, String) = conn
             .query_row(
-                "SELECT workout_definition_id, workout_name, fit_path, journal_path
+                "SELECT workout_definition_id, workout_session_id,
+                        workout_definition_snapshot_json, workout_name,
+                        started_at_unix_ms, fit_path, journal_path
                  FROM activities WHERE id = 'activity'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
             )
             .unwrap();
         assert_eq!(
             activity,
             (
                 None,
+                "activity".into(),
+                None,
                 "Legacy".into(),
+                1,
                 "/tmp/activity.fit".into(),
                 "/tmp/activity.jsonl".into(),
             )

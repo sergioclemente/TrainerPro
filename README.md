@@ -48,7 +48,7 @@ flowchart TD
     end
 
     subgraph FRONTEND["Frontend - React + TypeScript"]
-        SCREENS["Screens<br/>Workouts / Devices / Player<br/>Summary / History / Settings"]
+        SCREENS["Screens<br/>Workouts / Devices / Player<br/>Summary / Activities / Settings"]
         STORE["zustand store"]
     end
 
@@ -65,7 +65,7 @@ flowchart TD
         TPW["TPW definition<br/>validation + compiler"]
         ENGINE["Workout engine<br/>deterministic state machine"]
         METRICS["Metrics: NP / IF / TSS / zones"]
-        JOURNAL["Crash-safe ride journal"]
+        JOURNAL["Crash-safe session journal"]
         FITENC["FIT activity encoder"]
     end
 

@@ -93,7 +93,7 @@ Trainer and heart-rate owners remain separate even though this lifecycle is
 similar: trainer loss pauses a ride, while heart-rate loss only clears the
 heart-rate measurement.
 
-## Ride data flow
+## Workout session to activity flow
 
 ```mermaid
 sequenceDiagram
@@ -101,9 +101,12 @@ sequenceDiagram
     participant P as Player runtime
     participant E as Engine
     participant T as Trainer owner
-    participant J as Journal
+    participant J as Session journal
+    participant D as SQLite activities
     participant G as Garmin Connect
 
+    U->>P: Load WorkoutDefinition
+    P->>J: create with session id + TPW snapshot
     U->>P: Start
     loop every 250 ms
         P->>E: Tick
@@ -116,6 +119,8 @@ sequenceDiagram
     P->>J: replay journal
     P->>P: laps, NP, IF, TSS
     P->>P: encode .FIT
+    P->>D: insert immutable Activity
+    Note over J,D: activity links session and preserves TPW snapshot
     U->>G: upload .FIT
 ```
 

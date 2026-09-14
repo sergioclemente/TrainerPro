@@ -5,9 +5,9 @@
 > in [`ROADMAP.md`](ROADMAP.md).
 
 TrainerPro currently produces a Garmin-compatible FIT file for every completed
-ride. The canonical FIT and its journal stay in the application data directory;
-the user may also configure an export folder, save a copy elsewhere, reveal the
-file, or open Garmin Connect for manual upload.
+activity. The canonical FIT and its session journal stay in the application
+data directory; the user may also configure an export folder, save a copy
+elsewhere, reveal the file, or open Garmin Connect for manual upload.
 
 ## Garmin Connect
 
@@ -19,7 +19,7 @@ requires. Manual FIT upload remains the supported path in the meantime.
 ## Intervals.icu
 
 Intervals.icu is not implemented today. The database reserves
-`rides.icu_activity_id`, but there is no credential setting, backend client,
+`activities.icu_activity_id`, but there is no credential setting, backend client,
 IPC command, automatic upload, schedule pull, or retry UI.
 
 The accepted direction is broader than the original post-ride-export proposal:
@@ -40,7 +40,7 @@ When implemented, preserve these invariants:
 - Credentials are disabled by default and stored through the provider-
   connection design rather than ad hoc settings.
 
-The old proposed `icu_test` / `icu_upload_ride`-only command surface and
+The old proposed `icu_test` / `icu_upload_activity`-only command surface and
 export-sink-only restriction are superseded. Intervals.icu should use the
 capability-specific connector and sync model in
 [`workout-platform.md`](workout-platform.md).

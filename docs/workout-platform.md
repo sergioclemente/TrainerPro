@@ -249,7 +249,7 @@ from schema/product changes.
    identity. Backward compatibility is not a P0 gate; choose an explicit reset
    or narrow migration rather than indefinite dual writes.
 5. **Activity/session reconciliation** — make session snapshots and activity
-   relationships explicit, update touched ride/history naming, and preserve
+   relationships explicit, update completed-history naming, and preserve
    crash recovery and FIT export.
 6. **Next Up backend** — add ScheduledWorkout persistence, the Next Up query,
    and deterministic frequency-based favorite recommendations with training-

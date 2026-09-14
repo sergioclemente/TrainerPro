@@ -5,7 +5,7 @@ import Library from "./screens/Library";
 import Devices from "./screens/Devices";
 import Player from "./screens/Player";
 import Summary from "./screens/Summary";
-import History from "./screens/History";
+import Activities from "./screens/Activities";
 import SettingsScreen from "./screens/SettingsScreen";
 import WorkoutDetail from "./screens/WorkoutDetail";
 import Builder from "./screens/Builder";
@@ -33,7 +33,7 @@ const NAV = [
   ["library", "Workouts"],
   ["builder", "Build"],
   ["devices", "Devices"],
-  ["history", "History"],
+  ["activities", "Activities"],
   ["settings", "Settings"],
 ] as const;
 
@@ -46,14 +46,14 @@ export default function App() {
     deviceStatus,
     refreshWorkouts,
     refreshDevices,
-    refreshRides,
+    refreshActivities,
     refreshSettings,
   } = useStore();
 
   useEffect(() => {
     void refreshWorkouts();
     void refreshDevices();
-    void refreshRides();
+    void refreshActivities();
     void refreshSettings();
     // Rehydrate a ride the backend still has loaded (e.g. after a UI
     // reload), so the sidebar shows it and the Player screen can resume.
@@ -103,7 +103,7 @@ export default function App() {
         {screen === "devices" && <Devices />}
         {screen === "player" && <Player />}
         {screen === "summary" && <Summary />}
-        {screen === "history" && <History />}
+        {screen === "activities" && <Activities />}
         {screen === "settings" && <SettingsScreen />}
         {screen === "workout" && <WorkoutDetail />}
         {screen === "builder" && <Builder />}

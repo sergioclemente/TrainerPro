@@ -4,8 +4,8 @@ use tauri::{AppHandle, State};
 
 use crate::app_error::AppError;
 use crate::app_state::AppState;
-use crate::player_runtime::{self as runtime, Cmd, PlayerState, RideSummary};
-use crate::commands::workout::load_workout_model;
+use crate::commands::workout::load_workout_definition;
+use crate::player_runtime::{self as runtime, ActivitySummary, Cmd, PlayerState};
 
 type R<T> = Result<T, AppError>;
 
@@ -24,7 +24,7 @@ pub async fn do_load_workout(
     state: &State<'_, AppState>,
     id: &str,
 ) -> R<PlayerState> {
-    let workout = load_workout_model(state, id)?;
+    let definition = load_workout_definition(state, id)?;
     let mut player = state.player.lock().await;
     if let Some(h) = player.as_ref() {
         let phase = h.state_rx.borrow().phase.clone();
@@ -40,7 +40,7 @@ pub async fn do_load_workout(
             ));
         }
     }
-    let handle = runtime::spawn(app, id.to_string(), workout).await?;
+    let handle = runtime::spawn(app, id.to_string(), definition).await?;
     let ps = handle.state_rx.borrow().clone();
     *player = Some(handle);
     Ok(ps)
@@ -83,7 +83,7 @@ pub async fn set_erg(state: State<'_, AppState>, enabled: bool) -> R<()> {
 }
 
 #[tauri::command]
-pub async fn end_ride(state: State<'_, AppState>) -> R<RideSummary> {
+pub async fn end_ride(state: State<'_, AppState>) -> R<ActivitySummary> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     send_cmd(&state, Cmd::End(tx)).await?;
     let summary = rx
@@ -94,7 +94,7 @@ pub async fn end_ride(state: State<'_, AppState>) -> R<RideSummary> {
 }
 
 /// Drop the player slot after a naturally-completed ride (runtime already
-/// finalized and emitted `ride_finished`).
+/// finalized and emitted `activity_recorded`).
 #[tauri::command]
 pub async fn clear_ride(state: State<'_, AppState>) -> R<()> {
     *state.player.lock().await = None;
