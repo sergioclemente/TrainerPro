@@ -12,6 +12,9 @@
     )
 )]
 
+use std::time::Duration;
+
+use reqwest::StatusCode;
 use serde::Deserialize;
 use tp_core::consts::TEXT_EVENT_DEFAULT_S;
 use tp_core::workout_definition::{
@@ -22,6 +25,113 @@ use tp_core::workout_definition::{
 const WORKOUT_CATEGORY: &str = "WORKOUT";
 const RIDE_TYPE: &str = "Ride";
 const VIRTUAL_RIDE_TYPE: &str = "VirtualRide";
+const API_BASE_URL: &str = "https://intervals.icu";
+const API_KEY_USERNAME: &str = "API_KEY";
+const REQUEST_TIMEOUT_SECONDS: u64 = 30;
+const CALENDAR_EVENTS_PATH: &str = "/api/v1/athlete/0/events";
+
+pub(crate) struct IntervalsIcuClient {
+    http: reqwest::Client,
+    base_url: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum IntervalsApiError {
+    #[error("Intervals.icu API key is blank")]
+    MissingApiKey,
+    #[error(
+        "invalid Intervals.icu calendar range {oldest_date_local:?} through {newest_date_local:?}; expected ordered YYYY-MM-DD dates"
+    )]
+    InvalidDateRange {
+        oldest_date_local: String,
+        newest_date_local: String,
+    },
+    #[error("could not create the Intervals.icu HTTP client: {0}")]
+    Client(#[source] reqwest::Error),
+    #[error("could not reach Intervals.icu: {0}")]
+    Request(#[source] reqwest::Error),
+    #[error("Intervals.icu rejected the API credentials")]
+    Unauthorized,
+    #[error("Intervals.icu returned HTTP {status}")]
+    HttpStatus { status: StatusCode },
+    #[error("Intervals.icu returned an invalid calendar response: {0}")]
+    InvalidResponse(#[source] reqwest::Error),
+}
+
+impl IntervalsIcuClient {
+    pub(crate) fn new() -> Result<Self, IntervalsApiError> {
+        Self::with_base_url(API_BASE_URL)
+    }
+
+    fn with_base_url(base_url: &str) -> Result<Self, IntervalsApiError> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
+            .build()
+            .map_err(IntervalsApiError::Client)?;
+        Ok(Self {
+            http,
+            base_url: base_url.trim_end_matches('/').to_string(),
+        })
+    }
+
+    /// Fetch a bounded calendar window without asking Intervals.icu to resolve
+    /// relative targets or attach a workout file. The structured `workout_doc`
+    /// remains the source consumed by `to_workout_definition`.
+    pub(crate) async fn fetch_workout_events(
+        &self,
+        api_key: &str,
+        oldest_date_local: &str,
+        newest_date_local: &str,
+    ) -> Result<Vec<IntervalsCalendarEvent>, IntervalsApiError> {
+        if api_key.trim().is_empty() {
+            return Err(IntervalsApiError::MissingApiKey);
+        }
+        if !is_iso_date(oldest_date_local)
+            || !is_iso_date(newest_date_local)
+            || oldest_date_local > newest_date_local
+        {
+            return Err(IntervalsApiError::InvalidDateRange {
+                oldest_date_local: oldest_date_local.to_string(),
+                newest_date_local: newest_date_local.to_string(),
+            });
+        }
+
+        let response = self
+            .http
+            .get(format!("{}{}", self.base_url, CALENDAR_EVENTS_PATH))
+            .basic_auth(API_KEY_USERNAME, Some(api_key))
+            .query(&[
+                ("category", WORKOUT_CATEGORY),
+                ("oldest", oldest_date_local),
+                ("newest", newest_date_local),
+            ])
+            .send()
+            .await
+            .map_err(IntervalsApiError::Request)?;
+
+        match response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                Err(IntervalsApiError::Unauthorized)
+            }
+            status if !status.is_success() => Err(IntervalsApiError::HttpStatus { status }),
+            _ => response
+                .json::<Vec<IntervalsCalendarEvent>>()
+                .await
+                .map_err(IntervalsApiError::InvalidResponse),
+        }
+    }
+}
+
+fn is_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct IntervalsCalendarEvent {
@@ -424,6 +534,28 @@ fn invalid_error(path: impl Into<String>, message: impl Into<String>) -> Interva
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn stub(response: String) -> (String, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buffer = [0u8; 8192];
+            let count = socket.read(&mut buffer).unwrap();
+            socket.write_all(response.as_bytes()).unwrap();
+            String::from_utf8_lossy(&buffer[..count]).into_owned()
+        });
+        (base_url, handle)
+    }
+
+    fn http(status: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
 
     fn event_with_steps(steps: Vec<IntervalsStep>, duration: u32) -> IntervalsCalendarEvent {
         IntervalsCalendarEvent {
@@ -459,6 +591,83 @@ mod tests {
             hr: None,
             pace: None,
         }
+    }
+
+    #[test]
+    fn production_client_uses_intervals_base_url() {
+        let client = IntervalsIcuClient::new().unwrap();
+        assert_eq!(client.base_url, API_BASE_URL);
+    }
+
+    #[tokio::test]
+    async fn fetches_bounded_structured_workouts_with_basic_auth() {
+        let body = format!(
+            "[{}]",
+            include_str!("../../testdata/providers/intervals-icu/scheduled-virtual-ride.json")
+        );
+        let (base_url, request) = stub(http("200 OK", &body));
+        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
+
+        let events = client
+            .fetch_workout_events("synthetic-key", "2030-01-01", "2030-01-07")
+            .await
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]
+                .to_workout_definition()
+                .unwrap()
+                .duration_seconds()
+                .unwrap(),
+            1_740
+        );
+        let request = request.join().unwrap();
+        assert!(request.starts_with(
+            "GET /api/v1/athlete/0/events?category=WORKOUT&oldest=2030-01-01&newest=2030-01-07"
+        ));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: basic qvbjx0tfwtpzew50agv0awmta2v5"));
+        assert!(!request.contains("resolve="));
+        assert!(!request.contains("ext="));
+    }
+
+    #[tokio::test]
+    async fn rejected_credentials_have_a_distinct_error() {
+        let (base_url, request) = stub(http("401 Unauthorized", "{}"));
+        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
+
+        assert!(matches!(
+            client
+                .fetch_workout_events("synthetic-key", "2030-01-01", "2030-01-07")
+                .await,
+            Err(IntervalsApiError::Unauthorized)
+        ));
+        request.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn blank_keys_and_invalid_ranges_fail_before_network_io() {
+        let client = IntervalsIcuClient::with_base_url("http://127.0.0.1:1").unwrap();
+        assert!(matches!(
+            client
+                .fetch_workout_events(" ", "2030-01-01", "2030-01-07")
+                .await,
+            Err(IntervalsApiError::MissingApiKey)
+        ));
+        assert!(matches!(
+            client
+                .fetch_workout_events("synthetic-key", "2030-01-07", "2030-01-01")
+                .await,
+            Err(IntervalsApiError::InvalidDateRange { .. })
+        ));
+        assert!(matches!(
+            client
+                .fetch_workout_events("synthetic-key", "20300101", "2030-01-07")
+                .await,
+            Err(IntervalsApiError::InvalidDateRange { .. })
+        ));
     }
 
     #[test]
