@@ -1,8 +1,8 @@
 # Intervals.icu inbound discovery
 
 Status: read-only API discovery for the first connected-provider integration.
-This is evidence for the provider and sync design, not an implemented sync
-contract.
+This evidence now backs a pure `workout_doc`-to-TPW adapter, but not an
+implemented provider connection or sync contract.
 
 ## Confirmed public contract
 
@@ -101,6 +101,6 @@ answer:
 4. How are deletion, cancellation, all-day placement, and timed placement
    represented?
 
-The first production slice should follow that evidence: a concrete
-Intervals.icu client, an idempotent inbound mapping, and only the provider-link
-and sync state needed by that real consumer.
+The next production slice should follow that evidence: a concrete
+Intervals.icu client, idempotent persistence around the adapter, and only the
+provider-link and sync state needed by that real consumer.

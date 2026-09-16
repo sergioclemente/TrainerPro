@@ -10,6 +10,7 @@ mod database;
 mod device_hub;
 mod device_owner;
 mod heart_rate_monitor;
+mod intervals_icu;
 mod next_up;
 mod player_runtime;
 mod trainer;

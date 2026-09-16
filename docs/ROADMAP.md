@@ -70,8 +70,9 @@ Outcome: scheduled workouts from an external planning authority are locally
 available and remain ridable offline.
 
 Status: the read-only API contract and representative cycling `workout_doc`
-shape have been validated against a live account. Production authentication,
-persistence, mapping, and sync remain outstanding.
+shape have been validated against a live account. A pure adapter maps the
+confirmed cycling structure into TPW while rejecting unsupported semantics.
+Production authentication, persistence, and sync remain outstanding.
 
 - Add provider connections, capability declarations, provider links, external
   revisions, sync cursors, and observable sync status.
