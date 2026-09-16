@@ -75,7 +75,7 @@ access to Garmin's gated API, so manual FIT upload remains the shipped path
 while the project's access request is pending. An intervals.icu post-ride
 export remains planned as an additional sink, but it does not replace direct
 Garmin synchronization and is not implemented today. See
-[`garmin-access.md`](garmin-access.md) for current status.
+[`provider-integrations.md`](provider-integrations.md) for current status.
 
 **What would change my mind:** approved Garmin access would bring direct sync
 forward. Until then, local FIT files remain authoritative and any remote sink

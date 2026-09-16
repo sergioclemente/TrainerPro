@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly API_URL="https://intervals.icu/api/v1/athlete/0/events"
+readonly USER_AGENT="TrainerPro-Intervals-Discovery/0.1"
+readonly REQUEST_TIMEOUT_SECONDS=30
+
+usage() {
+  echo "usage: INTERVALS_ICU_API_KEY=... $0 OLDEST NEWEST [SANITIZED_FIXTURE]" >&2
+  echo "       OLDEST and NEWEST must be local dates in YYYY-MM-DD format" >&2
+}
+
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  usage
+  exit 2
+fi
+
+readonly oldest="$1"
+readonly newest="$2"
+readonly fixture_path="${3:-}"
+
+if [[ ! "$oldest" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ||
+      ! "$newest" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  usage
+  exit 2
+fi
+
+if [[ "$newest" < "$oldest" ]]; then
+  echo "NEWEST must not be earlier than OLDEST" >&2
+  exit 2
+fi
+
+if [[ -z "${INTERVALS_ICU_API_KEY:-}" ]]; then
+  echo "INTERVALS_ICU_API_KEY is not set" >&2
+  exit 2
+fi
+
+for command in curl jq; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "$command is required" >&2
+    exit 2
+  fi
+done
+
+# Feed curl's Basic-auth config over stdin so the key is not placed in the
+# process arguments. The raw response remains in memory and is never printed.
+response="$({
+  printf 'user = "API_KEY:%s"\n' "$INTERVALS_ICU_API_KEY"
+} | curl \
+  --config - \
+  --silent \
+  --show-error \
+  --fail-with-body \
+  --max-time "$REQUEST_TIMEOUT_SECONDS" \
+  --get "$API_URL" \
+  --user-agent "$USER_AGENT" \
+  --header 'Accept: application/json' \
+  --data-urlencode 'category=WORKOUT' \
+  --data-urlencode "oldest=$oldest" \
+  --data-urlencode "newest=$newest")"
+
+if ! jq -e 'type == "array"' >/dev/null <<<"$response"; then
+  echo "Intervals.icu returned JSON, but not an event array" >&2
+  exit 1
+fi
+
+# Print structure and coverage only: no names, descriptions, dates, IDs, or
+# workout targets leave the process in normal discovery mode.
+jq \
+  --arg oldest "$oldest" \
+  --arg newest "$newest" \
+  '
+    . as $events
+    | def docs: [$events[] | .workout_doc? | select(type == "object")];
+      def all_steps: [docs[] | .steps[]? | recurse(.steps[]?) | select(type == "object")];
+      {
+        requested_range: {oldest: $oldest, newest: $newest},
+        event_count: ($events | length),
+        event_types: ([$events[] | .type? | select(. != null)] | unique),
+        event_fields: ([$events[] | keys[]] | unique),
+        identity: {
+          id_types: ([$events[] | .id? | select(. != null) | type] | unique),
+          uid_present: ([$events[] | select(.uid? != null)] | length),
+          external_id_present: ([$events[] | select(.external_id? != null)] | length),
+          revision_fields: ([$events[] | keys[] | select(test("updated|modified|revision"; "i"))] | unique)
+        },
+        workout_doc: {
+          present: (docs | length),
+          fields: ([docs[] | keys[]] | unique),
+          step_count: (all_steps | length),
+          step_fields: ([all_steps[] | keys[]] | unique),
+          target_units: ([all_steps[] | .power?.units?, .cadence?.units?, .hr?.units?, .pace?.units? | select(. != null)] | unique)
+        }
+      }
+  ' <<<"$response"
+
+if [[ -n "$fixture_path" ]]; then
+  # Keep the semantic workout tree while replacing identifying text, dates,
+  # and IDs. Resolved athlete values and profile-derived metadata are removed.
+  jq '
+    to_entries
+    | map(
+        .key as $index
+        | .value
+        | {
+            id: (1000000 + $index),
+            uid: (if .uid? == null then null else "00000000-0000-0000-0000-000000000000" end),
+            external_id: (if .external_id? == null then null else "fixture-external-id" end),
+            updated: (if .updated? == null then null else "2030-01-01T00:00:00.000+0000" end),
+            start_date_local: "2030-01-01T00:00:00",
+            type,
+            category,
+            name: "Fixture workout \($index + 1)",
+            description: (if .description? == null then null else "<redacted>" end),
+            moving_time,
+            target,
+            workout_doc: (
+              if (.workout_doc? | type) != "object" then null
+              else .workout_doc
+                | del(
+                    .description,
+                    .description_locale,
+                    .ftp,
+                    .lthr,
+                    .threshold_pace,
+                    .sportSettings,
+                    .zoneTimes,
+                    .hrZoneTimes,
+                    .average_watts,
+                    .normalized_power,
+                    .strain_score,
+                    .variability_index,
+                    .polarization_index
+                  )
+                | walk(
+                    if type == "object" then
+                      del(.text, .text_locale, ._power, ._hr, ._pace, ._distance)
+                    else . end
+                  )
+              end
+            )
+          }
+      )
+  ' <<<"$response" >"$fixture_path"
+  echo "Sanitized fixture written to $fixture_path" >&2
+  echo "Review it manually before moving it into the repository." >&2
+fi

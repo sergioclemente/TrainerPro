@@ -1,4 +1,4 @@
-# Garmin and Intervals.icu integration status
+# Provider integration status
 
 > This document records current implementation and access status. The broader
 > provider product direction is in [`PRODUCT.md`](PRODUCT.md), with sequencing
@@ -22,12 +22,16 @@ Intervals.icu is not implemented today. The database reserves
 `activities.icu_activity_id`, but there is no credential setting, backend client,
 IPC command, automatic upload, schedule pull, or retry UI.
 
+Read-only API assumptions and the privacy-safe live probe are documented in
+[`intervals-icu-discovery.md`](intervals-icu-discovery.md).
+
 The accepted direction is broader than the original post-ride-export proposal:
 Intervals.icu is the first candidate planning authority for inbound scheduled
 workouts, offline execution, activity upload, and an explicitly designed
 two-way sync. Its open API, external IDs, and calendar webhooks make that worth
-proving, but its exact authentication, polling/webhook, conflict, and device-
-export behavior remain implementation gates.
+proving. Personal API-key reads and the scheduled-workout shape are now
+validated; production OAuth/token custody, polling/webhooks, conflicts, and
+device-export behavior remain implementation gates.
 
 When implemented, preserve these invariants:
 

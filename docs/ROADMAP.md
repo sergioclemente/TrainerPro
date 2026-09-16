@@ -69,11 +69,16 @@ the ordered Next Up rail and start the same workout-session flow.
 Outcome: scheduled workouts from an external planning authority are locally
 available and remain ridable offline.
 
+Status: the read-only API contract and representative cycling `workout_doc`
+shape have been validated against a live account. Production authentication,
+persistence, mapping, and sync remain outstanding.
+
 - Add provider connections, capability declarations, provider links, external
   revisions, sync cursors, and observable sync status.
 - Implement Intervals.icu authentication and connection validation.
-- Pull a bounded scheduled-workout horizon and normalize its workout-builder
-  descriptions or downloadable representations into WorkoutDefinition JSON.
+- Pull a bounded scheduled-workout horizon and normalize its structured
+  `workout_doc` into WorkoutDefinition JSON. Do not silently reparse a
+  description when the provider's structured result differs.
 - Make repeated sync idempotent and handle remote deletion explicitly.
 - Surface provider ownership and sync health without making the user manage
   cache records.

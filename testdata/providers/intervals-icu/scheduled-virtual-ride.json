@@ -1,0 +1,94 @@
+{
+  "id": 1000000,
+  "uid": "00000000-0000-0000-0000-000000000000",
+  "external_id": null,
+  "updated": "2030-01-01T00:00:00.000+0000",
+  "start_date_local": "2030-01-01T00:00:00",
+  "type": "VirtualRide",
+  "category": "WORKOUT",
+  "name": "TrainerPro API Probe",
+  "description": "<redacted>",
+  "moving_time": 1740,
+  "target": null,
+  "workout_doc": {
+    "steps": [
+      {
+        "ramp": true,
+        "power": {
+          "start": 50,
+          "end": 70,
+          "units": "%ftp"
+        },
+        "warmup": true,
+        "cadence": {
+          "start": 85,
+          "end": 95,
+          "units": "rpm"
+        },
+        "duration": 300
+      },
+      {
+        "reps": 3,
+        "steps": [
+          {
+            "power": {
+              "value": 105,
+              "units": "%ftp"
+            },
+            "cadence": {
+              "value": 95,
+              "units": "rpm"
+            },
+            "duration": 120
+          },
+          {
+            "power": {
+              "value": 55,
+              "units": "%ftp"
+            },
+            "cadence": {
+              "value": 85,
+              "units": "rpm"
+            },
+            "duration": 120
+          }
+        ],
+        "distance": 0,
+        "duration": 720
+      },
+      {
+        "power": {
+          "start": 75,
+          "end": 85,
+          "units": "%ftp"
+        },
+        "cadence": {
+          "value": 90,
+          "units": "rpm"
+        },
+        "duration": 300
+      },
+      {
+        "duration": 120,
+        "freeride": true
+      },
+      {
+        "ramp": true,
+        "power": {
+          "start": 65,
+          "end": 45,
+          "units": "%ftp"
+        },
+        "cadence": {
+          "value": 80,
+          "units": "rpm"
+        },
+        "duration": 300
+      }
+    ],
+    "locales": [],
+    "options": {},
+    "distance": 0,
+    "duration": 1740
+  }
+}

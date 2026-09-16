@@ -26,7 +26,7 @@ document first.
 | OS | **macOS first** (M1–M4). Windows port in M5. Linux: unsupported |
 | Sensors | Trainer (power/cadence/speed) + BLE HR strap. No power match, no ANT+ |
 | Player UI | Dashboard only |
-| Garmin export | FIT file + manual upload today; direct sync awaits Garmin Developer Program access — see [`garmin-access.md`](garmin-access.md) |
+| Garmin export | FIT file + manual upload today; direct sync awaits Garmin Developer Program access — see [`provider-integrations.md`](provider-integrations.md) |
 | Distance in FIT | **Off by default** (setting exists; virtual flat-road model when on) |
 | FreeRide segments | Switch trainer to simulation mode, grade 0 %; record only, no target |
 | Recording | JSONL journal during ride → FIT encoded at ride end |
@@ -90,6 +90,7 @@ TrainerPro/
 │   └── state.ts                # zustand store fed by events
 ├── tools/                      # maintained internal command-line utilities
 └── testdata/
+    ├── providers/              # sanitized external-provider API fixtures
     ├── workouts/               # parser corpus: real .zwo/.erg/.mrc files
     └── fit-golden/             # expected FitCSVTool output snapshots
 ```
@@ -651,7 +652,7 @@ profile:   get_settings() -> Settings · update_settings(settings)
 upload is implemented yet. The reserved `activities.icu_activity_id` column
 remains unused. The accepted direction is an inbound planning connection first,
 followed by an explicitly designed round trip; see
-[`garmin-access.md`](garmin-access.md) and
+[`provider-integrations.md`](provider-integrations.md) and
 [`workout-platform.md`](workout-platform.md).
 
 Events (Rust → UI, `tauri::Emitter`):
@@ -755,7 +756,7 @@ Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
 Phase 2 (not scheduled): Garmin Connect API auto-sync (awaiting developer
 program access), intervals.icu post-ride upload, Strava OAuth upload, Wahoo
 legacy driver if demand appears, power match, FIT-workout import. See
-[`garmin-access.md`](garmin-access.md) for integration status.
+[`provider-integrations.md`](provider-integrations.md) for integration status.
 
 ---
 

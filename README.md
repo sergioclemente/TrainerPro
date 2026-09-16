@@ -136,7 +136,8 @@ interface, ride data flow, cross-platform notes) ·
 and PR plan) · [`docs/TPW.md`](docs/TPW.md) (TrainerPro Workout format) ·
 [`docs/SPEC.md`](docs/SPEC.md) (build spec) ·
 [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) (decision records) ·
-[`docs/garmin-access.md`](docs/garmin-access.md) (export integration status) ·
+[`docs/provider-integrations.md`](docs/provider-integrations.md) (provider
+integration status) ·
 [`docs/spec-workoutplanner.md`](docs/spec-workoutplanner.md) (planner
 integration).
 
