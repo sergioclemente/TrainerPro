@@ -144,7 +144,7 @@ export default function Player() {
     return (
       <div className="screen">
         <p className="empty">No workout loaded.</p>
-        <button onClick={() => go("library")}>Back to library</button>
+        <button onClick={() => go("library")}>Back to Workouts</button>
       </div>
     );
   }

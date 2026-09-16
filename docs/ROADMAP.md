@@ -43,11 +43,11 @@ adapters have focused conversion tests.
 
 ## Phase 2 — Next Up and activity language
 
-Outcome: TrainerPro opens on an execution-first list rather than a workout
-library.
+Outcome: the Workouts screen leads with execution-first choices while keeping
+the full workout library available below them.
 
-Status: backend persistence and the initial read model are in progress; the
-home-screen transition remains outstanding.
+Status: scheduled-workout persistence, the initial read model, and the Next Up
+rail on Workouts are implemented. Provider-fed schedules remain outstanding.
 
 - Add scheduled-workout persistence and queries.
 - Add the Next Up read model.
@@ -55,14 +55,14 @@ home-screen transition remains outstanding.
   history using a deterministic frequency heuristic.
 - Show training-focus tags such as Recovery Ride or Endurance Base; do not show
   ranking explanations as the tag.
-- Build the Next Up list UI and make it the default screen.
-- Move catalog/library browsing to a secondary Browse surface.
+- Build the ordered horizontal Next Up rail at the top of Workouts.
+- Keep catalog/library browsing as the secondary section below it.
 - Use Activity consistently for completed recordings in product copy and API
   names as those surfaces are touched.
 
 Acceptance: with no provider connected, activity history can produce useful
-recommendations; with scheduled fixtures present, both item kinds appear in a
-single list and start the same workout-session flow.
+recommendations; with scheduled fixtures present, both item kinds appear in
+the ordered Next Up rail and start the same workout-session flow.
 
 ## Phase 3 — Provider foundation and Intervals.icu inbound sync
 

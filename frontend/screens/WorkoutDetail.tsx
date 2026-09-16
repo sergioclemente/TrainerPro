@@ -229,7 +229,7 @@ export default function WorkoutDetail() {
         </div>
       )}
       <div className="row gap detail-actions">
-        {d.source === "library" && (
+        {d.source === "library" && !d.scheduledWorkoutId && (
           <button className="danger" onClick={del}>
             Remove from library
           </button>

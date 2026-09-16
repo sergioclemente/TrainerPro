@@ -64,7 +64,6 @@ export default function SettingsScreen() {
   return (
     <div className="screen">
       <header className="screen-head">
-        <h1>Settings</h1>
         <div className="tabs">
           {TABS.map(([id, label]) => (
             <button

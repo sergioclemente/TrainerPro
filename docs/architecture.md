@@ -48,10 +48,11 @@ payload through a boundary adapter. Provenance columns (`origin`, `origin_ref`)
 remain the current source badges; provider links and sync state replace them in
 the connected-provider phase.
 
-## Next Up backend projection
+## Next Up projection and Workouts surface
 
-The backend now exposes the read model needed by the future home screen. The UI
-still opens on Library until the Next Up frontend slice lands.
+The Workouts screen leads with a horizontal Next Up rail and keeps the Library
+below it. The backend assembles the scheduled and recommended entries; the
+frontend presents the full ordered result without turning it into a calendar.
 
 ```mermaid
 flowchart LR
@@ -61,6 +62,7 @@ flowchart LR
     W --> R
     R --> N
     N --> IPC[list_next_up]
+    IPC --> UI[Workouts: Next Up + Library]
 ```
 
 Scheduled rows are calendar-local placements over a WorkoutDefinition. Active,

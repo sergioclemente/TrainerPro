@@ -23,9 +23,6 @@ export default function Activities() {
 
   return (
     <div className="screen">
-      <header className="screen-head">
-        <h1>Activities</h1>
-      </header>
       {activities.length === 0 && <p className="empty">No activities yet.</p>}
       {activities.length > 0 && (
         <table className="table">

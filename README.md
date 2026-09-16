@@ -57,7 +57,7 @@ flowchart TD
         SOURCES["Workout source plugin layer"]
         RUNTIME["Player runtime<br/>engine ticks / ERG loop / recorder"]
         HUB["Device hub<br/>device policy + stable role owners"]
-        STORAGE[("SQLite TPW definitions +<br/>activity index")]
+        STORAGE[("SQLite TPW definitions + schedules<br/>+ activity index")]
     end
 
     subgraph CORE["tp-core - pure Rust, no I/O"]
@@ -112,11 +112,12 @@ flowchart TD
     OSBLE -.->|BLE| DEVICES
 ```
 
-This diagram describes the current shipped architecture. The accepted next
-product direction replaces the file/library-first workout flow with an
-execution-first **Next Up** list, provider sync, and SQLite-backed semantic
-workout definitions. See [`docs/PRODUCT.md`](docs/PRODUCT.md) and the target
-flow in [`docs/workout-platform.md`](docs/workout-platform.md).
+This diagram describes the current shipped architecture. The **Workouts**
+screen now leads with an execution-first **Next Up** rail above the Library,
+backed by SQLite semantic workout definitions; connected-provider sync is the
+next major step. See
+[`docs/PRODUCT.md`](docs/PRODUCT.md) and the target flow in
+[`docs/workout-platform.md`](docs/workout-platform.md).
 
 Two invariants keep this portable and testable:
 

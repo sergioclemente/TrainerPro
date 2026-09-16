@@ -12,15 +12,16 @@ primary job is to answer **“What should I ride now?”**, execute that workout
 exceptionally well, record the result, and return the activity to the services
 the athlete uses.
 
-The primary experience is **Next Up**, a list of scheduled workouts and
-recommendations. TrainerPro is not a calendar application, a workout-file
-manager, or a large workout-library product.
+The primary Workouts experience leads with **Next Up**, an ordered rail of
+scheduled workouts and recommendations, with the Library below it. TrainerPro
+is not a calendar application, a workout-file manager, or a large
+workout-library product.
 
 ## Product principles
 
 1. **Execution comes first.** Finding and starting the relevant workout should
    take less effort than managing workouts.
-2. **The home screen is a list, not a calendar.** Dates provide context on
+2. **Workouts leads with Next Up, not a calendar.** Dates provide context on
    scheduled items, but TrainerPro does not require a calendar workflow.
 3. **External planning is the normal case.** Most workout definitions and
    schedules are expected to come from connected services.
@@ -54,9 +55,10 @@ recommendations.
 
 ## Next Up
 
-Next Up is TrainerPro's home screen and the default route into a workout
-session. It is a vertically ordered list optimized for choosing and starting a
-ride, not for editing a training calendar.
+Next Up is the primary section of TrainerPro's Workouts screen. It is a
+horizontally scrollable, ordered rail optimized for choosing and starting a
+ride, not an auto-rotating carousel and not a training-calendar editor. The
+Library remains available below it for deliberate browsing.
 
 The list contains:
 
@@ -73,12 +75,11 @@ workout still appears as **Endurance Base**, not **Frequently ridden**.
 
 Later recommenders, including an AI coach, use the same product contract. They
 may produce better selections and richer workout definitions without requiring
-a new home screen or execution flow.
+a new Workouts surface or execution flow.
 
-Open UX policies that should be decided with the Next Up feature include the
-display horizon for future scheduled workouts, how long an overdue workout
-remains prominent, and whether scheduled and recommended items are visually
-grouped or interleaved. None of those choices turns the list into a calendar.
+Open UX policies include the display horizon for future scheduled workouts and
+how long an overdue workout remains prominent. Neither choice turns the rail
+into a calendar.
 
 ## Definition, execution, and history
 
@@ -211,7 +212,8 @@ recording, provider sync, and visualization.
 The following are accepted unless new product evidence changes them:
 
 1. TrainerPro is execution-first, not file-, library-, or calendar-first.
-2. Next Up is the home experience and is a list, not a calendar view.
+2. The Workouts screen leads with an ordered Next Up rail, with the Library as
+   a secondary section below it; it is not a calendar view.
 3. Next Up contains scheduled workouts and workout recommendations only; there
    is no workout queue.
 4. Recommendations display a training-focus tag, not a selection reason.

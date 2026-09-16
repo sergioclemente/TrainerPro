@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AppError, fmtDuration, ipc } from "../ipc";
 import { useStore } from "../state";
+import NextUpSection from "../components/NextUpSection";
 import WorkoutGraph from "../components/WorkoutGraph";
 import { SOURCES } from "../sources";
 
@@ -68,69 +69,69 @@ export default function Library() {
   }
 
   return (
-    <div className="screen">
-      <header className="screen-head">
-        <h1>Workouts</h1>
-        <div className="tabs">
-          {tabs.map((s) => (
-            <button
-              key={s.id}
-              className={`tab ${activeTab === s.id ? "active" : ""}`}
-              onClick={() => setTab(s.id)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        {activeTab === "local" && (
-          <button className="primary" onClick={importFiles}>
-            Import…
-          </button>
-        )}
-      </header>
-      {tabs.map(
-        (s) =>
-          s.Component &&
-          activeTab === s.id && (
-            <s.Component key={s.id} />
-          ),
-      )}
-      {activeTab === "local" && workouts.length === 0 && (
-        <p className="empty">
-          No workouts yet. Import a .zwo, .erg, or .mrc file to get started.
-        </p>
-      )}
-      {activeTab === "local" && (
-      <div className="card-grid">
-        {workouts.map((w) => (
-          <div key={w.id} className="card workout-card" onClick={() => openDetail(w.id)}>
-            <div className="thumb">
-              <WorkoutGraph graph={w.graph} durationS={w.duration_s} height={80} />
-            </div>
-            <div className="card-body">
-              <strong>
-                {w.name}
-                {w.origin === "planner" && <span className="badge">planner</span>}
-                {w.origin === "whatsonzwift" && <span className="badge">zwift</span>}
-              </strong>
-              <span className="muted">
-                {fmtDuration(w.duration_s)} · IF {w.est_if.toFixed(2)} · TSS{" "}
-                {Math.round(w.est_tss)}
-              </span>
-            </div>
-            <button
-              className="ghost danger"
-              onClick={(e) => {
-                e.stopPropagation();
-                void del(w.id, w.name);
-              }}
-            >
-              ✕
-            </button>
+    <div className="screen workouts-screen">
+      <NextUpSection />
+
+      <section className="workout-library">
+        <header className="workout-library-head">
+          <h2>Library</h2>
+          <div className="tabs">
+            {tabs.map((s) => (
+              <button
+                key={s.id}
+                className={`tab ${activeTab === s.id ? "active" : ""}`}
+                onClick={() => setTab(s.id)}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
-      )}
+          {activeTab === "local" && (
+            <button className="primary" onClick={importFiles}>
+              Import…
+            </button>
+          )}
+        </header>
+        {tabs.map(
+          (s) => s.Component && activeTab === s.id && <s.Component key={s.id} />,
+        )}
+        {activeTab === "local" && workouts.length === 0 && (
+          <p className="empty">
+            No workouts yet. Import a .zwo, .erg, or .mrc file to get started.
+          </p>
+        )}
+        {activeTab === "local" && (
+          <div className="card-grid">
+            {workouts.map((w) => (
+              <div key={w.id} className="card workout-card" onClick={() => openDetail(w.id)}>
+                <div className="thumb">
+                  <WorkoutGraph graph={w.graph} durationS={w.duration_s} height={80} />
+                </div>
+                <div className="card-body">
+                  <strong>
+                    {w.name}
+                    {w.origin === "planner" && <span className="badge">planner</span>}
+                    {w.origin === "whatsonzwift" && <span className="badge">zwift</span>}
+                  </strong>
+                  <span className="muted">
+                    {fmtDuration(w.duration_s)} · IF {w.est_if.toFixed(2)} · TSS{" "}
+                    {Math.round(w.est_tss)}
+                  </span>
+                </div>
+                <button
+                  className="ghost danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void del(w.id, w.name);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

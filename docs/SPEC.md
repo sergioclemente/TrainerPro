@@ -1,12 +1,11 @@
 # TrainerPro — Implementation Spec (v1)
 
-> **Status:** current implementation baseline. The UI remains library-first,
-> while TPW and SQLite are now authoritative for workout definitions. The
-> accepted next product direction is [`PRODUCT.md`](PRODUCT.md), sequenced in
-> [`ROADMAP.md`](ROADMAP.md), with target software boundaries in
+> **Status:** current implementation baseline. The Workouts screen leads with
+> Next Up and keeps the Library below it, and TPW/SQLite are authoritative for
+> workout definitions. Connected providers remain the next product direction,
+> sequenced in [`ROADMAP.md`](ROADMAP.md), with target software boundaries in
 > [`workout-platform.md`](workout-platform.md). Update the relevant sections of
-> this spec as those migrations land; do not treat the remaining historical
-> navigation choices below as the target design.
+> this spec as those migrations land.
 
 A macOS-first desktop indoor-cycling workout player. Load a structured workout
 file (ZWO / ERG / MRC), control a Wahoo smart trainer over BLE FTMS in ERG
@@ -84,7 +83,8 @@ TrainerPro/
 │       ├── src/sim_hrm.rs
 │       └── tests/              # public simulator contract tests
 ├── frontend/                   # React app (Vite + TypeScript)
-│   ├── screens/  (Library, Devices, Player, Summary, Activities, Settings)
+│   ├── screens/  (Workouts, Builder, Devices, Player, Summary, Activities,
+│   │              Settings)
 │   ├── components/ (WorkoutGraph, MetricTile, IntervalStrip, DeviceCard…)
 │   ├── ipc.ts                  # typed command wrappers + event subscriptions
 │   └── state.ts                # zustand store fed by events
@@ -674,17 +674,20 @@ No polling from the UI.
 
 ## 10. UI screens (v1 exact scope)
 
-Navigation: left rail — Library · Devices · Activities · Settings; Player takes
-over full window when a ride is loaded.
+Navigation: left rail — Workouts · Build · Devices · Activities · Settings;
+Player takes over the full window when a ride is loaded.
 
-1. **Library**: workout cards (name, duration, est TSS/IF, graph thumbnail
-   from `graph_json`), import button + drag-drop target, workout builder,
-   delete via context menu. Builder target fields and interval descriptions
-   show both % FTP and the resolved watts for the current profile FTP. Click →
-   Player in `Ready` (or device-connect prompt if no trainer).
-2. **Devices**: two slots (Trainer / HRM): saved device card with status dot,
+1. **Workouts**: an ordered, horizontally scrollable Next Up rail of scheduled
+   workouts followed by recommendations, with the Library below it. Scheduled
+   items lead with compact calendar-local context; recommendations lead with
+   their training-focus tag. Both open the shared workout detail and player
+   path, preserving scheduled identity when present. The Library owns local
+   import/deletion and enabled source tabs.
+2. **Build**: local structured-workout authoring. Detail and builder targets
+   show both % FTP and resolved watts for the current profile FTP.
+3. **Devices**: two slots (Trainer / HRM): saved device card with status dot,
    or Scan flow (list by RSSI, click to pair). Forget button.
-3. **Player** (§6.3 of the product layout): top ⅓ workout graph (zone-colored
+4. **Player** (§6.3 of the product layout): top ⅓ workout graph (zone-colored
    bars, progress cursor, next-interval label, text-event overlay); middle:
    three tiles — power (3 s smoothed, huge) with the live watt target and an
    intensity badge when ≠ 100 % underneath + ±5 % over/under coloring,
@@ -693,10 +696,10 @@ over full window when a ride is loaded.
    interval avg power, elapsed/remaining, kJ. Controls row: pause/resume, skip,
    ±intensity, end. Keyboard: space = pause/resume, `s` = skip, `↑/↓` =
    intensity.
-4. **Summary** (post-ride): §7.4.
-5. **Activities**: table of completed activities (date, workout, duration,
+5. **Summary** (post-ride): §7.4.
+6. **Activities**: table of completed activities (date, workout, duration,
    avg P, NP, TSS, avg HR) with FIT reveal and deletion actions.
-6. **Settings**: FTP, weight, record-distance toggle, app version.
+7. **Settings**: FTP, weight, record-distance toggle, app version.
 
 Styling: dark theme only in v1. Readable at 2 m: metric tiles ≥ 96 pt numerals.
 

@@ -36,7 +36,7 @@ flowchart LR
         METRICS[Metrics]
     end
 
-    UI[Next Up list / Player / Activities]
+    UI[Workouts: Next Up + Library / Player / Activities]
     FILES[ZWO / ERG / MRC / FIT adapters]
 
     PLAN --> CONNECTORS
@@ -99,10 +99,11 @@ SQL or provider-specific normalization logic.
 
 The frontend owns presentation and interaction:
 
-- Next Up as the default vertically ordered list;
+- one Workouts surface with an ordered horizontal Next Up rail above the
+  Library;
 - compact scheduled date/time context and training-focus tags;
 - workout inspection, clone-and-adjust interactions, and session controls;
-- Activities and secondary Browse surfaces; and
+- Activities and workout-library browsing; and
 - connection and sync-status UI.
 
 The Rust serialized payloads and `frontend/ipc.ts` remain one API and change in
@@ -182,7 +183,8 @@ provenance; they do not need to expose the ranking rationale in P0.
 
 Both entry types resolve to a WorkoutDefinition and use the same compile,
 snapshot, load, and start path. Starting a recommendation does not create a
-scheduled workout. Next Up itself is never written back to storage.
+scheduled workout. Next Up itself is never written back to storage; the
+frontend renders it as the leading rail on the Workouts screen.
 
 The initial local recommender should remain a small deterministic frequency
 query or service over activity history. Avoid creating a general
@@ -254,8 +256,8 @@ from schema/product changes.
 6. **Next Up backend** — add ScheduledWorkout persistence, the Next Up query,
    and deterministic frequency-based favorite recommendations with training-
    focus tags.
-7. **Next Up frontend** — make the list the home screen, move catalog browsing
-   to a secondary surface, and route both item kinds through the same workout
+7. **Next Up frontend** — place an ordered horizontal rail above the Library on
+   the Workouts screen, and route both item kinds through the same workout
    detail/session path.
 8. **Provider foundation** — add connections, capabilities, provider links,
    sync state, typed errors, and connection UI using stub connectors.

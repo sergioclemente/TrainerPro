@@ -8,6 +8,7 @@ import {
   DeviceMeasurement,
   DeviceSlot,
   DeviceStatusEvent,
+  NextUpItem,
   PlannerPreview,
   PlannerWorkout,
   PlayerState,
@@ -63,6 +64,9 @@ interface Store {
   screen: Screen;
   /** Which tab the Settings screen opens on (basic | export | libraries). */
   settingsTab: string;
+  nextUp: NextUpItem[];
+  nextUpStatus: "idle" | "loading" | "ready" | "error";
+  nextUpError: string;
   workouts: WorkoutSummary[];
   devices: DeviceSlot[];
   scanResults: ScanResult[];
@@ -94,6 +98,7 @@ interface Store {
   toasts: Toast[];
 
   go: (s: Screen) => void;
+  refreshNextUp: () => Promise<void>;
   refreshWorkouts: () => Promise<void>;
   refreshDevices: () => Promise<void>;
   refreshActivities: () => Promise<void>;
@@ -107,6 +112,9 @@ let toastSeq = 0;
 export const useStore = create<Store>((set, get) => ({
   screen: "library",
   settingsTab: "basic",
+  nextUp: [],
+  nextUpStatus: "idle",
+  nextUpError: "",
   workouts: [],
   devices: [],
   scanResults: [],
@@ -170,6 +178,15 @@ export const useStore = create<Store>((set, get) => ({
   toasts: [],
 
   go: (s) => set({ screen: s }),
+  refreshNextUp: async () => {
+    if (get().nextUp.length === 0) set({ nextUpStatus: "loading", nextUpError: "" });
+    try {
+      set({ nextUp: await ipc.listNextUp(), nextUpStatus: "ready", nextUpError: "" });
+    } catch (e) {
+      const err = e as { message?: string };
+      set({ nextUpStatus: "error", nextUpError: err.message ?? String(e) });
+    }
+  },
   refreshWorkouts: async () => set({ workouts: await ipc.listWorkouts() }),
   refreshDevices: async () => set({ devices: await ipc.getDeviceState() }),
   refreshActivities: async () => set({ activities: await ipc.listActivities() }),
@@ -268,6 +285,7 @@ export async function wireEvents(): Promise<void> {
     void ipc.clearRide();
     s.setState({ summary: e.payload, screen: "summary", player: null });
     void s.getState().refreshActivities();
+    void s.getState().refreshNextUp();
   });
 
   await listen<{ level: Toast["level"]; message: string }>("toast", (e) =>
