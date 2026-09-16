@@ -46,6 +46,9 @@ adapters have focused conversion tests.
 Outcome: TrainerPro opens on an execution-first list rather than a workout
 library.
 
+Status: backend persistence and the initial read model are in progress; the
+home-screen transition remains outstanding.
+
 - Add scheduled-workout persistence and queries.
 - Add the Next Up read model.
 - Produce initial local favorite recommendations from eligible workout/activity

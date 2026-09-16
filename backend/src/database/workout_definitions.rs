@@ -57,6 +57,25 @@ pub fn list(conn: &Connection) -> rusqlite::Result<Vec<WorkoutDefinitionRow>> {
     rows.collect()
 }
 
+/// Definitions ranked by how often they produced an Activity on or after the
+/// cutoff, then by the most recent matching Activity. The Next Up projection
+/// decides how many to expose and removes definitions already scheduled.
+pub fn list_by_activity_frequency_since(
+    conn: &Connection,
+    cutoff_unix_ms: i64,
+) -> rusqlite::Result<Vec<WorkoutDefinitionRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT wd.id, wd.tpw_json, wd.origin
+         FROM workout_definitions wd
+         JOIN activities a ON a.workout_definition_id = wd.id
+         WHERE a.started_at_unix_ms >= ?1
+         GROUP BY wd.id, wd.tpw_json, wd.origin
+         ORDER BY COUNT(a.id) DESC, MAX(a.started_at_unix_ms) DESC, wd.id",
+    )?;
+    let rows = stmt.query_map([cutoff_unix_ms], read_row)?;
+    rows.collect()
+}
+
 pub fn delete(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
     Ok(conn.execute("DELETE FROM workout_definitions WHERE id = ?1", [id])? > 0)
 }
@@ -124,5 +143,44 @@ mod tests {
         assert!(delete(&conn, "older").unwrap());
         assert_eq!(get(&conn, "older").unwrap(), None);
         assert!(!delete(&conn, "missing").unwrap());
+    }
+
+    #[test]
+    fn favorite_definitions_rank_recent_activity_and_exclude_stale_history() {
+        let conn = super::super::test_connection();
+        insert_fixture(&conn, "frequent", 10);
+        insert_fixture(&conn, "recent", 20);
+        insert_fixture(&conn, "stale", 30);
+        insert_fixture(&conn, "unused", 40);
+
+        for (id, definition_id, started_at_unix_ms) in [
+            ("frequent-1", "frequent", 300),
+            ("frequent-2", "frequent", 400),
+            ("recent-1", "recent", 500),
+            ("stale-1", "stale", 100),
+            ("stale-2", "stale", 150),
+            ("stale-3", "stale", 200),
+        ] {
+            conn.execute(
+                "INSERT INTO activities (
+                   id, workout_definition_id, workout_name,
+                   started_at_unix_ms, elapsed_s, timer_s, ftp_used_w,
+                   final_intensity_multiplier, fit_path, journal_path,
+                   completed_pct)
+                 VALUES (?1,?2,'Workout',?3,60,60,250,1.0,
+                         '/tmp/activity.fit','/tmp/session.jsonl',100.0)",
+                rusqlite::params![id, definition_id, started_at_unix_ms],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            list_by_activity_frequency_since(&conn, 250)
+                .unwrap()
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["frequent", "recent"]
+        );
     }
 }

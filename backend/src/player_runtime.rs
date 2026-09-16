@@ -50,6 +50,7 @@ pub struct PlayerState {
     pub phase: String,
     pub workout_session_id: String,
     pub workout_definition_id: String,
+    pub scheduled_workout_id: Option<String>,
     pub workout_name: String,
     pub workout_duration_s: u32,
     pub seg_idx: Option<usize>,
@@ -93,6 +94,7 @@ pub struct LapRow {
 #[derive(Debug, Clone, Serialize)]
 pub struct ActivitySummary {
     pub activity_id: String,
+    pub scheduled_workout_id: Option<String>,
     pub workout_name: String,
     pub started_at_unix_ms: u64,
     pub elapsed_s: u32,
@@ -123,6 +125,7 @@ fn phase_str(p: Phase) -> &'static str {
 pub async fn spawn(
     app: AppHandle,
     workout_definition_id: String,
+    scheduled_workout_id: Option<String>,
     workout_definition: WorkoutDefinition,
 ) -> Result<PlayerHandle, AppError> {
     let state = app.state::<AppState>();
@@ -146,6 +149,7 @@ pub async fn spawn(
     let header = JournalHeader {
         workout_session_id: workout_session_id.clone(),
         workout_definition_id: workout_definition_id.clone(),
+        scheduled_workout_id: scheduled_workout_id.clone(),
         workout_definition_snapshot_json,
         started_unix_ms: session_started_at_ms,
         workout_name: workout.name.clone(),
@@ -168,6 +172,7 @@ pub async fn spawn(
         phase: "ready".into(),
         workout_session_id: workout_session_id.clone(),
         workout_definition_id: workout_definition_id.clone(),
+        scheduled_workout_id: scheduled_workout_id.clone(),
         workout_name: workout.name.clone(),
         workout_duration_s: workout.duration_s(),
         seg_idx: Some(0),
@@ -199,6 +204,7 @@ pub async fn spawn(
         journal_path: journal_path.to_string_lossy().into_owned(),
         workout_session_id,
         workout_definition_id,
+        scheduled_workout_id,
         ride_started_at: None,
         state_tx,
         last_target_power_w: None,
@@ -229,6 +235,7 @@ struct Runtime {
     journal_path: String,
     workout_session_id: String,
     workout_definition_id: String,
+    scheduled_workout_id: Option<String>,
     /// Wall-clock ride origin, set on Start. Journal t_ms is measured from
     /// here (includes paused spans in the timeline; no samples during pause).
     ride_started_at: Option<Instant>,
@@ -650,6 +657,7 @@ impl Runtime {
             phase: phase_str(self.engine.phase()).into(),
             workout_session_id: self.workout_session_id.clone(),
             workout_definition_id: self.workout_definition_id.clone(),
+            scheduled_workout_id: self.scheduled_workout_id.clone(),
             workout_name: workout.name.clone(),
             workout_duration_s: workout.duration_s(),
             seg_idx,
@@ -755,6 +763,7 @@ impl Runtime {
                 &activity_db::NewActivity {
                     id: &activity_id,
                     workout_session_id: &data.header.workout_session_id,
+                    scheduled_workout_id: data.header.scheduled_workout_id.as_deref(),
                     workout_definition_id: Some(&data.header.workout_definition_id),
                     workout_definition_snapshot_json: &data
                         .header
@@ -783,6 +792,7 @@ impl Runtime {
 
         Ok(ActivitySummary {
             activity_id,
+            scheduled_workout_id: data.header.scheduled_workout_id.clone(),
             workout_name: data.header.workout_name.clone(),
             started_at_unix_ms: data.header.started_unix_ms,
             elapsed_s: totals.elapsed_s,

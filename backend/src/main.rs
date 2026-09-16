@@ -10,6 +10,7 @@ mod database;
 mod device_hub;
 mod device_owner;
 mod heart_rate_monitor;
+mod next_up;
 mod player_runtime;
 mod trainer;
 mod whatsonzwift_source;
@@ -56,6 +57,7 @@ fn main() {
             commands::workout::list_workouts,
             commands::workout::delete_workout,
             commands::workout::get_workout_detail,
+            commands::next_up::list_next_up,
             commands::device::start_scan,
             commands::device::connect_device,
             commands::device::disconnect_device,

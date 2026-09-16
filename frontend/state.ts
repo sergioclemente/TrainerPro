@@ -36,6 +36,8 @@ export interface WorkoutDetailView {
   id?: string; // library workout id
   wid?: number; // planner workout id
   wozRef?: { collection: string; idx: number }; // whatsonzwift ref
+  /** Set when a scheduled Next Up item opened this definition. */
+  scheduledWorkoutId?: string;
   /** Source content identity (planner: DSL text) for change detection. */
   contentKey?: string;
   /** A newer version of this workout arrived from the network. */

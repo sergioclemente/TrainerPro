@@ -4,7 +4,8 @@
 //!
 //! Line format (exactly one JSON object per line, compact type envelope and
 //! explicit payload fields):
-//!   {"h":{...header...}}
+//!   {"h":{"workout_session_id":"...","workout_definition_id":"...",
+//!         "scheduled_workout_id":"...",...}} // schedule key is optional
 //!   {"s":{"t_ms":1234567,"power_w":215,"cadence_rpm":92,
 //!         "heart_rate_bpm":148,"target_power_w":220,
 //!         "target_cadence_rpm":95}} // absent key = no data
@@ -21,6 +22,8 @@ use std::io;
 pub struct JournalHeader {
     pub workout_session_id: String,
     pub workout_definition_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_workout_id: Option<String>,
     pub workout_definition_snapshot_json: String,
     pub started_unix_ms: u64,
     pub workout_name: String,
@@ -370,6 +373,7 @@ mod tests {
         JournalHeader {
             workout_session_id: "session-abc-123".into(),
             workout_definition_id: "definition-abc-123".into(),
+            scheduled_workout_id: None,
             workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: 1_700_000_000_000,
             workout_name: "Sweet Spot".into(),
@@ -461,6 +465,17 @@ mod tests {
                 r#""workout_name":"Sweet Spot","ftp_w":250,"weight_kg":72.0,"app_ver":"0.1.0"}}"#,
                 "\n"
             )
+        );
+    }
+
+    #[test]
+    fn header_line_includes_scheduled_workout_identity() {
+        let mut h = header();
+        h.scheduled_workout_id = Some("scheduled-abc-123".into());
+        let text = String::from_utf8(written(&h, &[], &[])).unwrap();
+        assert!(
+            text.contains(r#""scheduled_workout_id":"scheduled-abc-123""#),
+            "{text}"
         );
     }
 

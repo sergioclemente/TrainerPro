@@ -170,7 +170,7 @@ fn get_workout_summary(state: &State<'_, AppState>, id: &str) -> R<WorkoutSummar
     summary_from_row(row, state.settings().profile.ftp)
 }
 
-fn summary_from_row(
+pub(crate) fn summary_from_row(
     row: definition_db::WorkoutDefinitionRow,
     ftp: u16,
 ) -> R<WorkoutSummary> {

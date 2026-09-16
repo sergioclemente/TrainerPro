@@ -449,6 +449,7 @@ line):
 
 ```jsonl
 {"h":{"workout_session_id":"…","workout_definition_id":"…",
+      "scheduled_workout_id":"…",
       "workout_definition_snapshot_json":"{...TPW...}","started_unix_ms":…,
       "workout_name":"…","ftp_w":250,"weight_kg":72.0,
       "trainer":"KICKR CORE 1234","hrm":"TICKR 5678","app_ver":"0.1.0"}}
@@ -459,6 +460,9 @@ line):
 ```
 
 Samples are written at 1 Hz; absent optional fields mean no data.
+`scheduled_workout_id` is present only when the session was loaded from a
+scheduled Next Up item. It is snapshotted with the session so the eventual
+Activity retains that relationship even if the schedule changes while riding.
 `target_power_w` is the resolved workout power after FTP/intensity adjustment.
 `target_cadence_rpm` is the compiled cadence prescription; a TPW cadence range
 uses its execution midpoint while the exact range remains in the TPW snapshot.
@@ -546,9 +550,24 @@ CREATE TABLE workout_definitions (
   origin_id INTEGER,
   origin_ref TEXT);
 
+CREATE TABLE scheduled_workouts (
+  id TEXT PRIMARY KEY,
+  workout_definition_id TEXT NOT NULL
+    REFERENCES workout_definitions(id) ON DELETE RESTRICT,
+  scheduled_date_local TEXT NOT NULL,
+  scheduled_time_local TEXT,
+  scheduled_time_zone TEXT,
+  removed_at_unix_ms INTEGER,
+  created_at_unix_ms INTEGER NOT NULL,
+  updated_at_unix_ms INTEGER NOT NULL,
+  CHECK ((scheduled_time_local IS NULL AND scheduled_time_zone IS NULL) OR
+         (scheduled_time_local IS NOT NULL AND scheduled_time_zone IS NOT NULL)));
+
 CREATE TABLE activities (
   id TEXT PRIMARY KEY,
   workout_session_id TEXT,
+  scheduled_workout_id TEXT
+    REFERENCES scheduled_workouts(id) ON DELETE SET NULL,
   workout_definition_id TEXT REFERENCES workout_definitions(id) ON DELETE SET NULL,
   workout_definition_snapshot_json TEXT,
   workout_name TEXT NOT NULL, started_at_unix_ms INTEGER NOT NULL,
@@ -563,6 +582,10 @@ CREATE TABLE activities (
 
 CREATE UNIQUE INDEX activities_workout_session_id
   ON activities(workout_session_id);
+
+CREATE INDEX scheduled_workouts_next_up
+  ON scheduled_workouts(removed_at_unix_ms, scheduled_date_local,
+                        scheduled_time_local);
 
 CREATE TABLE devices (role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm')),
   platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
@@ -588,6 +611,15 @@ Migrations: `user_version` pragma + numbered migration list from day one. The
 TPW migration resets legacy workout rows and clears their activity references,
 while retaining activity history, FIT/journal paths, settings, and devices.
 
+Scheduled workout placement is calendar-local: every row has an ISO local
+date, while time and time zone are either both present or both absent. Next Up
+reads active rows in calendar order and excludes a row once an Activity links
+to it. Removal is soft so an existing Activity can retain schedule traceability.
+Recommendations are not persisted; the initial `local_favorites` recommender
+ranks definitions by Activity count within the preceding 180 days, with latest
+Activity as the tie-breaker, excludes definitions already scheduled, and
+returns at most three.
+
 ---
 
 ## 9. Tauri IPC surface
@@ -598,9 +630,11 @@ Commands (Rust `#[tauri::command]`; TS wrappers in `frontend/ipc.ts`; all return
 ```
 workouts:  import_workout(path) -> {summary, warnings[]} · create_workout(draft)
            list_workouts() -> Summary[] · get_workout_detail(id) · delete_workout(id)
+next_up:   list_next_up() -> NextUpItem[]
 devices:   start_scan() · connect_device(role, platform_id, name?)
            disconnect_device(role) · forget_device(role) · get_device_state() -> DeviceSlot[]
-player:    load_workout(id) -> PlayerState · start_ride() · pause_ride() · resume_ride()
+player:    load_workout(id, scheduled_workout_id?) -> PlayerState
+           start_ride() · pause_ride() · resume_ride()
            skip_segment() · set_intensity(pct) · set_erg(enabled)
            end_ride() -> ActivitySummary · clear_ride() · get_player_state()
 activities: list_activities() -> ActivityRow[] · delete_activity(id)
@@ -613,23 +647,19 @@ sources:   source_test(id, values) -> {ok, detail}   (provider connection test;
 profile:   get_settings() -> Settings · update_settings(settings)
 ```
 
-**Planned intervals.icu upload:** this remains an intended post-ride export
-sink, not a workout source, but is not implemented in the current command,
-settings, or UI surfaces. The reserved `activities.icu_activity_id` column remains
-unused. Once work resumes, completed FITs should upload best-effort while the
-local FIT/journal remain authoritative; a failed upload should expose a manual
-retry rather than compromise ride finalization. The proposed commands are
-`icu_test(cfg)` and `icu_upload_activity(activity_id)`, with a disabled-by-default
-credential setting. Confirm authentication and server-side `external_id`
-deduplication against the live API before relying on retry idempotency. See
-[`garmin-access.md`](garmin-access.md) for current integration status.
+**Intervals.icu:** no connection, authentication, schedule sync, or activity
+upload is implemented yet. The reserved `activities.icu_activity_id` column
+remains unused. The accepted direction is an inbound planning connection first,
+followed by an explicitly designed round trip; see
+[`garmin-access.md`](garmin-access.md) and
+[`workout-platform.md`](workout-platform.md).
 
 Events (Rust → UI, `tauri::Emitter`):
 
 | Event | Payload | Rate |
 |---|---|---|
 | `player_measurement` | `{power_w, cadence_rpm, heart_rate_bpm, power_smoothed_3s_w}` | ≤ 4 Hz |
-| `player_state` | `{phase, workout_session_id, workout_definition_id, seg_idx, seg_remaining_s, elapsed_s, ride_s, intensity, target_power_w, target_cadence_rpm, average_power_w, normalized_power_w, training_stress_score, ef, kcal}` | 1 Hz + on transitions |
+| `player_state` | `{phase, workout_session_id, workout_definition_id, scheduled_workout_id?, seg_idx, seg_remaining_s, elapsed_s, ride_s, intensity, target_power_w, target_cadence_rpm, average_power_w, normalized_power_w, training_stress_score, ef, kcal}` | 1 Hz + on transitions |
 | `device_status` | `{role, status, name?}` | on change |
 | `device_measurement` | `{role, power_w?, cadence_rpm?, heart_rate_bpm?}` | trainer 1 Hz / HRM notifications |
 | `scan_result` | `{role, platform_id, name, rssi}` | as found |

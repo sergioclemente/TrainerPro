@@ -48,6 +48,27 @@ payload through a boundary adapter. Provenance columns (`origin`, `origin_ref`)
 remain the current source badges; provider links and sync state replace them in
 the connected-provider phase.
 
+## Next Up backend projection
+
+The backend now exposes the read model needed by the future home screen. The UI
+still opens on Library until the Next Up frontend slice lands.
+
+```mermaid
+flowchart LR
+    S[(scheduled_workouts)] --> N[Next Up projection]
+    A[(activities)] -->|180-day frequency + recency| R[Local favorites]
+    W[(workout_definitions)] --> N
+    W --> R
+    R --> N
+    N --> IPC[list_next_up]
+```
+
+Scheduled rows are calendar-local placements over a WorkoutDefinition. Active,
+unfulfilled rows appear first in date/time order. Recommendations follow, are
+computed rather than persisted, and exclude definitions already scheduled.
+Starting a scheduled item carries its schedule identity into the session
+journal and resulting Activity.
+
 ## Device connection lifecycle
 
 `Trainer` and `HeartRateMonitor` are stable backend owners. A BLE or simulated
@@ -105,8 +126,8 @@ sequenceDiagram
     participant D as SQLite activities
     participant G as Garmin Connect
 
-    U->>P: Load WorkoutDefinition
-    P->>J: create with session id + TPW snapshot
+    U->>P: Load WorkoutDefinition (optionally from ScheduledWorkout)
+    P->>J: create with session id + schedule id + TPW snapshot
     U->>P: Start
     loop every 250 ms
         P->>E: Tick
@@ -120,7 +141,7 @@ sequenceDiagram
     P->>P: laps, NP, IF, TSS
     P->>P: encode .FIT
     P->>D: insert immutable Activity
-    Note over J,D: activity links session and preserves TPW snapshot
+    Note over J,D: activity links schedule/session and preserves TPW snapshot
     U->>G: upload .FIT
 ```
 

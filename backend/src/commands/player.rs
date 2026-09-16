@@ -5,6 +5,7 @@ use tauri::{AppHandle, State};
 use crate::app_error::AppError;
 use crate::app_state::AppState;
 use crate::commands::workout::load_workout_definition;
+use crate::database::scheduled_workouts as scheduled_db;
 use crate::player_runtime::{self as runtime, ActivitySummary, Cmd, PlayerState};
 
 type R<T> = Result<T, AppError>;
@@ -14,16 +15,42 @@ pub async fn load_workout(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
+    scheduled_workout_id: Option<String>,
 ) -> R<PlayerState> {
-    do_load_workout(app, &state, &id).await
+    load_workout_into_player(app, &state, &id, scheduled_workout_id.as_deref()).await
 }
 
-/// Shared load-into-player flow (also used by planner_ride).
-pub async fn do_load_workout(
+/// Shared definition-to-player flow, also used after Planner and WOZ import.
+pub async fn load_workout_into_player(
     app: AppHandle,
     state: &State<'_, AppState>,
     id: &str,
+    scheduled_workout_id: Option<&str>,
 ) -> R<PlayerState> {
+    if let Some(scheduled_workout_id) = scheduled_workout_id {
+        let scheduled = {
+            let conn = state.db.lock().unwrap();
+            scheduled_db::get(&conn, scheduled_workout_id)?
+        }
+        .ok_or_else(|| {
+            AppError::new(
+                "schedule_not_found",
+                format!("scheduled workout {scheduled_workout_id} not found"),
+            )
+        })?;
+        if scheduled.removed_at_unix_ms.is_some() {
+            return Err(AppError::new(
+                "schedule_removed",
+                "this workout is no longer scheduled",
+            ));
+        }
+        if scheduled.workout_definition_id != id {
+            return Err(AppError::new(
+                "schedule_mismatch",
+                "scheduled workout does not reference this workout definition",
+            ));
+        }
+    }
     let definition = load_workout_definition(state, id)?;
     let mut player = state.player.lock().await;
     if let Some(h) = player.as_ref() {
@@ -40,7 +67,13 @@ pub async fn do_load_workout(
             ));
         }
     }
-    let handle = runtime::spawn(app, id.to_string(), definition).await?;
+    let handle = runtime::spawn(
+        app,
+        id.to_string(),
+        scheduled_workout_id.map(str::to_owned),
+        definition,
+    )
+    .await?;
     let ps = handle.state_rx.borrow().clone();
     *player = Some(handle);
     Ok(ps)

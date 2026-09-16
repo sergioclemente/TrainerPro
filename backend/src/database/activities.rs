@@ -5,6 +5,7 @@ use rusqlite::{Connection, OptionalExtension};
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActivityListRow {
     pub id: String,
+    pub scheduled_workout_id: Option<String>,
     pub workout_name: String,
     pub started_at_unix_ms: i64,
     pub timer_s: u32,
@@ -25,6 +26,7 @@ pub struct ActivityArtifacts {
 pub struct NewActivity<'a> {
     pub id: &'a str,
     pub workout_session_id: &'a str,
+    pub scheduled_workout_id: Option<&'a str>,
     pub workout_definition_id: Option<&'a str>,
     pub workout_definition_snapshot_json: &'a str,
     pub workout_name: &'a str,
@@ -55,8 +57,10 @@ pub fn insert(conn: &Connection, activity: &NewActivity<'_>) -> rusqlite::Result
            timer_s, average_power_w, max_power_w, normalized_power_w,
            intensity_factor, training_stress_score, average_heart_rate_bpm,
            max_heart_rate_bpm, average_cadence_rpm, work_kj, ftp_used_w,
-           final_intensity_multiplier, fit_path, journal_path, completed_pct)
-         VALUES (?1,?2,(SELECT id FROM workout_definitions WHERE id = ?3),?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+           final_intensity_multiplier, fit_path, journal_path, completed_pct,
+           scheduled_workout_id)
+         VALUES (?1,?2,(SELECT id FROM workout_definitions WHERE id = ?3),?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,
+                 (SELECT id FROM scheduled_workouts WHERE id = ?23))",
         rusqlite::params![
             activity.id,
             activity.workout_session_id,
@@ -80,6 +84,7 @@ pub fn insert(conn: &Connection, activity: &NewActivity<'_>) -> rusqlite::Result
             activity.fit_path,
             activity.journal_path,
             activity.completed_pct,
+            activity.scheduled_workout_id,
         ],
     )?;
     Ok(())
@@ -87,7 +92,8 @@ pub fn insert(conn: &Connection, activity: &NewActivity<'_>) -> rusqlite::Result
 
 pub fn list(conn: &Connection) -> rusqlite::Result<Vec<ActivityListRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, workout_name, started_at_unix_ms, timer_s, average_power_w,
+        "SELECT id, scheduled_workout_id, workout_name, started_at_unix_ms,
+                timer_s, average_power_w,
                 normalized_power_w, training_stress_score, average_heart_rate_bpm,
                 completed_pct, fit_path
          FROM activities ORDER BY started_at_unix_ms DESC",
@@ -95,15 +101,16 @@ pub fn list(conn: &Connection) -> rusqlite::Result<Vec<ActivityListRow>> {
     let rows = stmt.query_map([], |row| {
         Ok(ActivityListRow {
             id: row.get(0)?,
-            workout_name: row.get(1)?,
-            started_at_unix_ms: row.get(2)?,
-            timer_s: row.get(3)?,
-            average_power_w: row.get(4)?,
-            normalized_power_w: row.get(5)?,
-            training_stress_score: row.get(6)?,
-            average_heart_rate_bpm: row.get(7)?,
-            completed_pct: row.get(8)?,
-            fit_path: row.get(9)?,
+            scheduled_workout_id: row.get(1)?,
+            workout_name: row.get(2)?,
+            started_at_unix_ms: row.get(3)?,
+            timer_s: row.get(4)?,
+            average_power_w: row.get(5)?,
+            normalized_power_w: row.get(6)?,
+            training_stress_score: row.get(7)?,
+            average_heart_rate_bpm: row.get(8)?,
+            completed_pct: row.get(9)?,
+            fit_path: row.get(10)?,
         })
     })?;
     rows.collect()
@@ -146,6 +153,7 @@ mod tests {
         NewActivity {
             id,
             workout_session_id: id,
+            scheduled_workout_id: None,
             workout_definition_id: Some("definition-no-longer-present"),
             workout_definition_snapshot_json: TPW_JSON,
             workout_name: "Endurance",
@@ -181,7 +189,16 @@ mod tests {
             },
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO scheduled_workouts (
+               id, workout_definition_id, scheduled_date_local,
+               created_at_unix_ms, updated_at_unix_ms)
+             VALUES ('scheduled-present','definition-present','2026-09-15',1,1)",
+            [],
+        )
+        .unwrap();
         let mut older = fixture("older", "/tmp/older.fit", 10);
+        older.scheduled_workout_id = Some("scheduled-present");
         older.workout_definition_id = Some("definition-present");
         insert(&conn, &older).unwrap();
         insert(&conn, &fixture("newer", "/tmp/newer.fit", 20)).unwrap();
@@ -190,6 +207,10 @@ mod tests {
         assert_eq!(
             rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
             vec!["newer", "older"]
+        );
+        assert_eq!(
+            rows[1].scheduled_workout_id.as_deref(),
+            Some("scheduled-present")
         );
         assert_eq!(
             fit_path(&conn, "older").unwrap().as_deref(),
@@ -221,6 +242,16 @@ mod tests {
         );
         tp_core::workout_definition::WorkoutDefinition::from_json(&context.2).unwrap();
 
+        conn.execute(
+            "DELETE FROM scheduled_workouts WHERE id = 'scheduled-present'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            list(&conn).unwrap()[1].scheduled_workout_id,
+            None,
+            "activity must survive schedule removal"
+        );
         super::super::workout_definitions::delete(&conn, "definition-present").unwrap();
         let detached_context: (Option<String>, String) = conn
             .query_row(

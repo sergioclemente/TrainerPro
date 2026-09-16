@@ -16,6 +16,26 @@ export interface WorkoutSummary {
   origin: string | null;
 }
 
+export interface SchedulePlacement {
+  date_local: string;
+  time_local: string | null;
+  time_zone: string | null;
+}
+
+export type NextUpItem =
+  | {
+      kind: "scheduled";
+      scheduled_workout_id: string;
+      placement: SchedulePlacement;
+      workout: WorkoutSummary;
+    }
+  | {
+      kind: "recommendation";
+      recommender: string;
+      training_focus: string;
+      workout: WorkoutSummary;
+    };
+
 export interface ImportResult {
   summary: WorkoutSummary;
   warnings: string[];
@@ -40,6 +60,7 @@ export interface PlayerState {
   phase: "ready" | "riding" | "paused" | "finished";
   workout_session_id: string;
   workout_definition_id: string;
+  scheduled_workout_id: string | null;
   workout_name: string;
   workout_duration_s: number;
   seg_idx: number | null;
@@ -80,6 +101,7 @@ export interface LapRow {
 
 export interface ActivitySummary {
   activity_id: string;
+  scheduled_workout_id: string | null;
   workout_name: string;
   started_at_unix_ms: number;
   elapsed_s: number;
@@ -99,6 +121,7 @@ export interface ActivitySummary {
 
 export interface ActivityRow {
   id: string;
+  scheduled_workout_id: string | null;
   workout_name: string;
   started_at_unix_ms: number;
   timer_s: number;
@@ -230,6 +253,7 @@ export const ipc = {
   listWorkouts: () => invoke<WorkoutSummary[]>("list_workouts"),
   deleteWorkout: (id: string) => invoke<void>("delete_workout", { id }),
   getWorkoutDetail: (id: string) => invoke<WorkoutDetail>("get_workout_detail", { id }),
+  listNextUp: () => invoke<NextUpItem[]>("list_next_up"),
 
   startScan: () => invoke<void>("start_scan"),
   connectDevice: (role: Role, platformId: string, name?: string) =>
@@ -238,7 +262,8 @@ export const ipc = {
   forgetDevice: (role: Role) => invoke<void>("forget_device", { role }),
   getDeviceState: () => invoke<DeviceSlot[]>("get_device_state"),
 
-  loadWorkout: (id: string) => invoke<PlayerState>("load_workout", { id }),
+  loadWorkout: (id: string, scheduledWorkoutId: string | null = null) =>
+    invoke<PlayerState>("load_workout", { id, scheduledWorkoutId }),
   startRide: () => invoke<void>("start_ride"),
   pauseRide: () => invoke<void>("pause_ride"),
   resumeRide: () => invoke<void>("resume_ride"),

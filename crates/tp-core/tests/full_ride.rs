@@ -40,6 +40,7 @@ fn zwo_to_fit_end_to_end() {
     let header = JournalHeader {
         workout_session_id: "session-itest-1".into(),
         workout_definition_id: "definition-itest-1".into(),
+        scheduled_workout_id: None,
         workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
         started_unix_ms: START_UNIX_MS,
         workout_name: workout.name.clone(),

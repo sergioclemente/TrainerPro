@@ -13,6 +13,7 @@ type R<T> = Result<T, AppError>;
 #[derive(Debug, Clone, Serialize)]
 pub struct ActivityRow {
     pub id: String,
+    pub scheduled_workout_id: Option<String>,
     pub workout_name: String,
     pub started_at_unix_ms: i64,
     pub timer_s: u32,
@@ -37,6 +38,7 @@ impl From<activity_db::ActivityListRow> for ActivityRow {
     fn from(row: activity_db::ActivityListRow) -> Self {
         ActivityRow {
             id: row.id,
+            scheduled_workout_id: row.scheduled_workout_id,
             workout_name: row.workout_name,
             started_at_unix_ms: row.started_at_unix_ms,
             timer_s: row.timer_s,

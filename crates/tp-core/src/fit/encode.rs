@@ -527,6 +527,7 @@ mod tests {
         JournalHeader {
             workout_session_id: "session-abc".into(),
             workout_definition_id: "definition-abc".into(),
+            scheduled_workout_id: None,
             workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: START_UNIX_S * 1000,
             workout_name: "2x20".into(),

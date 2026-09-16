@@ -5,6 +5,7 @@ use std::path::Path;
 
 pub mod activities;
 pub mod devices;
+pub mod scheduled_workouts;
 pub mod settings;
 pub mod source_cache;
 pub mod workout_definitions;
@@ -125,6 +126,33 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE activities RENAME COLUMN kj TO work_kj;
     ALTER TABLE activities RENAME COLUMN ftp_used TO ftp_used_w;
     ALTER TABLE activities RENAME COLUMN intensity_final TO final_intensity_multiplier;
+    ",
+    // v9: a scheduled workout is a local calendar placement that references a
+    // workout definition. It remains available for activity traceability when
+    // removed from Next Up.
+    "
+    CREATE TABLE scheduled_workouts (
+      id TEXT PRIMARY KEY,
+      workout_definition_id TEXT NOT NULL
+        REFERENCES workout_definitions(id) ON DELETE RESTRICT,
+      scheduled_date_local TEXT NOT NULL,
+      scheduled_time_local TEXT,
+      scheduled_time_zone TEXT,
+      removed_at_unix_ms INTEGER,
+      created_at_unix_ms INTEGER NOT NULL,
+      updated_at_unix_ms INTEGER NOT NULL,
+      CHECK (
+        (scheduled_time_local IS NULL AND scheduled_time_zone IS NULL) OR
+        (scheduled_time_local IS NOT NULL AND scheduled_time_zone IS NOT NULL)
+      )
+    );
+
+    CREATE INDEX scheduled_workouts_next_up
+      ON scheduled_workouts(removed_at_unix_ms, scheduled_date_local,
+                            scheduled_time_local);
+
+    ALTER TABLE activities ADD COLUMN scheduled_workout_id TEXT
+      REFERENCES scheduled_workouts(id) ON DELETE SET NULL;
     ",
 ];
 
