@@ -549,7 +549,20 @@ CREATE TABLE workout_definitions (
   updated_at INTEGER NOT NULL,
   origin TEXT,
   origin_id INTEGER,
-  origin_ref TEXT);
+  origin_ref TEXT,
+  retired_at_unix_ms INTEGER);
+
+CREATE TABLE provider_connections (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  external_account_id TEXT NOT NULL,
+  display_name TEXT,
+  time_zone TEXT NOT NULL,
+  last_sync_succeeded_at_unix_ms INTEGER,
+  last_sync_error TEXT,
+  created_at_unix_ms INTEGER NOT NULL,
+  updated_at_unix_ms INTEGER NOT NULL,
+  UNIQUE(provider, external_account_id));
 
 CREATE TABLE scheduled_workouts (
   id TEXT PRIMARY KEY,
@@ -559,10 +572,19 @@ CREATE TABLE scheduled_workouts (
   scheduled_time_local TEXT,
   scheduled_time_zone TEXT,
   removed_at_unix_ms INTEGER,
+  provider_connection_id TEXT
+    REFERENCES provider_connections(id) ON DELETE RESTRICT,
+  external_event_id TEXT,
+  external_revision TEXT,
+  last_synced_at_unix_ms INTEGER,
   created_at_unix_ms INTEGER NOT NULL,
   updated_at_unix_ms INTEGER NOT NULL,
   CHECK ((scheduled_time_local IS NULL AND scheduled_time_zone IS NULL) OR
-         (scheduled_time_local IS NOT NULL AND scheduled_time_zone IS NOT NULL)));
+         (scheduled_time_local IS NOT NULL AND scheduled_time_zone IS NOT NULL)),
+  CHECK ((provider_connection_id IS NULL AND external_event_id IS NULL) OR
+         (provider_connection_id IS NOT NULL AND external_event_id IS NOT NULL)),
+  CHECK (external_revision IS NULL OR external_event_id IS NOT NULL),
+  CHECK (last_synced_at_unix_ms IS NULL OR external_event_id IS NOT NULL));
 
 CREATE TABLE activities (
   id TEXT PRIMARY KEY,
@@ -587,6 +609,10 @@ CREATE UNIQUE INDEX activities_workout_session_id
 CREATE INDEX scheduled_workouts_next_up
   ON scheduled_workouts(removed_at_unix_ms, scheduled_date_local,
                         scheduled_time_local);
+
+CREATE UNIQUE INDEX scheduled_workouts_provider_event
+  ON scheduled_workouts(provider_connection_id, external_event_id)
+  WHERE provider_connection_id IS NOT NULL;
 
 CREATE TABLE devices (role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm')),
   platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
@@ -616,6 +642,12 @@ Scheduled workout placement is calendar-local: every row has an ISO local
 date, while time and time zone are either both present or both absent. Next Up
 reads active rows in calendar order and excludes a row once an Activity links
 to it. Removal is soft so an existing Activity can retain schedule traceability.
+Provider-owned rows scope external event identity through a non-secret
+`provider_connections` row. A completed bounded sync updates the linked TPW and
+placement transactionally, preserves local IDs, and soft-removes only missing
+events whose previous placement was inside that fetched window. Its
+provider-owned definition is retired from Library queries at the same time but
+retained for traceability and restored in place if the event reappears.
 Recommendations are not persisted; the initial `local_favorites` recommender
 ranks definitions by Activity count within the preceding 180 days, with latest
 Activity as the tie-breaker, excludes definitions already scheduled, and

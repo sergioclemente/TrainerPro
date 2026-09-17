@@ -5,6 +5,7 @@ use std::path::Path;
 
 pub mod activities;
 pub mod devices;
+pub mod provider_connections;
 pub mod scheduled_workouts;
 pub mod settings;
 pub mod source_cache;
@@ -154,6 +155,41 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE activities ADD COLUMN scheduled_workout_id TEXT
       REFERENCES scheduled_workouts(id) ON DELETE SET NULL;
     ",
+    // v10: provider-scoped identity for connected calendar sync. Credentials
+    // remain outside this table; it stores only non-secret account identity,
+    // placement context, and observable sync status.
+    "
+    CREATE TABLE provider_connections (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL CHECK(length(provider) > 0),
+      external_account_id TEXT NOT NULL CHECK(length(external_account_id) > 0),
+      display_name TEXT,
+      time_zone TEXT NOT NULL CHECK(length(time_zone) > 0),
+      last_sync_succeeded_at_unix_ms INTEGER,
+      last_sync_error TEXT,
+      created_at_unix_ms INTEGER NOT NULL,
+      updated_at_unix_ms INTEGER NOT NULL,
+      UNIQUE(provider, external_account_id)
+    );
+
+    ALTER TABLE workout_definitions ADD COLUMN retired_at_unix_ms INTEGER;
+
+    ALTER TABLE scheduled_workouts ADD COLUMN provider_connection_id TEXT
+      REFERENCES provider_connections(id) ON DELETE RESTRICT;
+    ALTER TABLE scheduled_workouts ADD COLUMN external_event_id TEXT
+      CHECK (
+        (provider_connection_id IS NULL AND external_event_id IS NULL) OR
+        (provider_connection_id IS NOT NULL AND external_event_id IS NOT NULL)
+      );
+    ALTER TABLE scheduled_workouts ADD COLUMN external_revision TEXT
+      CHECK (external_revision IS NULL OR external_event_id IS NOT NULL);
+    ALTER TABLE scheduled_workouts ADD COLUMN last_synced_at_unix_ms INTEGER
+      CHECK (last_synced_at_unix_ms IS NULL OR external_event_id IS NOT NULL);
+
+    CREATE UNIQUE INDEX scheduled_workouts_provider_event
+      ON scheduled_workouts(provider_connection_id, external_event_id)
+      WHERE provider_connection_id IS NOT NULL;
+    ",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -185,6 +221,8 @@ pub(super) fn test_connection() -> Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PRE_PROVIDER_SYNC_MIGRATION_COUNT: usize = 9;
 
     #[test]
     fn tpw_migration_resets_workouts_but_preserves_activities_and_settings() {
@@ -295,5 +333,56 @@ mod tests {
             .unwrap(),
             MIGRATIONS.len() as i64
         );
+    }
+
+    #[test]
+    fn provider_sync_migration_preserves_existing_local_schedules() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (index, sql) in MIGRATIONS
+            .iter()
+            .take(PRE_PROVIDER_SYNC_MIGRATION_COUNT)
+            .enumerate()
+        {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", (index + 1) as i64)
+                .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO workout_definitions (
+               id, tpw_json, created_at, updated_at)
+             VALUES ('definition','{}',1,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO scheduled_workouts (
+               id, workout_definition_id, scheduled_date_local,
+               created_at_unix_ms, updated_at_unix_ms)
+             VALUES ('schedule','definition','2030-01-01',1,1)",
+            [],
+        )
+        .unwrap();
+
+        let conn = prepare(conn).unwrap();
+        let migrated: (Option<String>, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT provider_connection_id, external_event_id,
+                        last_synced_at_unix_ms
+                 FROM scheduled_workouts WHERE id = 'schedule'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated, (None, None, None));
+        let retired_at: Option<i64> = conn
+            .query_row(
+                "SELECT retired_at_unix_ms FROM workout_definitions
+                 WHERE id = 'definition'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retired_at, None);
     }
 }

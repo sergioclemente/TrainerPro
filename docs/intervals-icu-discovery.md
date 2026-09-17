@@ -13,6 +13,9 @@ sync contract.
 - `GET /api/v1/athlete/0/events` addresses the athlete belonging to the
   credential. Explicit `oldest` and `newest` local-date parameters bound the
   calendar request, and `category=WORKOUT` selects planned workouts.
+- Event `start_date_local` is a floating local timestamp. TrainerPro treats
+  midnight as date-only placement and combines a non-midnight value with the
+  connected athlete's time zone.
 - Omitting `resolve=true` preserves relative targets such as `%ftp`. Omitting
   `ext` avoids attaching a workout file; the structured `workout_doc` is enough
   for discovery.
@@ -102,6 +105,7 @@ answer:
 4. How are deletion, cancellation, all-day placement, and timed placement
    represented?
 
-The next production slice should follow that evidence: idempotent persistence
-around the adapter and only the provider-link and sync state needed by that
-real consumer.
+Provider-scoped persistence now preserves stable local identities, remote
+revision, last-good data, and bounded deletion semantics. The next production
+slice is the user-facing connection and sync orchestration around that
+boundary.

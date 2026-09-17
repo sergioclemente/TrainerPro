@@ -20,10 +20,11 @@ requires. Manual FIT upload remains the supported path in the meantime.
 
 TrainerPro has a pure, fixture-tested adapter from Intervals.icu's structured
 cycling `workout_doc` into TPW and a bounded calendar client using the
-documented personal-API-key authentication. There is not yet a provider
-connection: the database reserves `activities.icu_activity_id`, but there is
-no credential setting, provider-linked persistence, IPC command, automatic
-schedule refresh or upload, or retry UI.
+documented personal-API-key authentication. Provider-scoped schedule
+persistence is transactional and idempotent, but the runtime connection is not
+wired yet: there is no credential setting, IPC command, automatic schedule
+refresh or upload, or retry UI. The database also reserves
+`activities.icu_activity_id` for later activity sync.
 
 Read-only API assumptions and the privacy-safe live probe are documented in
 [`intervals-icu-discovery.md`](intervals-icu-discovery.md).

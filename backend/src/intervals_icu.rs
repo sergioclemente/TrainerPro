@@ -25,6 +25,7 @@ use tp_core::workout_definition::{
 const WORKOUT_CATEGORY: &str = "WORKOUT";
 const RIDE_TYPE: &str = "Ride";
 const VIRTUAL_RIDE_TYPE: &str = "VirtualRide";
+pub(crate) const PROVIDER_ID: &str = "intervals_icu";
 const API_BASE_URL: &str = "https://intervals.icu";
 const API_KEY_USERNAME: &str = "API_KEY";
 const REQUEST_TIMEOUT_SECONDS: u64 = 30;
@@ -122,7 +123,7 @@ impl IntervalsIcuClient {
     }
 }
 
-fn is_iso_date(value: &str) -> bool {
+pub(crate) fn is_iso_date(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 10
         && bytes[4] == b'-'

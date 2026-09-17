@@ -1,5 +1,13 @@
 //! TPW workout-definition persistence.
 
+#![cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "provider persistence lands before the connection command that consumes it"
+    )
+)]
+
 use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +23,15 @@ pub struct NewWorkoutDefinition<'a> {
     pub created_at_ms: i64,
 }
 
+pub struct ProviderWorkoutDefinition<'a> {
+    pub id: &'a str,
+    pub tpw_json: &'a str,
+    pub origin: &'a str,
+    pub origin_id: Option<i64>,
+    pub origin_ref: &'a str,
+    pub synced_at_unix_ms: i64,
+}
+
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkoutDefinitionRow> {
     Ok(WorkoutDefinitionRow {
         id: row.get(0)?,
@@ -25,7 +42,9 @@ fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkoutDefinitionRow> {
 
 pub fn find_id_by_tpw_json(conn: &Connection, tpw_json: &str) -> rusqlite::Result<Option<String>> {
     conn.query_row(
-        "SELECT id FROM workout_definitions WHERE tpw_json = ?1 ORDER BY created_at DESC LIMIT 1",
+        "SELECT id FROM workout_definitions
+         WHERE tpw_json = ?1 AND retired_at_unix_ms IS NULL
+         ORDER BY created_at DESC LIMIT 1",
         [tpw_json],
         |row| row.get(0),
     )
@@ -41,6 +60,46 @@ pub fn insert(conn: &Connection, definition: &NewWorkoutDefinition<'_>) -> rusql
     Ok(())
 }
 
+pub fn insert_provider_copy(
+    conn: &Connection,
+    definition: &ProviderWorkoutDefinition<'_>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO workout_definitions (
+           id, tpw_json, created_at, updated_at, origin, origin_id, origin_ref)
+         VALUES (?1,?2,?3,?3,?4,?5,?6)",
+        rusqlite::params![
+            definition.id,
+            definition.tpw_json,
+            definition.synced_at_unix_ms,
+            definition.origin,
+            definition.origin_id,
+            definition.origin_ref,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn update_provider_copy(
+    conn: &Connection,
+    definition: &ProviderWorkoutDefinition<'_>,
+) -> rusqlite::Result<bool> {
+    Ok(conn.execute(
+        "UPDATE workout_definitions
+         SET tpw_json = ?1, updated_at = ?2, origin = ?3,
+             origin_id = ?4, origin_ref = ?5, retired_at_unix_ms = NULL
+         WHERE id = ?6",
+        rusqlite::params![
+            definition.tpw_json,
+            definition.synced_at_unix_ms,
+            definition.origin,
+            definition.origin_id,
+            definition.origin_ref,
+            definition.id,
+        ],
+    )? > 0)
+}
+
 pub fn get(conn: &Connection, id: &str) -> rusqlite::Result<Option<WorkoutDefinitionRow>> {
     conn.query_row(
         "SELECT id, tpw_json, origin FROM workout_definitions WHERE id = ?1",
@@ -51,8 +110,10 @@ pub fn get(conn: &Connection, id: &str) -> rusqlite::Result<Option<WorkoutDefini
 }
 
 pub fn list(conn: &Connection) -> rusqlite::Result<Vec<WorkoutDefinitionRow>> {
-    let mut stmt = conn
-        .prepare("SELECT id, tpw_json, origin FROM workout_definitions ORDER BY created_at DESC")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, tpw_json, origin FROM workout_definitions
+         WHERE retired_at_unix_ms IS NULL ORDER BY created_at DESC",
+    )?;
     let rows = stmt.query_map([], read_row)?;
     rows.collect()
 }
@@ -68,7 +129,7 @@ pub fn list_by_activity_frequency_since(
         "SELECT wd.id, wd.tpw_json, wd.origin
          FROM workout_definitions wd
          JOIN activities a ON a.workout_definition_id = wd.id
-         WHERE a.started_at_unix_ms >= ?1
+         WHERE a.started_at_unix_ms >= ?1 AND wd.retired_at_unix_ms IS NULL
          GROUP BY wd.id, wd.tpw_json, wd.origin
          ORDER BY COUNT(a.id) DESC, MAX(a.started_at_unix_ms) DESC, wd.id",
     )?;

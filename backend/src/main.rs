@@ -11,6 +11,7 @@ mod device_hub;
 mod device_owner;
 mod heart_rate_monitor;
 mod intervals_icu;
+mod intervals_icu_sync;
 mod next_up;
 mod player_runtime;
 mod trainer;

@@ -71,8 +71,9 @@ available and remain ridable offline.
 
 Status: the read-only API contract and representative cycling `workout_doc`
 shape have been validated against a live account. A pure adapter and bounded
-personal-API-key client are implemented and fixture-tested. Credential
-storage, provider-linked persistence, and sync orchestration remain
+personal-API-key client are implemented and fixture-tested. Provider-scoped,
+transactional schedule persistence is implemented behind the unwired sync
+boundary. Credential storage, connection UI, and sync orchestration remain
 outstanding.
 
 - Add provider connections, capability declarations, provider links, external

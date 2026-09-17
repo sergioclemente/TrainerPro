@@ -121,6 +121,10 @@ mod tests {
                 scheduled_time_local: Some("07:00:00".into()),
                 scheduled_time_zone: Some("Europe/Zurich".into()),
                 removed_at_unix_ms: None,
+                provider_connection_id: None,
+                external_event_id: None,
+                external_revision: None,
+                last_synced_at_unix_ms: None,
             },
             definition: definition("tagged", TAGGED_TPW_JSON),
         }];
