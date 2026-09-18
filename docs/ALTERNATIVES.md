@@ -191,6 +191,60 @@ real consequences:*
 
 ---
 
+## D10. Local voice-command interpretation
+
+*Voice plan picked: Moonshine streaming transcription + local semantic intent
+matching + deterministic typed-argument parsing, with no spoken prefix.*
+
+| Option | Pros | Cons |
+|---|---|---|
+| **Moonshine semantic matcher + deterministic arguments** (plan) | Entirely local; semantic paraphrase handling; closed intent registry; predictable numeric validation; reuses the selected speech runtime | Adds the roughly 200 MB EmbeddingGemma q4 model; no-prefix false activation must be measured |
+| **FunctionGemma tool calling** | Emits structured calls and can learn complicated phrasing | Known-correct artifact added roughly 591 MB to the bundle, about a second of command latency, several GB of measured resident memory, and a training/export pipeline |
+| **Exact phrases and regular expressions only** | Smallest and fastest; no second model | Brittle around paraphrases and transcription variation; command catalog becomes user-visible grammar |
+| **Cloud speech/LLM service** | Strong language understanding and easy model updates | Requires connectivity, sends voice-derived data off-device, adds latency and operating cost |
+
+**Why the semantic matcher:** the command surface is finite, so a generative
+tool caller is unnecessary. Moonshine's conversational-agent support already
+uses semantic phrase matching. TrainerPro keeps typed argument extraction and
+all effects in application-owned code, then routes the validated action through
+the existing Player IPC.
+
+V1 listens only on the foreground workout Player and has no wake word. The
+Builder and every other screen are outside the V1 voice surface. An unmatched
+utterance is silent. Voice exposes no ride-completion action: end/finish/
+stop-ride language maps to pause, and the rider finishes manually.
+
+**Surface ownership:** shared microphone, model, lifecycle, semantic routing,
+command-registry construction, and bounded slot parsers remain under
+`frontend/voice`. Each voice-enabled screen owns an adjacent `.voice.ts`
+declarative registry containing its phrases, availability, argument preparation,
+live validation, and narrowed execution capabilities. Catalogs and dispatch are
+derived from that single registry, so command identifiers are not mirrored
+across types and switches. Matching uses the full active screen catalog before
+the registry rejects an unavailable command, preventing phase filtering from
+turning one recognized command into another. The screen registers that surface
+while mounted. This keeps command policy near the matching UI without giving
+React screens separate microphone/model owners or teaching the semantic worker
+about application actions. A centralized application-wide command bus remains
+unnecessary unless UI, voice, and another real input surface all need the same
+broader registry.
+
+**Hands-free suspension:** the shared controller owns a small voice-control
+registry alongside the active screen registry. “Stop listening” and “stop
+talking” suspend application commands for the session while capture and routing
+remain active so “resume listening” can restore them hands-free. Matching still
+uses the complete combined catalog before availability is checked; therefore
+`stop` remains a Player pause and `resume workout` cannot be reinterpreted as a
+request to resume voice commands. The persistent Settings toggle remains the
+only hard disable.
+
+**What would change my mind:** if the held-out corpus shows that the semantic
+matcher plus deterministic parsers cannot reach acceptable command recall and
+false-activation rates, reconsider an exact grammar or a small trained command
+model using the reserved Hugging Face repositories.
+
+---
+
 ## Summary of the load-bearing decisions
 
 If you only pressure-test three, make it these:

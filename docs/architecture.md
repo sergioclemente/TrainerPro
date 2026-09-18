@@ -114,6 +114,53 @@ sequenceDiagram
     U->>G: upload .FIT
 ```
 
+## Voice command flow
+
+The frontend voice controller is the single lifecycle owner for permission,
+capture, routing state, and feedback. Audio and synchronous Moonshine work stay
+off the React thread. One screen-owned voice surface is active at a time. The
+semantic worker returns only an intent match; it cannot parse application
+arguments, invoke Tauri commands, or mutate application state.
+
+```mermaid
+flowchart LR
+    MIC["System-default microphone"]
+    CAP["WebAudio capture"]
+    STT["Moonshine STT worker<br/>resampling + VAD + transcription"]
+    ROUTE["Semantic routing worker<br/>active surface catalog"]
+    GATE["Screen-owned command registry<br/>slots + live validation"]
+    PLAYER["Existing typed player IPC"]
+    FEEDBACK["Voice status + nonverbal cue"]
+
+    MIC --> CAP --> STT
+    STT -->|completed transcript only| ROUTE
+    ROUTE -->|zero or one intent match| GATE
+    GATE -->|valid Player action| PLAYER
+    PLAYER --> FEEDBACK
+```
+
+The full Player and shared voice-control catalogs participate in semantic
+matching, then the registries reject commands unavailable in the current state.
+This ordering keeps an unavailable command from being reinterpreted as a
+different available one. “Stop listening” or “stop talking” sets a session-only
+controller gate: capture and both models remain active, but every Player command
+is ignored until “resume listening” or an alias wins. The persistent setting is
+still the hard disable. Every other screen, including the Builder, suspends
+voice. Unmatched speech has no effect. No voice route can finish a ride;
+end-like language resolves to the existing pause action and tells the rider to
+finish manually.
+`frontend/voice/VoiceController.tsx` owns the production lifecycle, generic
+routing contracts live under `frontend/voice`, and
+`frontend/screens/Player.voice.ts` declares each Player command once with its
+phrases, phase availability, slot preparation, and execution. Shared registry
+machinery derives the catalog and dispatch table; bounded numeric slot parsing
+is independent of semantic matching. `frontend/voice/voiceControls.ts` owns the
+cross-screen suspension commands, and `voiceRouting.ts` composes and gates the
+registries. A future screen adds an adjacent
+`.voice.ts` surface; it does not add screen logic to the semantic worker.
+Changing surface identity invalidates in-flight work even when voice remains
+active across the navigation.
+
 ## Cross-platform status
 
 | Layer | macOS (shipped) | Windows (planned) | Shared? |

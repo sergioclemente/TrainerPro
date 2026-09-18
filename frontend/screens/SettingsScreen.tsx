@@ -3,11 +3,15 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { ipc } from "../ipc";
 import { useStore } from "../state";
 import LibrariesPanel from "./Libraries";
+import binaryDistributionTerms from "../../BINARY_DISTRIBUTION_TERMS.md?raw";
+import thirdPartyNotices from "../../NOTICE.txt?raw";
+import gemmaProhibitedUsePolicy from "../../legal/GEMMA_PROHIBITED_USE_POLICY_2024-02-21.txt?raw";
+import gemmaTerms from "../../legal/GEMMA_TERMS_2026-04-01.txt?raw";
 
 // Settings is now a tabbed screen. "Libraries" (workout sources) used to be its
 // own top-level screen — it's mostly configuration, so it lives here now as a
 // tab alongside Basic info and Export.
-type Tab = "basic" | "export" | "libraries";
+type Tab = "basic" | "export" | "libraries" | "about";
 
 export default function SettingsScreen() {
   const { settings, refreshSettings, pushToast, settingsTab } = useStore();
@@ -42,6 +46,11 @@ export default function SettingsScreen() {
     await refreshSettings();
   }
 
+  async function toggleVoice() {
+    await ipc.updateSettings({ ...settings!, voice_enabled: !settings!.voice_enabled });
+    await refreshSettings();
+  }
+
   async function chooseExportDir() {
     const dir = await open({ directory: true, multiple: false });
     if (typeof dir === "string") {
@@ -59,6 +68,7 @@ export default function SettingsScreen() {
     ["basic", "Basic info"],
     ["export", "Export"],
     ["libraries", "Libraries"],
+    ["about", "About"],
   ];
 
   return (
@@ -97,6 +107,15 @@ export default function SettingsScreen() {
               <input type="checkbox" checked={settings.record_distance} onChange={toggleDistance} />
               Record virtual speed/distance in FIT files
             </label>
+            <div className="setting-option">
+              <label className="row gap">
+                <input type="checkbox" checked={settings.voice_enabled} onChange={toggleVoice} />
+                Enable voice commands
+              </label>
+              <span className="muted setting-description">
+                Processed on this device. Audio and transcripts are not stored or sent.
+              </span>
+            </div>
             <button className="primary" onClick={saveAll}>
               Save
             </button>
@@ -129,6 +148,46 @@ export default function SettingsScreen() {
       )}
 
       {tab === "libraries" && <LibrariesPanel />}
+
+      {tab === "about" && (
+        <div className="about-settings">
+          <section>
+            <h2>Privacy</h2>
+            <p>
+              Voice commands are processed entirely on this device. TrainerPro does not
+              store or send microphone audio or transcripts.
+            </p>
+          </section>
+          <section>
+            <h2>License</h2>
+            <p>
+              TrainerPro-authored source code is provided under the MIT License.
+              Packaged builds containing EmbeddingGemma are also subject to the
+              model-specific distribution terms below.
+            </p>
+            <details className="legal-disclosure">
+              <summary>TrainerPro Binary Distribution Terms</summary>
+              <pre className="legal-document">{binaryDistributionTerms}</pre>
+            </details>
+            <details className="legal-disclosure">
+              <summary>Gemma Terms of Use — April 1, 2026</summary>
+              <pre className="legal-document">{gemmaTerms}</pre>
+            </details>
+            <details className="legal-disclosure">
+              <summary>Gemma Prohibited Use Policy — February 21, 2024</summary>
+              <pre className="legal-document">{gemmaProhibitedUsePolicy}</pre>
+            </details>
+          </section>
+          <section>
+            <h2>Third-party notices</h2>
+            <p className="muted">
+              Voice models and their local runtime include the following notices and
+              license references.
+            </p>
+            <pre className="legal-document">{thirdPartyNotices}</pre>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

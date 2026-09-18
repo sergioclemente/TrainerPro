@@ -174,4 +174,10 @@ and bring tests.
 
 ## License
 
-[MIT](LICENSE).
+TrainerPro-authored source is [MIT](LICENSE). Packaged distributions containing
+EmbeddingGemma are also subject to the
+[TrainerPro Binary Distribution Terms](BINARY_DISTRIBUTION_TERMS.md), the
+bundled [Gemma Terms of Use](legal/GEMMA_TERMS_2026-04-01.txt), and the
+[Gemma Prohibited Use Policy](legal/GEMMA_PROHIBITED_USE_POLICY_2024-02-21.txt).
+Other bundled third-party software and model artifacts retain their own terms;
+see [NOTICE.txt](NOTICE.txt).

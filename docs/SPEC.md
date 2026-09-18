@@ -518,8 +518,8 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- JSON valu
 ```
 
 Settings keys & defaults: `profile` `{"ftp":200,"weight_kg":75.0,"name":""}` ·
-`record_distance` `false` · `intensity_default` `1.0` · `export_dir` `null` ·
-`sources` (the workout-library provider registry below).
+`record_distance` `false` · `voice_enabled` `true` · `intensity_default` `1.0` ·
+`export_dir` `null` · `sources` (the workout-library provider registry below).
 
 **Workout-library providers** (`sources` key): a plugin registry keyed by
 provider id, each `{"enabled":bool,"values":{field:str}}` (`SourceConfig`).

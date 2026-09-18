@@ -121,6 +121,7 @@ export interface SourceConfig {
 export interface Settings {
   profile: Profile;
   record_distance: boolean;
+  voice_enabled: boolean;
   intensity_default: number;
   export_dir: string | null;
   /** Workout-library providers keyed by id (planner, woz, …). */
