@@ -29,7 +29,7 @@ body {
   height: 100vh;
 }
 .app-riding {
-  display: block;
+  display: flex;
 }
 
 /* --- nav rail --- */
@@ -70,15 +70,87 @@ body {
 }
 .rail-status {
   margin-top: auto;
+  padding-top: 12px;
+}
+.connection-status {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
+}
+.rail-status-card {
+  --rail-status-tone: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--rail-status-tone);
+  border-radius: 9px;
+}
+.rail-status-neutral {
+  --rail-status-tone: var(--muted);
+}
+.rail-status-ok {
+  --rail-status-tone: var(--ok);
+}
+.rail-status-active {
+  --rail-status-tone: var(--accent);
+}
+.rail-status-warn {
+  --rail-status-tone: var(--warn);
+}
+.rail-status-danger {
+  --rail-status-tone: var(--danger);
+}
+.rail-status-card-main {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+.rail-status-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--rail-status-tone);
+}
+.rail-status-card-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.rail-status-card-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.rail-status-card-state {
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.rail-status-card-detail {
+  color: var(--muted);
   font-size: 12px;
-  padding: 8px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.rail-status-card-action {
+  display: flex;
 }
 
 .content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
 }
 
@@ -400,6 +472,59 @@ button.big {
 }
 
 /* --- player --- */
+.ride-event-rail {
+  width: 200px;
+  flex: 0 0 200px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 12px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+}
+.ride-event-feed {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+}
+.ride-status-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ride-status-cluster .connection-status {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.voice-retry {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.voice-feedback {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.voice-feedback.error {
+  border-left-color: var(--danger);
+}
+.voice-feedback-command {
+  color: var(--muted);
+  font-size: 12px;
+}
+.voice-feedback-result {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
 .player {
   display: flex;
   flex-direction: column;
@@ -593,6 +718,52 @@ button.big {
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 15px;
+}
+.setting-option {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.setting-description {
+  max-width: 340px;
+  padding-left: 24px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.about-settings {
+  max-width: 760px;
+  line-height: 1.5;
+}
+.about-settings section + section {
+  margin-top: 24px;
+}
+.about-settings h2 {
+  margin-top: 0;
+}
+.legal-disclosure {
+  margin-top: 10px;
+}
+.legal-disclosure summary {
+  color: var(--accent);
+  cursor: pointer;
+  user-select: none;
+}
+.legal-document {
+  max-height: 440px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--fg);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+  -webkit-user-select: text;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* --- connected workout providers --- */

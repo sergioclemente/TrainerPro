@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "toolSchemaVersion": 1,
+  "intentSchemaVersion": 4,
+  "moonshine": {
+    "runtimeVersion": "@moonshine-ai/moonshine-wasm@0.1.5-trainerpro.singlethread.8",
+    "architecture": "small_streaming",
+    "language": "en",
+    "catalogVersion": "quantized_26_08_21",
+    "bundleDirectory": "moonshine-small-streaming-en",
+    "sourceBaseUrl": "https://download.moonshine.ai/model/small-streaming-en/quantized_26_08_21",
+    "files": [
+      { "path": "adapter.ort", "size": 2870368, "sha256": "c665f742364febad597cc9ac1e0b341ffbee0e24a1466e2f3bde95e6e4771762" },
+      { "path": "cross_kv.ort", "size": 5356536, "sha256": "e2d3417144e9514055ebfefe8dcc4c0a55a55adcb8530435844c75c53e352bf6" },
+      { "path": "decoder_kv.ort", "size": 81878600, "sha256": "1a05465b1dd955858dfcbee039c0020fb5dd982b0f5094c34e61735d518d771b" },
+      { "path": "encoder.ort", "size": 44148576, "sha256": "2d4d973e91e8aca08c51e7e7efa28a46ab265b63d809d5294d18b86bcd85b993" },
+      { "path": "frontend.model.ort", "size": 26944, "sha256": "09b1210ae30dc5f0f3e45f0ebab914c254741323114f53fbbe5ae62cca35058f" },
+      { "path": "frontend.weights.ort", "size": 7769464, "sha256": "7ef97521bd4bad3928f5bb6808586f4fcc6e92bd5990394112eed7d4052ec338" },
+      { "path": "streaming_config.json", "size": 512, "sha256": "26f02b6afb22d60871a5efd85c3d38e569cc0ddb6c5eb6e93d3260152ae8a47a" },
+      { "path": "tokenizer.bin", "size": 249974, "sha256": "6884b35fd6377d4c4d32336a0bc152f36b64d1e45b6503683cdc238250a8472d" }
+    ]
+  },
+  "embedding": {
+    "runtimeVersion": "@moonshine-ai/moonshine-wasm@0.1.5-trainerpro.singlethread.8",
+    "architecture": "embeddinggemma-300m",
+    "variant": "q4",
+    "bundleDirectory": "embeddinggemma-300m",
+    "sourceBaseUrl": "https://download.moonshine.ai/model/embeddinggemma-300m",
+    "files": [
+      { "path": "model_q4.ort", "size": 197683216, "sha256": "102ded8788493ca87012347e2babd6e7122ad00d2784c6dc52b2592becd84670" },
+      { "path": "tokenizer.bin", "size": 2578500, "sha256": "4fdec7a53746faa3ddcca7054515f34d5312250661947cc7bb82e2870c578a13" }
+    ]
+  }
+}

@@ -139,6 +139,10 @@ fn load_sources(saved_sources: Option<&str>, legacy_planner: Option<&str>) -> Ha
 pub struct Settings {
     pub profile: Profile,
     pub record_distance: bool,
+    /// Voice is a normal default-enabled capability. The user may deliberately
+    /// disable it without changing operating-system microphone permission.
+    #[serde(default = "default_voice_enabled")]
+    pub voice_enabled: bool,
     pub intensity_default: f64,
     /// Extra folder FIT files are copied to at ride end (friendly names).
     /// None = app data dir only.
@@ -148,6 +152,10 @@ pub struct Settings {
     /// the old typed `planner` object; `woz` is now a first-class entry.
     #[serde(default)]
     pub sources: HashMap<String, SourceConfig>,
+}
+
+const fn default_voice_enabled() -> bool {
+    true
 }
 
 impl Settings {
@@ -166,6 +174,7 @@ impl Default for Settings {
         Settings {
             profile: Profile::default(),
             record_distance: false,
+            voice_enabled: default_voice_enabled(),
             intensity_default: 1.0,
             export_dir: None,
             sources: default_sources(),
@@ -176,47 +185,65 @@ impl Default for Settings {
 impl AppState {
     pub fn settings(&self) -> Settings {
         let conn = self.db.lock().unwrap();
-        let mut s = Settings::default();
-        let get = |key| db::settings::get(&conn, key).ok().flatten();
-        if let Some(v) = get("profile") {
-            if let Ok(p) = serde_json::from_str(&v) {
-                s.profile = p;
-            }
-        }
-        if let Some(v) = get("record_distance") {
-            s.record_distance = v == "true";
-        }
-        if let Some(v) = get("intensity_default") {
-            if let Ok(i) = v.parse() {
-                s.intensity_default = i;
-            }
-        }
-        if let Some(v) = get("export_dir") {
-            if !v.is_empty() {
-                s.export_dir = Some(v);
-            }
-        }
-        s.sources = load_sources(get("sources").as_deref(), get("planner").as_deref());
-        s
+        load_settings(&conn)
     }
 
     pub fn save_settings(&self, s: &Settings) -> Result<(), rusqlite::Error> {
         let conn = self.db.lock().unwrap();
-        db::settings::set(&conn, "profile", &serde_json::to_string(&s.profile).unwrap())?;
-        db::settings::set(
-            &conn,
-            "record_distance",
-            if s.record_distance { "true" } else { "false" },
-        )?;
-        db::settings::set(&conn, "intensity_default", &s.intensity_default.to_string())?;
-        db::settings::set(&conn, "export_dir", s.export_dir.as_deref().unwrap_or(""))?;
-        db::settings::set(&conn, "sources", &serde_json::to_string(&s.sources).unwrap())?;
-        Ok(())
+        save_settings(&conn, s)
     }
 
     pub fn activities_dir(&self) -> PathBuf {
         self.data_dir.join("activities")
     }
+}
+
+fn load_settings(conn: &Connection) -> Settings {
+    let mut s = Settings::default();
+    let get = |key| db::settings::get(conn, key).ok().flatten();
+    if let Some(v) = get("profile") {
+        if let Ok(p) = serde_json::from_str(&v) {
+            s.profile = p;
+        }
+    }
+    if let Some(v) = get("record_distance") {
+        s.record_distance = v == "true";
+    }
+    if let Some(v) = get("voice_enabled") {
+        if let Ok(enabled) = v.parse() {
+            s.voice_enabled = enabled;
+        }
+    }
+    if let Some(v) = get("intensity_default") {
+        if let Ok(i) = v.parse() {
+            s.intensity_default = i;
+        }
+    }
+    if let Some(v) = get("export_dir") {
+        if !v.is_empty() {
+            s.export_dir = Some(v);
+        }
+    }
+    s.sources = load_sources(get("sources").as_deref(), get("planner").as_deref());
+    s
+}
+
+fn save_settings(conn: &Connection, s: &Settings) -> Result<(), rusqlite::Error> {
+    db::settings::set(conn, "profile", &serde_json::to_string(&s.profile).unwrap())?;
+    db::settings::set(
+        conn,
+        "record_distance",
+        if s.record_distance { "true" } else { "false" },
+    )?;
+    db::settings::set(
+        conn,
+        "voice_enabled",
+        if s.voice_enabled { "true" } else { "false" },
+    )?;
+    db::settings::set(conn, "intensity_default", &s.intensity_default.to_string())?;
+    db::settings::set(conn, "export_dir", s.export_dir.as_deref().unwrap_or(""))?;
+    db::settings::set(conn, "sources", &serde_json::to_string(&s.sources).unwrap())?;
+    Ok(())
 }
 
 pub fn now_unix_ms() -> u64 {
@@ -229,6 +256,32 @@ pub fn now_unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settings_connection() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn existing_install_without_voice_key_defaults_enabled() {
+        let conn = settings_connection();
+        assert!(load_settings(&conn).voice_enabled);
+    }
+
+    #[test]
+    fn voice_enabled_round_trips_through_settings_owner() {
+        let conn = settings_connection();
+        let mut settings = load_settings(&conn);
+        settings.voice_enabled = false;
+        save_settings(&conn, &settings).unwrap();
+        assert!(!load_settings(&conn).voice_enabled);
+
+        settings.voice_enabled = true;
+        save_settings(&conn, &settings).unwrap();
+        assert!(load_settings(&conn).voice_enabled);
+    }
 
     #[test]
     fn fresh_install_gets_default_providers() {

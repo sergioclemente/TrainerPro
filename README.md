@@ -74,4 +74,8 @@ verification commands are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE)
+TrainerPro-authored source is [MIT](LICENSE). Packaged distributions containing
+EmbeddingGemma are also subject to the [Binary Distribution Terms](BINARY_DISTRIBUTION_TERMS.md),
+bundled [Gemma Terms](legal/GEMMA_TERMS_2026-04-01.txt), and
+[Gemma Prohibited Use Policy](legal/GEMMA_PROHIBITED_USE_POLICY_2024-02-21.txt).
+See [NOTICE.txt](NOTICE.txt) for bundled third-party components.

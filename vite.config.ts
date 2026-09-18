@@ -5,11 +5,17 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
+  optimizeDeps: {
+    exclude: ["@moonshine-ai/moonshine-wasm"],
+  },
   server: {
     port: 1420,
     strictPort: true,
   },
   build: {
     target: "safari15",
+  },
+  worker: {
+    format: "es",
   },
 });

@@ -8,11 +8,25 @@ import {
   isMuted,
   playCountdown,
   playEnd,
+  primeVoiceFeedback,
   primeSounds,
   setMuted,
 } from "../sounds";
+import { useVoiceSurface } from "../voice/VoiceController";
+import { createPlayerVoiceSurface } from "./Player.voice";
 
 const STATS_KEY = "trainerpro.player.stats";
+const PLAYER_VOICE_SURFACE = createPlayerVoiceSurface({
+  getPlayer: () => useStore.getState().player,
+  commands: {
+    startRide: ipc.startRide,
+    pauseRide: ipc.pauseRide,
+    resumeRide: ipc.resumeRide,
+    skipSegment: ipc.skipSegment,
+    setIntensity: ipc.setIntensity,
+    setErg: ipc.setErg,
+  },
+});
 
 /** One cell of the stats strip. A metric with no data yet reads as a dash. */
 function Stat({
@@ -39,6 +53,9 @@ function Stat({
 
 export default function Player() {
   const { player, measurement, textEvent, workouts, settings, go, pushToast } = useStore();
+  useVoiceSurface(
+    player !== null && player.phase !== "finished" ? PLAYER_VOICE_SURFACE : null,
+  );
   /** Both clocks show elapsed by default; clicking one toggles it to remaining. */
   const [showRemaining, setShowRemaining] = useState(false);
   const [showIntervalRemaining, setShowIntervalRemaining] = useState(false);
@@ -78,9 +95,11 @@ export default function Player() {
         if (player.phase === "riding") void ipc.pauseRide();
         else if (player.phase === "paused") {
           primeSounds(); // inside the keydown gesture — see sounds.ts
+          primeVoiceFeedback();
           void ipc.resumeRide();
         } else if (player.phase === "ready") {
           primeSounds();
+          primeVoiceFeedback();
           void ipc.startRide();
         }
       } else if (e.key === "s") {
@@ -308,6 +327,7 @@ export default function Player() {
             className="go big"
             onClick={() => {
               primeSounds(); // inside the click gesture — see sounds.ts
+              primeVoiceFeedback();
               void ipc.startRide();
             }}
           >
@@ -324,6 +344,7 @@ export default function Player() {
             className="go big"
             onClick={() => {
               primeSounds();
+              primeVoiceFeedback();
               void ipc.resumeRide();
             }}
           >

@@ -9,6 +9,9 @@ import Activities from "./screens/Activities";
 import SettingsScreen from "./screens/SettingsScreen";
 import WorkoutDetail from "./screens/WorkoutDetail";
 import Builder from "./screens/Builder";
+import ConnectionStatus from "./components/ConnectionStatus";
+import RideEventRail from "./components/RideEventRail";
+import { VoiceProvider } from "./voice/VoiceController";
 
 function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
@@ -38,12 +41,19 @@ const NAV = [
 ] as const;
 
 export default function App() {
+  return (
+    <VoiceProvider>
+      <AppShell />
+    </VoiceProvider>
+  );
+}
+
+function AppShell() {
   const {
     screen,
     go,
     player,
     toasts,
-    deviceStatus,
     refreshWorkouts,
     refreshDevices,
     refreshActivities,
@@ -84,20 +94,10 @@ export default function App() {
               ● Ride in progress
             </button>
           )}
-          <div className="rail-status">
-            {(["trainer", "hrm"] as const).map((r) => {
-              const s = deviceStatus[r]?.status;
-              const cls =
-                s === "connected" ? "ok" : s === "reconnecting" ? "warn" : "muted";
-              return (
-                <span key={r} className={`status ${cls}`}>
-                  {r === "trainer" ? "🚴" : "❤"} {s ?? "—"}
-                </span>
-              );
-            })}
-          </div>
+          <ConnectionStatus className="rail-status" />
         </nav>
       )}
+      {riding && <RideEventRail />}
       <main className="content">
         {screen === "library" && <Library />}
         {screen === "devices" && <Devices />}

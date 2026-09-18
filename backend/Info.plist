@@ -10,5 +10,7 @@
 <dict>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>TrainerPro uses Bluetooth to connect to your smart trainer and heart-rate monitor.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>TrainerPro uses the microphone for hands-free workout commands. Voice processing happens on this device.</string>
 </dict>
 </plist>

@@ -1,6 +1,7 @@
 target/
 node_modules/
 dist/
+/voice-models/
 *.log
 .DS_Store
 .claude/
