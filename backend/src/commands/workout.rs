@@ -4,13 +4,14 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use sha2::Digest;
 use tauri::State;
-use tp_core::model::{PowerTarget, Segment, SourceFormat, Workout};
+use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
 use tp_core::parse::{parse_ergmrc, parse_zwo, Parsed};
+use tp_core::workout_definition::WorkoutDefinition;
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
+use crate::database::workout_definitions as definition_db;
 
 type R<T> = Result<T, AppError>;
 
@@ -23,7 +24,7 @@ pub struct WorkoutSummary {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub source_format: String,
+    pub training_focus: Option<String>,
     pub duration_s: u32,
     pub est_if: f64,
     pub est_tss: f64,
@@ -38,16 +39,8 @@ pub struct ImportResult {
     pub already_existed: bool,
 }
 
-fn fmt_str(f: SourceFormat) -> &'static str {
-    match f {
-        SourceFormat::Zwo => "zwo",
-        SourceFormat::Erg => "erg",
-        SourceFormat::Mrc => "mrc",
-    }
-}
-
 /// Graph polyline for thumbnails/player: (t_s, %FTP) breakpoints. SPEC §3.3.
-pub fn graph_points(w: &Workout, ftp: u16) -> Vec<(u32, f64)> {
+pub fn graph_points(w: &ExecutableWorkout, ftp: u16) -> Vec<(u32, f64)> {
     let pct = |p: &PowerTarget| match p {
         PowerTarget::PercentFtp(f) => f * 100.0,
         PowerTarget::Watts(watts) => f64::from(*watts) / f64::from(ftp.max(1)) * 100.0,
@@ -90,8 +83,7 @@ pub async fn import_workout(state: State<'_, AppState>, path: String) -> R<Impor
     import_from_path(&state, &PathBuf::from(path))
 }
 
-/// Shared import pipeline: used by the file-import command and the
-/// WorkoutPlanner ride path (spec-workoutplanner.md §B2).
+/// Read a user-selected boundary file and hand its contents to normalization.
 pub fn import_from_path(state: &State<'_, AppState>, src: &std::path::Path) -> R<ImportResult> {
     let content = std::fs::read_to_string(src)?;
     let ext = src
@@ -102,171 +94,136 @@ pub fn import_from_path(state: &State<'_, AppState>, src: &std::path::Path) -> R
     import_content(state, &content, &ext, Vec::new())
 }
 
-/// The import pipeline proper, over content already in memory. Authored
-/// workouts (the builder) join here rather than round-tripping through a temp
-/// file, so there is still exactly one path into the library: hash → dedup →
-/// parse → store file → row.
+/// Parse a boundary format and normalize it into the canonical TPW store.
 pub fn import_content(
     state: &State<'_, AppState>,
     content: &str,
     ext: &str,
     extra_warnings: Vec<String>,
 ) -> R<ImportResult> {
-    let sha = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
-    let ftp = state.settings().profile.ftp;
+    let parsed = parse_by_ext(ext, content)?;
+    let definition = WorkoutDefinition::from_executable(parsed.workout)?;
+    let warnings = extra_warnings
+        .into_iter()
+        .chain(parsed.warnings.into_iter().map(|warning| warning.message))
+        .collect();
+    store_definition(state, &definition, warnings)
+}
 
-    // Duplicate: same bytes → return existing entry. SPEC §3.3.
-    let existing: Option<String> = {
+/// Validate and persist one TPW definition. This is the shared entry point for
+/// local authoring, boundary imports, and connected workout sources.
+pub fn store_definition(
+    state: &State<'_, AppState>,
+    definition: &WorkoutDefinition,
+    warnings: Vec<String>,
+) -> R<ImportResult> {
+    let tpw_json = definition.to_json_pretty()?;
+    let existing = {
         let conn = state.db.lock().unwrap();
-        conn.query_row("SELECT id FROM workouts WHERE sha256 = ?1", [&sha], |r| r.get(0))
-            .ok()
+        definition_db::find_id_by_tpw_json(&conn, &tpw_json)?
     };
     if let Some(id) = existing {
-        let summary = get_workout_summary(state, &id)?;
-        return Ok(ImportResult { summary, warnings: vec![], already_existed: true });
+        return Ok(ImportResult {
+            summary: get_workout_summary(state, &id)?,
+            warnings,
+            already_existed: true,
+        });
     }
 
-    let parsed = parse_by_ext(ext, content)?;
-    let w = &parsed.workout;
-    let (est_if, est_tss) = tp_core::metrics::estimate_if_tss(w, ftp);
     let id = uuid::Uuid::new_v4().to_string();
-
-    std::fs::create_dir_all(state.workouts_dir())?;
-    let dest = state.workouts_dir().join(format!("{id}.{ext}"));
-    std::fs::write(&dest, content)?;
-
-    let graph = graph_points(w, ftp);
     {
         let conn = state.db.lock().unwrap();
-        conn.execute(
-            "INSERT INTO workouts (id, name, description, source_format, file_path, sha256,
-               duration_s, est_if, est_tss, graph_json, imported_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-            rusqlite::params![
-                id,
-                w.name,
-                w.description,
-                fmt_str(w.source_format),
-                dest.to_string_lossy(),
-                sha,
-                w.duration_s(),
-                est_if,
-                est_tss,
-                serde_json::to_string(&graph).unwrap(),
-                now_unix_ms() as i64,
-            ],
+        definition_db::insert(
+            &conn,
+            &definition_db::NewWorkoutDefinition {
+                id: &id,
+                tpw_json: &tpw_json,
+                created_at_ms: now_unix_ms() as i64,
+            },
         )?;
     }
+
     Ok(ImportResult {
-        summary: WorkoutSummary {
-            id,
-            name: w.name.clone(),
-            description: w.description.clone(),
-            source_format: fmt_str(w.source_format).into(),
-            duration_s: w.duration_s(),
-            est_if,
-            est_tss,
-            graph,
-            origin: None,
-        },
-        warnings: extra_warnings
-            .into_iter()
-            .chain(parsed.warnings.iter().map(|w| w.message.clone()))
-            .collect(),
+        summary: summary_from_definition(id, None, definition, state.settings().profile.ftp)?,
+        warnings,
         already_existed: false,
     })
 }
 
-/// Save a workout authored in the builder. Emits ZWO and hands it to the
-/// ordinary import pipeline, so an authored workout is indistinguishable from
-/// an imported one everywhere downstream.
+/// Save a locally authored workout directly as TPW.
 #[tauri::command]
 pub async fn create_workout(
     state: State<'_, AppState>,
     draft: tp_core::build::WorkoutDraft,
 ) -> R<ImportResult> {
-    let emitted = tp_core::build::to_zwo(&draft)
+    let definition = tp_core::build::to_workout_definition(&draft)
         .map_err(|e| AppError::new("invalid_workout", e.message))?;
-
-    // ZWO can only express a repeat as IntervalsT (one work + one recovery).
-    // Anything else was written out lap by lap: it rides identically, but the
-    // file no longer records that it was a repeat. Say so rather than hide it.
-    let mut warnings = Vec::new();
-    if emitted.expanded_repeats > 0 {
-        let n = emitted.expanded_repeats;
-        warnings.push(format!(
-            "{n} repeat{} could not be stored as a repeat in ZWO and {} written out lap by lap. \
-             The workout rides exactly the same.",
-            if n == 1 { "" } else { "s" },
-            if n == 1 { "was" } else { "were" },
-        ));
-    }
-    import_content(&state, &emitted.xml, "zwo", warnings)
+    store_definition(&state, &definition, Vec::new())
 }
 
 fn get_workout_summary(state: &State<'_, AppState>, id: &str) -> R<WorkoutSummary> {
-    let conn = state.db.lock().unwrap();
-    conn.query_row(
-        "SELECT id, name, description, source_format, duration_s, est_if, est_tss, graph_json, origin
-         FROM workouts WHERE id = ?1",
-        [id],
-        |r| {
-            Ok(WorkoutSummary {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                description: r.get(2)?,
-                source_format: r.get(3)?,
-                duration_s: r.get(4)?,
-                est_if: r.get::<_, Option<f64>>(5)?.unwrap_or(0.0),
-                est_tss: r.get::<_, Option<f64>>(6)?.unwrap_or(0.0),
-                graph: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
-                origin: r.get(8)?,
-            })
-        },
-    )
-    .map_err(|_| AppError::new("not_found", format!("workout {id} not found")))
+    let row = {
+        let conn = state.db.lock().unwrap();
+        definition_db::get(&conn, id)?
+            .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
+    };
+    summary_from_row(row, state.settings().profile.ftp)
+}
+
+pub(crate) fn summary_from_row(
+    row: definition_db::WorkoutDefinitionRow,
+    ftp: u16,
+) -> R<WorkoutSummary> {
+    let definition = WorkoutDefinition::from_json(&row.tpw_json)?;
+    summary_from_definition(row.id, row.origin, &definition, ftp)
+}
+
+fn summary_from_definition(
+    id: String,
+    origin: Option<String>,
+    definition: &WorkoutDefinition,
+    ftp: u16,
+) -> R<WorkoutSummary> {
+    let executable = definition.compile()?;
+    let (est_if, est_tss) = tp_core::metrics::estimate_if_tss(&executable, ftp);
+    Ok(WorkoutSummary {
+        id,
+        name: definition.title.clone(),
+        description: definition.description.clone(),
+        training_focus: definition.training_focus.clone(),
+        duration_s: executable.duration_s(),
+        est_if,
+        est_tss,
+        graph: graph_points(&executable, ftp),
+        origin,
+    })
 }
 
 #[tauri::command]
 pub async fn list_workouts(state: State<'_, AppState>) -> R<Vec<WorkoutSummary>> {
-    let conn = state.db.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT id, name, description, source_format, duration_s, est_if, est_tss, graph_json, origin
-         FROM workouts ORDER BY imported_at DESC",
-    )?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(WorkoutSummary {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                description: r.get(2)?,
-                source_format: r.get(3)?,
-                duration_s: r.get(4)?,
-                est_if: r.get::<_, Option<f64>>(5)?.unwrap_or(0.0),
-                est_tss: r.get::<_, Option<f64>>(6)?.unwrap_or(0.0),
-                graph: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
-                origin: r.get(8)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    let rows = {
+        let conn = state.db.lock().unwrap();
+        definition_db::list(&conn)?
+    };
+    let ftp = state.settings().profile.ftp;
+    rows.into_iter()
+        .map(|row| summary_from_row(row, ftp))
+        .collect()
 }
 
-/// Removes the workout from the library: drops the SQLite row and deletes
-/// the app's *copy* under `<appdata>/workouts/`. The file the user imported
-/// from is never touched (import copies it in).
+/// Removes a TPW definition from TrainerPro. An external source file, if any,
+/// is never touched.
 #[tauri::command]
 pub async fn delete_workout(state: State<'_, AppState>, id: String) -> R<()> {
-    let file: Option<String> = {
+    let deleted = {
         let conn = state.db.lock().unwrap();
-        let f = conn
-            .query_row("SELECT file_path FROM workouts WHERE id = ?1", [&id], |r| r.get(0))
-            .ok();
-        conn.execute("DELETE FROM workouts WHERE id = ?1", [&id])?;
-        f
+        definition_db::delete(&conn, &id)?
     };
-    if let Some(f) = file {
-        let _ = std::fs::remove_file(f);
+    if !deleted {
+        return Err(AppError::new(
+            "not_found",
+            format!("workout {id} not found"),
+        ));
     }
     Ok(())
 }
@@ -288,7 +245,7 @@ pub struct SegmentRow {
     pub cadence_rpm: Option<u16>,
 }
 
-pub fn segment_rows(w: &Workout, ftp: u16) -> Vec<SegmentRow> {
+pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
     let pct = |p: &PowerTarget| match p {
         PowerTarget::PercentFtp(f) => f * 100.0,
         PowerTarget::Watts(watts) => f64::from(*watts) / f64::from(ftp.max(1)) * 100.0,
@@ -378,25 +335,19 @@ pub struct WorkoutDetail {
 #[tauri::command]
 pub async fn get_workout_detail(state: State<'_, AppState>, id: String) -> R<WorkoutDetail> {
     let summary = get_workout_summary(&state, &id)?;
-    let workout = load_workout_model(&state, &id)?;
+    let workout = load_workout_definition(&state, &id)?.compile()?;
     let ftp = state.settings().profile.ftp;
     Ok(WorkoutDetail { summary, segments: segment_rows(&workout, ftp) })
 }
 
-/// Load the full workout model (re-parsed from the stored file — files are
-/// truth, SPEC §8).
-pub fn load_workout_model(state: &State<'_, AppState>, id: &str) -> R<Workout> {
-    let path: String = {
+/// Load and validate the canonical TPW definition from SQLite. Session setup
+/// owns the point-in-time snapshot and compilation used for execution.
+pub fn load_workout_definition(state: &State<'_, AppState>, id: &str) -> R<WorkoutDefinition> {
+    let tpw_json = {
         let conn = state.db.lock().unwrap();
-        conn.query_row("SELECT file_path FROM workouts WHERE id = ?1", [id], |r| r.get(0))
-            .map_err(|_| AppError::new("not_found", format!("workout {id} not found")))?
+        definition_db::get(&conn, id)?
+            .map(|row| row.tpw_json)
+            .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
     };
-    let path = PathBuf::from(path);
-    let content = std::fs::read_to_string(&path)?;
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .unwrap_or_default();
-    Ok(parse_by_ext(&ext, &content)?.workout)
+    Ok(WorkoutDefinition::from_json(&tpw_json)?)
 }

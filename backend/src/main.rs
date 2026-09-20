@@ -10,11 +10,13 @@ mod database;
 mod device_hub;
 mod device_owner;
 mod heart_rate_monitor;
+mod intervals_icu;
+mod intervals_icu_sync;
+mod next_up;
 mod player_runtime;
 mod trainer;
 mod whatsonzwift_source;
 mod workout_planner_source;
-mod workout_source_cache;
 mod workout_sources;
 
 use tauri::Manager;
@@ -41,6 +43,7 @@ fn main() {
             app.manage(AppState {
                 db: std::sync::Mutex::new(conn),
                 data_dir,
+                credential_service: format!("{}.provider-credentials", app.config().identifier),
                 hub,
                 player: tokio::sync::Mutex::new(None),
                 planner_cache: std::sync::Mutex::new(Vec::new()),
@@ -57,6 +60,7 @@ fn main() {
             commands::workout::list_workouts,
             commands::workout::delete_workout,
             commands::workout::get_workout_detail,
+            commands::next_up::list_next_up,
             commands::device::start_scan,
             commands::device::connect_device,
             commands::device::disconnect_device,
@@ -72,13 +76,17 @@ fn main() {
             commands::player::end_ride,
             commands::player::clear_ride,
             commands::player::get_player_state,
-            commands::ride_history::list_rides,
-            commands::ride_history::delete_ride,
-            commands::ride_history::save_fit_as,
-            commands::ride_history::reveal_fit,
-            commands::ride_history::open_garmin_import,
+            commands::activity_history::list_activities,
+            commands::activity_history::delete_activity,
+            commands::activity_history::save_fit_as,
+            commands::activity_history::reveal_fit,
+            commands::activity_history::open_garmin_import,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            commands::intervals_icu::get_intervals_icu_connection,
+            commands::intervals_icu::connect_intervals_icu,
+            commands::intervals_icu::refresh_intervals_icu,
+            commands::intervals_icu::disconnect_intervals_icu,
             workout_planner_source::source_test,
             workout_planner_source::planner_cached,
             workout_planner_source::planner_list,

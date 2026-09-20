@@ -19,7 +19,7 @@
 //!   each fires exactly once.
 
 use crate::consts::{INTENSITY_MAX, INTENSITY_MIN, MAX_TARGET_WATTS};
-use crate::model::{Segment, TextEvent, Workout};
+use crate::model::{ExecutableWorkout, Segment, TextEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -57,7 +57,7 @@ pub enum Effect {
 #[derive(Debug)]
 pub struct Engine {
     // Implementation-private fields; public surface is new()/handle()/getters.
-    workout: Workout,
+    workout: ExecutableWorkout,
     ftp: u16,
     intensity: f64,
     phase: Phase,
@@ -81,7 +81,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(workout: Workout, ftp: u16, intensity: f64) -> Self {
+    pub fn new(workout: ExecutableWorkout, ftp: u16, intensity: f64) -> Self {
         Engine {
             workout,
             ftp,
@@ -111,7 +111,7 @@ impl Engine {
     pub fn intensity(&self) -> f64 {
         self.intensity
     }
-    pub fn workout(&self) -> &Workout {
+    pub fn workout(&self) -> &ExecutableWorkout {
         &self.workout
     }
     /// Index of the current segment (None once finished).
@@ -304,17 +304,19 @@ fn text_offset_ms(ev: &TextEvent) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PowerTarget, SourceFormat};
+    use crate::model::PowerTarget;
 
-    fn wk(segments: Vec<Segment>) -> Workout {
+    fn wk(segments: Vec<Segment>) -> ExecutableWorkout {
         wk_with_texts(segments, vec![])
     }
 
-    fn wk_with_texts(segments: Vec<Segment>, text_events: Vec<TextEvent>) -> Workout {
-        Workout {
+    fn wk_with_texts(
+        segments: Vec<Segment>,
+        text_events: Vec<TextEvent>,
+    ) -> ExecutableWorkout {
+        ExecutableWorkout {
             name: "t".into(),
             description: String::new(),
-            source_format: SourceFormat::Zwo,
             segments,
             text_events,
         }

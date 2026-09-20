@@ -14,6 +14,9 @@ use crate::player_runtime::PlayerHandle;
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub data_dir: PathBuf,
+    /// OS credential-vault service name, scoped by the active Tauri bundle id
+    /// so production and QA credentials remain isolated.
+    pub credential_service: String,
     pub hub: DeviceHub,
     pub player: tokio::sync::Mutex<Option<PlayerHandle>>,
     /// Last planner_list result; used for edit-URL construction.
@@ -24,7 +27,13 @@ pub struct AppState {
     /// whatsonzwift caches (per app run).
     pub woz_collections: Mutex<Option<Vec<crate::whatsonzwift_source::WozCollection>>>,
     pub woz_cache: Mutex<
-        std::collections::HashMap<String, Vec<(tp_core::model::Workout, crate::whatsonzwift_source::WozWorkout)>>,
+        std::collections::HashMap<
+            String,
+            Vec<(
+                tp_core::model::ExecutableWorkout,
+                crate::whatsonzwift_source::WozWorkout,
+            )>,
+        >,
     >,
 }
 
@@ -168,46 +177,45 @@ impl AppState {
     pub fn settings(&self) -> Settings {
         let conn = self.db.lock().unwrap();
         let mut s = Settings::default();
-        if let Some(v) = db::get_setting(&conn, "profile") {
+        let get = |key| db::settings::get(&conn, key).ok().flatten();
+        if let Some(v) = get("profile") {
             if let Ok(p) = serde_json::from_str(&v) {
                 s.profile = p;
             }
         }
-        if let Some(v) = db::get_setting(&conn, "record_distance") {
+        if let Some(v) = get("record_distance") {
             s.record_distance = v == "true";
         }
-        if let Some(v) = db::get_setting(&conn, "intensity_default") {
+        if let Some(v) = get("intensity_default") {
             if let Ok(i) = v.parse() {
                 s.intensity_default = i;
             }
         }
-        if let Some(v) = db::get_setting(&conn, "export_dir") {
+        if let Some(v) = get("export_dir") {
             if !v.is_empty() {
                 s.export_dir = Some(v);
             }
         }
-        s.sources = load_sources(
-            db::get_setting(&conn, "sources").as_deref(),
-            db::get_setting(&conn, "planner").as_deref(),
-        );
+        s.sources = load_sources(get("sources").as_deref(), get("planner").as_deref());
         s
     }
 
     pub fn save_settings(&self, s: &Settings) -> Result<(), rusqlite::Error> {
         let conn = self.db.lock().unwrap();
-        db::set_setting(&conn, "profile", &serde_json::to_string(&s.profile).unwrap())?;
-        db::set_setting(&conn, "record_distance", if s.record_distance { "true" } else { "false" })?;
-        db::set_setting(&conn, "intensity_default", &s.intensity_default.to_string())?;
-        db::set_setting(&conn, "export_dir", s.export_dir.as_deref().unwrap_or(""))?;
-        db::set_setting(&conn, "sources", &serde_json::to_string(&s.sources).unwrap())?;
+        db::settings::set(&conn, "profile", &serde_json::to_string(&s.profile).unwrap())?;
+        db::settings::set(
+            &conn,
+            "record_distance",
+            if s.record_distance { "true" } else { "false" },
+        )?;
+        db::settings::set(&conn, "intensity_default", &s.intensity_default.to_string())?;
+        db::settings::set(&conn, "export_dir", s.export_dir.as_deref().unwrap_or(""))?;
+        db::settings::set(&conn, "sources", &serde_json::to_string(&s.sources).unwrap())?;
         Ok(())
     }
 
-    pub fn workouts_dir(&self) -> PathBuf {
-        self.data_dir.join("workouts")
-    }
-    pub fn rides_dir(&self) -> PathBuf {
-        self.data_dir.join("rides")
+    pub fn activities_dir(&self) -> PathBuf {
+        self.data_dir.join("activities")
     }
 }
 

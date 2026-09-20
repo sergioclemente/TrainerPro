@@ -18,14 +18,17 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN};
+use crate::consts::{
+    POWER_FRACTION_MAX, POWER_FRACTION_MIN, WORKOUT_REPEAT_COUNT_MAX,
+};
+use crate::workout_definition::{
+    CyclingCadenceTarget, CyclingPowerTarget, CyclingStep, WorkoutDefinition, WorkoutFormat,
+    WorkoutPrescription, TPW_VERSION,
+};
 
 /// Longest single interval the builder accepts (4 h). Guards against a stray
 /// keystroke turning 60 into 60000 rather than expressing a real limit.
 pub const MAX_SEGMENT_S: u32 = 4 * 3600;
-/// Most repetitions one Repeat may carry.
-pub const MAX_REPEAT_COUNT: u32 = 100;
-
 /// Percent-of-FTP bounds, mirroring the model's fraction bounds so we never
 /// emit a value the parser would clamp and warn about.
 pub const MIN_POWER_PCT: f64 = POWER_FRACTION_MIN * 100.0;
@@ -79,6 +82,60 @@ pub struct WorkoutDraft {
 impl WorkoutDraft {
     pub fn duration_s(&self) -> u32 {
         self.nodes.iter().map(BuildNode::duration_s).sum()
+    }
+}
+
+/// Convert the editor's current cycling vocabulary directly into TPW.
+pub fn to_workout_definition(draft: &WorkoutDraft) -> Result<WorkoutDefinition, BuildError> {
+    validate(draft)?;
+    let definition = WorkoutDefinition {
+        format: WorkoutFormat::Tpw,
+        version: TPW_VERSION,
+        title: draft.name.trim().to_string(),
+        description: draft.description.clone(),
+        training_focus: None,
+        prescription: WorkoutPrescription::Cycling {
+            steps: draft.nodes.iter().map(node_to_step).collect(),
+        },
+    };
+    definition.validate().map_err(|error| BuildError {
+        message: error.to_string(),
+    })?;
+    Ok(definition)
+}
+
+fn node_to_step(node: &BuildNode) -> CyclingStep {
+    match node {
+        BuildNode::Simple {
+            duration_s,
+            power_pct,
+            cadence_rpm,
+        } => CyclingStep::Steady {
+            duration_seconds: *duration_s,
+            power: CyclingPowerTarget::PercentFtp {
+                percent: *power_pct,
+            },
+            cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
+            cues: Vec::new(),
+        },
+        BuildNode::Ramp {
+            duration_s,
+            start_pct,
+            end_pct,
+            cadence_rpm,
+        } => CyclingStep::Ramp {
+            duration_seconds: *duration_s,
+            start_power: CyclingPowerTarget::PercentFtp {
+                percent: *start_pct,
+            },
+            end_power: CyclingPowerTarget::PercentFtp { percent: *end_pct },
+            cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
+            cues: Vec::new(),
+        },
+        BuildNode::Repeat { count, children } => CyclingStep::Repeat {
+            count: *count,
+            steps: children.iter().map(node_to_step).collect(),
+        },
     }
 }
 
@@ -138,8 +195,10 @@ fn validate_node(node: &BuildNode, inside_repeat: bool) -> Result<(), BuildError
             if inside_repeat {
                 return err("a repeat cannot contain another repeat");
             }
-            if *count < 1 || *count > MAX_REPEAT_COUNT {
-                return err(format!("repeat count must be 1..={MAX_REPEAT_COUNT}, got {count}"));
+            if *count < 1 || *count > WORKOUT_REPEAT_COUNT_MAX {
+                return err(format!(
+                    "repeat count must be 1..={WORKOUT_REPEAT_COUNT_MAX}, got {count}"
+                ));
             }
             if children.is_empty() {
                 return err("a repeat needs at least one interval inside it");
@@ -392,6 +451,22 @@ mod tests {
         assert_eq!(segs.len(), 6);
         assert_eq!(segs[0].duration_s(), 60);
         assert_eq!(segs[1].duration_s(), 30);
+    }
+
+    #[test]
+    fn tpw_conversion_preserves_repeat_structure() {
+        let definition = to_workout_definition(&draft(vec![BuildNode::Repeat {
+            count: 3,
+            children: vec![simple(60, 100.0), simple(30, 55.0)],
+        }]))
+        .unwrap();
+
+        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let [CyclingStep::Repeat { count, steps }] = steps.as_slice() else {
+            panic!("expected one repeat step");
+        };
+        assert_eq!(*count, 3);
+        assert_eq!(steps.len(), 2);
     }
 
     #[test]

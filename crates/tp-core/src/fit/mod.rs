@@ -11,14 +11,14 @@ mod profile;
 pub use crc::checksum;
 pub use encode::encode_activity;
 
-use crate::journal::{JournalHeader, Lap, RideEvent, Sample};
+use crate::journal::{JournalHeader, Lap, Sample, SessionEvent};
 use crate::metrics::SessionTotals;
 
-/// Borrowed view of a finished ride, ready to serialize.
-pub struct FitRide<'a> {
+/// Borrowed view of a completed activity, ready to serialize.
+pub struct FitActivity<'a> {
     pub header: &'a JournalHeader,
     pub samples: &'a [Sample],
-    pub events: &'a [RideEvent],
+    pub events: &'a [SessionEvent],
     pub laps: &'a [Lap],
     pub totals: &'a SessionTotals,
     /// When true, emit speed+distance records from the virtual flat-road

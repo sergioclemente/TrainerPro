@@ -132,7 +132,7 @@ export default function WorkoutDetail() {
           ? await ipc.plannerRide(d.wid!)
           : d.source === "woz"
             ? await ipc.wozRide(d.wozRef!.collection, d.wozRef!.idx)
-            : await ipc.loadWorkout(d.id!);
+            : await ipc.loadWorkout(d.id!, d.scheduledWorkoutId ?? null);
       useStore.setState({ player: ps });
       void useStore.getState().refreshWorkouts();
       go("player");
@@ -172,13 +172,10 @@ export default function WorkoutDetail() {
   }
 
   async function del() {
-    // Import copies files into the app's library folder, so this only
-    // removes TrainerPro's copy — the file you imported from is untouched.
     if (
       !confirm(
         `Remove “${d.name}” from your TrainerPro library?\n\n` +
-          `This deletes the app's copy only. The original file you imported ` +
-          `stays where it is on disk.`,
+          `The original file you imported, if any, stays where it is on disk.`,
       )
     )
       return;
@@ -232,7 +229,7 @@ export default function WorkoutDetail() {
         </div>
       )}
       <div className="row gap detail-actions">
-        {d.source === "library" && (
+        {d.source === "library" && !d.scheduledWorkoutId && (
           <button className="danger" onClick={del}>
             Remove from library
           </button>

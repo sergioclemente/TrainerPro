@@ -1,5 +1,13 @@
 # TrainerPro — Implementation Spec (v1)
 
+> **Status:** current implementation baseline. The Workouts screen leads with
+> Next Up and keeps the Library below it, and TPW/SQLite are authoritative for
+> workout definitions. The first Intervals.icu inbound connection is implemented;
+> later provider and round-trip work is sequenced in [`ROADMAP.md`](ROADMAP.md),
+> with target software boundaries in
+> [`workout-platform.md`](workout-platform.md). Update the relevant sections of
+> this spec as those migrations land.
+
 A macOS-first desktop indoor-cycling workout player. Load a structured workout
 file (ZWO / ERG / MRC), control a Wahoo smart trainer over BLE FTMS in ERG
 mode, record the ride, and export a Garmin-compatible .FIT activity file.
@@ -19,11 +27,11 @@ document first.
 | OS | **macOS first** (M1–M4). Windows port in M5. Linux: unsupported |
 | Sensors | Trainer (power/cadence/speed) + BLE HR strap. No power match, no ANT+ |
 | Player UI | Dashboard only |
-| Garmin export | FIT file + manual upload today; direct sync awaits Garmin Developer Program access — see [`garmin-access.md`](garmin-access.md) |
+| Garmin export | FIT file + manual upload today; direct sync awaits Garmin Developer Program access — see [`provider-integrations.md`](provider-integrations.md) |
 | Distance in FIT | **Off by default** (setting exists; virtual flat-road model when on) |
 | FreeRide segments | Switch trainer to simulation mode, grade 0 %; record only, no target |
 | Recording | JSONL journal during ride → FIT encoded at ride end |
-| Storage | Files are truth; SQLite is index/cache |
+| Storage | TPW definitions are authoritative in SQLite; JSONL/FIT remain activity artifacts |
 
 ---
 
@@ -41,10 +49,11 @@ TrainerPro/
 │   │   │   ├── mod.rs
 │   │   │   ├── device.rs
 │   │   │   ├── player.rs
-│   │   │   ├── ride_history.rs
+│   │   │   ├── activity_history.rs
 │   │   │   ├── settings.rs
 │   │   │   └── workout.rs
-│   │   ├── database.rs
+│   │   ├── database.rs        # schema/migrations + database module root
+│   │   ├── database/          # focused SQL access modules
 │   │   ├── device_hub.rs
 │   │   ├── device_owner.rs
 │   │   ├── heart_rate_monitor.rs
@@ -52,12 +61,12 @@ TrainerPro/
 │   │   ├── trainer.rs
 │   │   ├── whatsonzwift_source.rs
 │   │   ├── workout_planner_source.rs
-│   │   ├── workout_source_cache.rs
 │   │   └── workout_sources.rs
 │   └── tauri.conf.json
 ├── crates/
 │   ├── tp-core/                # PURE: no I/O, no BLE, no tauri deps
-│   │   ├── src/model.rs        # Workout, Segment, PowerTarget…
+│   │   ├── src/workout_definition.rs # semantic JSON + pure compiler
+│   │   ├── src/model.rs        # executable workout, segments, targets
 │   │   ├── src/parse/zwo.rs
 │   │   ├── src/parse/ergmrc.rs
 │   │   ├── src/engine.rs       # player state machine
@@ -75,12 +84,14 @@ TrainerPro/
 │       ├── src/sim_hrm.rs
 │       └── tests/              # public simulator contract tests
 ├── frontend/                   # React app (Vite + TypeScript)
-│   ├── screens/  (Library, Devices, Player, Summary, History, Settings)
+│   ├── screens/  (Workouts, Builder, Devices, Player, Summary, Activities,
+│   │              Settings)
 │   ├── components/ (WorkoutGraph, MetricTile, IntervalStrip, DeviceCard…)
 │   ├── ipc.ts                  # typed command wrappers + event subscriptions
 │   └── state.ts                # zustand store fed by events
 ├── tools/                      # maintained internal command-line utilities
 └── testdata/
+    ├── providers/              # sanitized external-provider API fixtures
     ├── workouts/               # parser corpus: real .zwo/.erg/.mrc files
     └── fit-golden/             # expected FitCSVTool output snapshots
 ```
@@ -91,7 +102,22 @@ every function is callable from a plain unit test. `tp-ble` depends on
 
 ---
 
-## 2. Core data model (`tp-core::model`)
+## 2. Workout definition and executable model (`tp-core`)
+
+`WorkoutDefinition` is the in-code representation of **TrainerPro Workout
+(TPW)**, the provider-neutral semantic JSON format that becomes canonical in
+the persistence migration. TPW/1 is cycling-only and is specified normatively
+in [`TPW.md`](TPW.md). Its sport-discriminated prescription leaves a clean
+versioned extension point for future running and treadmill control without
+putting speculative fields into cycling steps.
+
+TPW contains prescription and descriptive metadata. Provider IDs, schedule
+placement, recommendation rank, sync state, and activity measurements remain
+outside it because they have different lifecycles. Compilation validates TPW,
+expands repeats, resolves ranges for the current ERG player, and produces an
+`ExecutableWorkout`.
+
+`ExecutableWorkout` is the flattened input consumed by the player engine:
 
 ```rust
 pub enum PowerTarget { PercentFtp(f64) /* 0.05..=3.0 */, Watts(u16) }
@@ -104,39 +130,45 @@ pub enum Segment {
 
 pub struct TextEvent { pub offset_s: u32, pub message: String, pub duration_s: u32 /* default 10 */ }
 
-pub enum SourceFormat { Zwo, Erg, Mrc }
-
-pub struct Workout {
+pub struct ExecutableWorkout {
     pub name: String,
     pub description: String,
-    pub source_format: SourceFormat,
     pub segments: Vec<Segment>,       // flat; repeats pre-expanded
     pub text_events: Vec<TextEvent>,  // offsets relative to workout start
 }
 
-impl Workout {
+impl ExecutableWorkout {
     pub fn duration_s(&self) -> u32;
-    /// Resolve target at absolute offset t (None inside FreeRide).
+    /// Resolve power target at absolute offset t (None inside FreeRide).
     /// intensity is the live bias, 0.50..=1.50, applied to PercentFtp only.
-    pub fn target_at(&self, t_s: u32, ftp: u16, intensity: f64) -> Option<u16>;
-    pub fn estimate_if_tss(&self, ftp: u16) -> (f64, f64); // for library display
+    pub fn target_power_w_at(&self, t_s: u32, ftp: u16, intensity: f64) -> Option<u16>;
+    /// Return the compiled cadence prescription at t, when one exists.
+    pub fn target_cadence_rpm_at(&self, t_s: u32) -> Option<u16>;
 }
 ```
 
-`target_at` semantics: locate segment containing `t`; Steady → resolve power;
-Ramp → linear interpolation by elapsed fraction, resolved per-endpoint then
-interpolated in watts; round half-up to whole watts; clamp 0..=2000. Mixed
-`Watts` targets ignore intensity bias (bias applies to `PercentFtp` only).
+`target_power_w_at` semantics: locate the segment containing `t`; Steady →
+resolve power; Ramp → linear interpolation by elapsed fraction, resolved
+per-endpoint then interpolated in watts; round half-up to whole watts; clamp
+0..=2000. Mixed `Watts` targets ignore intensity bias (bias applies to
+`PercentFtp` only). Library estimates use the free
+`tp_core::metrics::estimate_if_tss` function.
+
+File provenance is not execution state. `SourceFormat { Zwo, Erg, Mrc }`
+therefore belongs to the parser result alongside `ExecutableWorkout`, rather
+than inside the executable model.
 
 ---
 
 ## 3. Workout parsers (`tp-core::parse`)
 
-General contract: `parse_zwo(&str) -> Result<Workout, ParseError>` /
-`parse_ergmrc(&str, ext_hint) -> Result<Workout, ParseError>`. A file either
-parses into ≥1 segment or fails with a message naming the line/element.
-Unknown elements/attributes are **collected as warnings, never errors**;
-warnings surface once in the import UI.
+General contract: `parse_zwo` and `parse_ergmrc` return `Parsed`, containing an
+`ExecutableWorkout`, its `SourceFormat`, and non-fatal warnings. A file either
+parses into at least one segment or fails with a message naming the
+line/element. Unknown elements/attributes are **collected as warnings, never
+errors**; warnings surface once in the import UI. File parsers remain boundary
+adapters; their flat executable output is normalized into TPW before it is
+stored.
 
 ### 3.1 ZWO (Zwift XML)
 
@@ -197,11 +229,11 @@ MINUTES PERCENT          ← column spec: PERCENT ⇒ %FTP, WATTS ⇒ absolute
 
 ### 3.3 Import flow
 
-`import_workout(path)`: read file → parse → copy original into
-`<appdata>/workouts/<uuid>.<ext>` → compute duration/IF/TSS estimate + graph
-polyline (array of `[t_s, pct_ftp]` breakpoints) → insert SQLite row → return
-summary + warnings. Duplicate detection: SHA-256 of file bytes; re-import of
-identical bytes returns the existing entry.
+`import_workout(path)`: read a ZWO/ERG/MRC boundary file → parse to the flat
+execution model → normalize to TPW → persist the TPW JSON in SQLite → compile
+for the current FTP → return duration/IF/TSS, graph, and warnings. The source
+file is not copied or used as workout identity. Re-importing the same canonical
+TPW document returns the existing definition.
 
 ---
 
@@ -412,26 +444,40 @@ gotten off). HRM drop: non-blocking toast; ride continues, HR samples `None`.
 
 ## 6. Recorder & journal (`tp-core::journal`)
 
-Journal path: `<appdata>/rides/<ride_uuid>.jsonl`, created at Start, fsync'd
-per line. Line types (one JSON object per line):
+Journal path: `<appdata>/activities/<workout_session_uuid>.jsonl`, created when
+the session is loaded and fsync'd per line. The header snapshots both workout
+identity and the exact TPW used for execution. Line types (one JSON object per
+line):
 
 ```jsonl
-{"h":{"ride_id":"…","started_unix_ms":…,"workout_name":"…","ftp":250,"weight_kg":72.0,
+{"h":{"workout_session_id":"…","workout_definition_id":"…",
+      "scheduled_workout_id":"…",
+      "workout_definition_snapshot_json":"{...TPW...}","started_unix_ms":…,
+      "workout_name":"…","ftp_w":250,"weight_kg":72.0,
       "trainer":"KICKR CORE 1234","hrm":"TICKR 5678","app_ver":"0.1.0"}}
-{"s":{"t":1234567,"p":215,"c":92,"hr":148,"tgt":220}}      // 1 Hz; t = ms since start; absent key = no data
-{"e":{"t":…,"k":"start"|"pause"|"resume"|"lap"|"freeride_enter"|"end","seg":4}}
+{"s":{"t_ms":1234567,"power_w":215,"cadence_rpm":92,
+      "heart_rate_bpm":148,"target_power_w":220,"target_cadence_rpm":95}}
+{"e":{"t_ms":…,"kind":"start"|"pause"|"resume"|"lap"|"freeride_enter"|"end",
+      "segment_index":4}}
 ```
 
-Sample values: `p` watts (trainer instantaneous), `c` rpm rounded, `hr` bpm,
-`tgt` current target (absent in FreeRide). Samples continue during Paused?
-**No** — recording pauses with the timer; pause/resume events bracket the gap.
+Samples are written at 1 Hz; absent optional fields mean no data.
+`scheduled_workout_id` is present only when the session was loaded from a
+scheduled Next Up item. It is snapshotted with the session so the eventual
+Activity retains that relationship even if the schedule changes while riding.
+`target_power_w` is the resolved workout power after FTP/intensity adjustment.
+`target_cadence_rpm` is the compiled cadence prescription; a TPW cadence range
+uses its execution midpoint while the exact range remains in the TPW snapshot.
+Both targets are absent in FreeRide. Samples continue during Paused? **No** —
+recording pauses with the timer; pause/resume events bracket the gap.
 
-Ride end: runtime replays the journal → computes laps (between `lap`/boundary
-events), session totals, NP (30 s rolling avg → mean of 4th powers → 4th
-root), IF = NP/FTP, TSS = duration_s × NP × IF / (FTP × 3600) × 100, kJ =
-Σpower/1000 → encodes FIT (§7) → inserts `rides` row. Crash recovery: on app
-start, any journal without a matching ride row gets the same replay path
-("Recovered ride" toast).
+Ride end: runtime replays the session journal → computes laps (between
+`lap`/boundary events), session totals, NP (30 s rolling avg → mean of 4th
+powers → 4th root), IF = NP/FTP, TSS = duration_s × NP × IF /
+(FTP × 3600) × 100, kJ = Σpower/1000 → encodes FIT (§7) → inserts an immutable
+`activities` row with the session id and TPW snapshot. Replay tolerates a
+crash-truncated final line; automatic startup discovery and recovery of
+unfinished journals is not yet wired into the application.
 
 ---
 
@@ -483,33 +529,96 @@ Ride end → Summary screen: workout graph with actual power overlay, per-lap
 table, totals. Buttons: **Save .FIT…** (dialog, default
 `TrainerPro_<workout>_<yyyy-mm-dd>.fit`) · **Reveal in Finder** · **Open
 Garmin Connect** (`https://connect.garmin.com/modern/import-data` in default
-browser). FIT is also always auto-saved at `<appdata>/rides/<ride_uuid>.fit`.
+browser). FIT is also always auto-saved at
+`<appdata>/activities/<activity_uuid>.fit`.
 
 ---
 
 ## 8. Persistence (backend)
 
 App data dir: `~/Library/Application Support/com.trainerpro.desktop/` (Tauri
-`app_data_dir`); subdirs `workouts/`, `rides/`; DB `trainerpro.sqlite3`. The
-development QA flavor uses `com.trainerpro.desktop.qa` so its data remains
-isolated from an installed production app.
+`app_data_dir`); active activity artifacts live under `activities/`; DB
+`trainerpro.sqlite3`. A `workouts/` directory left by the legacy file-backed
+model is no longer read or managed. The QA flavor remains isolated under
+`com.trainerpro.desktop.qa`.
 
 ```sql
-CREATE TABLE workouts (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-  source_format TEXT NOT NULL, file_path TEXT NOT NULL, sha256 TEXT NOT NULL UNIQUE,
-  duration_s INTEGER NOT NULL, est_if REAL, est_tss REAL,
-  graph_json TEXT NOT NULL, imported_at INTEGER NOT NULL);
+CREATE TABLE workout_definitions (
+  id TEXT PRIMARY KEY,
+  tpw_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  origin TEXT,
+  origin_id INTEGER,
+  origin_ref TEXT,
+  retired_at_unix_ms INTEGER);
 
-CREATE TABLE rides (
-  id TEXT PRIMARY KEY, workout_id TEXT REFERENCES workouts(id) ON DELETE SET NULL,
-  workout_name TEXT NOT NULL, started_at INTEGER NOT NULL,
+CREATE TABLE provider_connections (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  external_account_id TEXT NOT NULL,
+  display_name TEXT,
+  time_zone TEXT NOT NULL,
+  last_sync_succeeded_at_unix_ms INTEGER,
+  last_sync_error TEXT,
+  created_at_unix_ms INTEGER NOT NULL,
+  updated_at_unix_ms INTEGER NOT NULL,
+  disconnected_at_unix_ms INTEGER,
+  UNIQUE(provider, external_account_id));
+
+CREATE TABLE scheduled_workouts (
+  id TEXT PRIMARY KEY,
+  workout_definition_id TEXT NOT NULL
+    REFERENCES workout_definitions(id) ON DELETE RESTRICT,
+  scheduled_date_local TEXT NOT NULL,
+  scheduled_time_local TEXT,
+  scheduled_time_zone TEXT,
+  removed_at_unix_ms INTEGER,
+  provider_connection_id TEXT
+    REFERENCES provider_connections(id) ON DELETE RESTRICT,
+  external_event_id TEXT,
+  external_revision TEXT,
+  last_synced_at_unix_ms INTEGER,
+  created_at_unix_ms INTEGER NOT NULL,
+  updated_at_unix_ms INTEGER NOT NULL,
+  CHECK ((scheduled_time_local IS NULL AND scheduled_time_zone IS NULL) OR
+         (scheduled_time_local IS NOT NULL AND scheduled_time_zone IS NOT NULL)),
+  CHECK ((provider_connection_id IS NULL AND external_event_id IS NULL) OR
+         (provider_connection_id IS NOT NULL AND external_event_id IS NOT NULL)),
+  CHECK (external_revision IS NULL OR external_event_id IS NOT NULL),
+  CHECK (last_synced_at_unix_ms IS NULL OR external_event_id IS NOT NULL));
+
+CREATE TABLE activities (
+  id TEXT PRIMARY KEY,
+  workout_session_id TEXT,
+  scheduled_workout_id TEXT
+    REFERENCES scheduled_workouts(id) ON DELETE SET NULL,
+  workout_definition_id TEXT REFERENCES workout_definitions(id) ON DELETE SET NULL,
+  workout_definition_snapshot_json TEXT,
+  workout_name TEXT NOT NULL, started_at_unix_ms INTEGER NOT NULL,
   elapsed_s INTEGER NOT NULL, timer_s INTEGER NOT NULL,
-  avg_power INTEGER, max_power INTEGER, np INTEGER, if_ REAL, tss REAL,
-  avg_hr INTEGER, max_hr INTEGER, avg_cadence INTEGER, kj INTEGER,
-  ftp_used INTEGER NOT NULL, intensity_final REAL NOT NULL,
+  average_power_w INTEGER, max_power_w INTEGER, normalized_power_w INTEGER,
+  intensity_factor REAL, training_stress_score REAL,
+  average_heart_rate_bpm INTEGER, max_heart_rate_bpm INTEGER,
+  average_cadence_rpm INTEGER, work_kj INTEGER,
+  ftp_used_w INTEGER NOT NULL, final_intensity_multiplier REAL NOT NULL,
   fit_path TEXT NOT NULL, journal_path TEXT NOT NULL, completed_pct REAL NOT NULL,
   icu_activity_id TEXT);  -- reserved by v5 for the planned intervals.icu integration
+
+CREATE UNIQUE INDEX activities_workout_session_id
+  ON activities(workout_session_id);
+
+CREATE INDEX scheduled_workouts_next_up
+  ON scheduled_workouts(removed_at_unix_ms, scheduled_date_local,
+                        scheduled_time_local);
+
+CREATE UNIQUE INDEX scheduled_workouts_provider_event
+  ON scheduled_workouts(provider_connection_id, external_event_id)
+  WHERE provider_connection_id IS NOT NULL;
+
+CREATE UNIQUE INDEX provider_connections_one_active_account
+  ON provider_connections(provider)
+  WHERE disconnected_at_unix_ms IS NULL;
 
 CREATE TABLE devices (role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm')),
   platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
@@ -531,7 +640,30 @@ fetch code, no schema change.
 Enabled gates both the Workouts tab and any fetch. The old typed `planner`
 settings key migrates into `sources.planner` on first load (creds preserved).
 This registry is the reuse surface for trainer-coach's own load sources.
-Migrations: `user_version` pragma + numbered migration list from day one.
+Migrations: `user_version` pragma + numbered migration list from day one. The
+TPW migration resets legacy workout rows and clears their activity references,
+while retaining activity history, FIT/journal paths, settings, and devices.
+
+Scheduled workout placement is calendar-local: every row has an ISO local
+date, while time and time zone are either both present or both absent. Next Up
+reads active rows in calendar order and excludes a row once an Activity links
+to it. Removal is soft so an existing Activity can retain schedule traceability.
+Provider-owned rows scope external event identity through a non-secret
+`provider_connections` row. A completed bounded sync updates the linked TPW and
+placement transactionally, preserves local IDs, and soft-removes only missing
+events whose previous placement was inside that fetched window. Its
+provider-owned definition is retired from Library queries at the same time but
+retained for traceability and restored in place if the event reappears.
+Only one Intervals.icu account is active at a time. Disconnecting marks the
+connection inactive and transactionally retires its active schedules and
+definitions; it does not destroy rows referenced by Activity history.
+The personal API key is stored in the OS credential manager under a service
+name derived from the Tauri bundle identifier, keeping production and QA
+credentials separate. It is never written to SQLite or application settings.
+Recommendations are not persisted; the initial `local_favorites` recommender
+ranks definitions by Activity count within the preceding 180 days, with latest
+Activity as the tie-breaker, excludes definitions already scheduled, and
+returns at most three.
 
 ---
 
@@ -543,12 +675,14 @@ Commands (Rust `#[tauri::command]`; TS wrappers in `frontend/ipc.ts`; all return
 ```
 workouts:  import_workout(path) -> {summary, warnings[]} · create_workout(draft)
            list_workouts() -> Summary[] · get_workout_detail(id) · delete_workout(id)
+next_up:   list_next_up() -> NextUpItem[]
 devices:   start_scan() · connect_device(role, platform_id, name?)
            disconnect_device(role) · forget_device(role) · get_device_state() -> DeviceSlot[]
-player:    load_workout(id) -> PlayerState · start_ride() · pause_ride() · resume_ride()
+player:    load_workout(id, scheduled_workout_id?) -> PlayerState
+           start_ride() · pause_ride() · resume_ride()
            skip_segment() · set_intensity(pct) · set_erg(enabled)
-           end_ride() -> RideSummary · clear_ride() · get_player_state()
-history:   list_rides() -> RideRow[] · delete_ride(id)
+           end_ride() -> ActivitySummary · clear_ride() · get_player_state()
+activities: list_activities() -> ActivityRow[] · delete_activity(id)
            save_fit_as(id, dest_path) · reveal_fit(id) · open_garmin_import()
 sources:   source_test(id, values) -> {ok, detail}   (provider connection test;
            dispatches by id — only testable providers, e.g. planner)
@@ -556,30 +690,36 @@ sources:   source_test(id, values) -> {ok, detail}   (provider connection test;
            planner_open_editor(wid) · woz_collections(force) · woz_workouts(collection, force)
            woz_ride(collection, idx) · woz_open_page(collection)
 profile:   get_settings() -> Settings · update_settings(settings)
+intervals: get_intervals_icu_connection() -> ConnectionStatus
+           connect_intervals_icu(api_key) -> ConnectionStatus
+           refresh_intervals_icu(today_date_local) -> SyncReport
+           disconnect_intervals_icu() -> ConnectionStatus
 ```
 
-**Planned intervals.icu upload:** this remains an intended post-ride export
-sink, not a workout source, but is not implemented in the current command,
-settings, or UI surfaces. The reserved `rides.icu_activity_id` column remains
-unused. Once work resumes, completed FITs should upload best-effort while the
-local FIT/journal remain authoritative; a failed upload should expose a manual
-retry rather than compromise ride finalization. The proposed commands are
-`icu_test(cfg)` and `icu_upload_ride(ride_id)`, with a disabled-by-default
-credential setting. Confirm authentication and server-side `external_id`
-deduplication against the live API before relying on retry idempotency. See
-[`garmin-access.md`](garmin-access.md) for current integration status.
+**Intervals.icu:** the current desktop connection validates a personal API key,
+reads athlete identity/time zone, and synchronizes structured cycling workouts
+from 7 days before through 42 days after the supplied athlete-local date.
+Workouts performs one background refresh per app run after showing cached Next
+Up data; Settings → Connections and the Next Up Refresh action also allow an
+explicit refresh. API/network failures retain the last-good cache and update
+observable connection health. This retrieval window does not settle the open
+Next Up display/overdue policy. OAuth, activity upload, and schedule write-back
+are not implemented. The reserved `activities.icu_activity_id` column remains
+unused. See
+[`provider-integrations.md`](provider-integrations.md) and
+[`workout-platform.md`](workout-platform.md).
 
 Events (Rust → UI, `tauri::Emitter`):
 
 | Event | Payload | Rate |
 |---|---|---|
 | `player_measurement` | `{power_w, cadence_rpm, heart_rate_bpm, power_smoothed_3s_w}` | ≤ 4 Hz |
-| `player_state` | `{phase, seg_idx, seg_remaining_s, elapsed_s, ride_s, intensity, lap_avg_power, np, tss, ef, kcal}` | 1 Hz + on transitions |
+| `player_state` | `{phase, workout_session_id, workout_definition_id, scheduled_workout_id?, seg_idx, seg_remaining_s, elapsed_s, ride_s, intensity, target_power_w, target_cadence_rpm, average_power_w, normalized_power_w, training_stress_score, ef, kcal}` | 1 Hz + on transitions |
 | `device_status` | `{role, status, name?}` | on change |
 | `device_measurement` | `{role, power_w?, cadence_rpm?, heart_rate_bpm?}` | trainer 1 Hz / HRM notifications |
 | `scan_result` | `{role, platform_id, name, rssi}` | as found |
 | `text_event` | `{message, duration_s}` | on fire |
-| `ride_finished` | `RideSummary` | once |
+| `activity_recorded` | `ActivitySummary` | once |
 | `toast` | `{level, message}` | as needed |
 
 UI state = zustand store hydrated by `get_*` commands, updated by events.
@@ -589,17 +729,20 @@ No polling from the UI.
 
 ## 10. UI screens (v1 exact scope)
 
-Navigation: left rail — Library · Devices · History · Settings; Player takes
-over full window when a ride is loaded.
+Navigation: left rail — Workouts · Build · Devices · Activities · Settings;
+Player takes over the full window when a ride is loaded.
 
-1. **Library**: workout cards (name, duration, est TSS/IF, graph thumbnail
-   from `graph_json`), import button + drag-drop target, workout builder,
-   delete via context menu. Builder target fields and interval descriptions
-   show both % FTP and the resolved watts for the current profile FTP. Click →
-   Player in `Ready` (or device-connect prompt if no trainer).
-2. **Devices**: two slots (Trainer / HRM): saved device card with status dot,
+1. **Workouts**: an ordered, horizontally scrollable Next Up rail of scheduled
+   workouts followed by recommendations, with the Library below it. Scheduled
+   items lead with compact calendar-local context; recommendations lead with
+   their training-focus tag. Both open the shared workout detail and player
+   path, preserving scheduled identity when present. The Library owns local
+   import/deletion and enabled source tabs.
+2. **Build**: local structured-workout authoring. Detail and builder targets
+   show both % FTP and resolved watts for the current profile FTP.
+3. **Devices**: two slots (Trainer / HRM): saved device card with status dot,
    or Scan flow (list by RSSI, click to pair). Forget button.
-3. **Player** (§6.3 of the product layout): top ⅓ workout graph (zone-colored
+4. **Player** (§6.3 of the product layout): top ⅓ workout graph (zone-colored
    bars, progress cursor, next-interval label, text-event overlay); middle:
    three tiles — power (3 s smoothed, huge) with the live watt target and an
    intensity badge when ≠ 100 % underneath + ±5 % over/under coloring,
@@ -608,10 +751,11 @@ over full window when a ride is loaded.
    interval avg power, elapsed/remaining, kJ. Controls row: pause/resume, skip,
    ±intensity, end. Keyboard: space = pause/resume, `s` = skip, `↑/↓` =
    intensity.
-4. **Summary** (post-ride): §7.4.
-5. **History**: table of rides (date, workout, duration, avg P, NP, TSS,
-   avg HR) → row click = Summary view for that ride (re-read from journal).
-6. **Settings**: FTP, weight, record-distance toggle, app version.
+5. **Summary** (post-ride): §7.4.
+6. **Activities**: table of completed activities (date, workout, duration,
+   avg P, NP, TSS, avg HR) with FIT reveal and deletion actions.
+7. **Settings**: FTP, weight, record-distance toggle, FIT export folder,
+   workout-library configuration, and connected-provider lifecycle/status.
 
 Styling: dark theme only in v1. Readable at 2 m: metric tiles ≥ 96 pt numerals.
 
@@ -626,8 +770,11 @@ Styling: dark theme only in v1. Readable at 2 m: metric tiles ≥ 96 pt numerals
 | `trainer_incompatible` | no FTMS service / no target-power bit | "This trainer doesn't support FTMS control" + device name |
 | `control_refused` | Request Control result ≠ success | hint: close Zwift/other apps holding control |
 | `control_lost` | CP timeout ×2 mid-ride | auto-pause + reconnect banner (§5.4) |
-| `fit_encode_failed` | encoder error at ride end | ride row still written, journal preserved, "Retry export" on Summary |
+| `fit_encode_failed` | encoder error at ride end | journal preserved; error reported; no activity inserted |
 | `disk_full` / io | writes fail | block ride start; toast during ride, journal keeps trying |
+| `intervals_auth` / `intervals_account_conflict` | invalid key or a different account is already active | keep cached workouts; point to Settings → Connections |
+| `intervals_network` / `intervals_http` / `intervals_response` / `intervals_sync` | provider fetch, payload, or reconciliation failure | retain last-good cache; show toast and connection health |
+| `credential_store` | OS credential manager missing or unavailable | keep connection metadata; request reconnection in Settings |
 
 Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
 `debug`. "Report a problem" = reveal log folder.
@@ -661,13 +808,13 @@ Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
 | M1 | Parsers + Library UI + graph thumbnails | corpus parses clean; ZWO cooldown-direction check resolved; import UX incl. warnings works |
 | M2 | BLE: scan/pair/save, FTMS driver, live measurement view, manual target slider (dev screen), SimTrainer | holds 150 W ±5 W on real KICKR Core for 5 min; survives BT toggle; fault-injection tests green |
 | M3 | Engine + Player UI + HRM + keep-alive + reconnect flow | full 45-min workout hands-free on hardware incl. ramps, skip, intensity, text events |
-| M4 | Recorder → journal → FIT → Summary/History → export UX | FitCSVTool zero-error in CI; Garmin Connect upload shows laps/charts/load; crash-recovery replay works |
+| M4 | Recorder → journal → FIT → Summary/Activities → export UX | FitCSVTool zero-error in CI; Garmin Connect upload shows laps/charts/load; crash-tolerant journal replay works |
 | M5 | Polish + Windows: WinRT BLE pass, installers (mac notarized DMG, Windows MSI + signing), app icon, onboarding empty-states | fresh machine (both OS) → install → pair → ride → Garmin upload with no dev tools |
 
 Phase 2 (not scheduled): Garmin Connect API auto-sync (awaiting developer
 program access), intervals.icu post-ride upload, Strava OAuth upload, Wahoo
 legacy driver if demand appears, power match, FIT-workout import. See
-[`garmin-access.md`](garmin-access.md) for integration status.
+[`provider-integrations.md`](provider-integrations.md) for integration status.
 
 ---
 

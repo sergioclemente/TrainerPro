@@ -48,7 +48,7 @@ flowchart TD
     end
 
     subgraph FRONTEND["Frontend - React + TypeScript"]
-        SCREENS["Screens<br/>Workouts / Devices / Player<br/>Summary / History / Settings"]
+        SCREENS["Screens<br/>Workouts / Devices / Player<br/>Summary / Activities / Settings"]
         STORE["zustand store"]
     end
 
@@ -57,14 +57,15 @@ flowchart TD
         SOURCES["Workout source plugin layer"]
         RUNTIME["Player runtime<br/>engine ticks / ERG loop / recorder"]
         HUB["Device hub<br/>device policy + stable role owners"]
-        STORAGE[("SQLite index +<br/>files as truth")]
+        STORAGE[("SQLite TPW definitions + schedules<br/>+ activity index")]
     end
 
     subgraph CORE["tp-core - pure Rust, no I/O"]
         PARSERS["Parsers: ZWO / ERG / MRC<br/>Writer: ZWO"]
+        TPW["TPW definition<br/>validation + compiler"]
         ENGINE["Workout engine<br/>deterministic state machine"]
         METRICS["Metrics: NP / IF / TSS / zones"]
-        JOURNAL["Crash-safe ride journal"]
+        JOURNAL["Crash-safe session journal"]
         FITENC["FIT activity encoder"]
     end
 
@@ -88,6 +89,12 @@ flowchart TD
     IPC --> RUNTIME
     IPC --> HUB
     SOURCES --> PARSERS
+    SOURCES --> TPW
+    PARSERS --> TPW
+    TPW --> STORAGE
+    STORAGE --> TPW
+    TPW --> RUNTIME
+    RUNTIME --> STORAGE
     RUNTIME --> ENGINE
     RUNTIME --> JOURNAL
     RUNTIME --> METRICS
@@ -105,6 +112,13 @@ flowchart TD
     OSBLE -.->|BLE| DEVICES
 ```
 
+This diagram describes the current shipped architecture. The **Workouts**
+screen now leads with an execution-first **Next Up** rail above the Library,
+backed by SQLite semantic workout definitions; connected-provider sync is the
+next major step. See
+[`docs/PRODUCT.md`](docs/PRODUCT.md) and the target flow in
+[`docs/workout-platform.md`](docs/workout-platform.md).
+
 Two invariants keep this portable and testable:
 
 - **`tp-core` has zero I/O and zero async** — parsers, engine, metrics, journal
@@ -116,9 +130,14 @@ Two invariants keep this portable and testable:
 
 More detail: [`docs/architecture.md`](docs/architecture.md) (source plugin
 interface, ride data flow, cross-platform notes) ·
+[`docs/PRODUCT.md`](docs/PRODUCT.md) (product direction and vocabulary) ·
+[`docs/ROADMAP.md`](docs/ROADMAP.md) (outcome sequence) ·
+[`docs/workout-platform.md`](docs/workout-platform.md) (target software design
+and PR plan) · [`docs/TPW.md`](docs/TPW.md) (TrainerPro Workout format) ·
 [`docs/SPEC.md`](docs/SPEC.md) (build spec) ·
 [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) (decision records) ·
-[`docs/garmin-access.md`](docs/garmin-access.md) (export integration status) ·
+[`docs/provider-integrations.md`](docs/provider-integrations.md) (provider
+integration status) ·
 [`docs/spec-workoutplanner.md`](docs/spec-workoutplanner.md) (planner
 integration).
 
@@ -161,7 +180,7 @@ backend/                lifecycle, IPC, I/O, device hub, player runtime
 crates/tp-core/         pure domain: parsers, engine, metrics, journal, FIT
 crates/tp-ble/          BLE: traits, FTMS/HR drivers, simulator
 tools/                  maintained internal command-line utilities
-docs/                   spec, decision records, architecture notes
+docs/                   product, roadmap, specs, decisions, architecture notes
 assets/icon/            app icon sources (SVG masters + candidates)
 samples/                example workout files
 ```

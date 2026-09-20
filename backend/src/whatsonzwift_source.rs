@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use tp_core::model::{PowerTarget, Segment, SourceFormat, Workout};
+use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
 
 use crate::app_error::AppError;
 use crate::player_runtime::PlayerState;
@@ -251,7 +251,7 @@ pub fn parse_textbar(line: &str) -> Option<Vec<Segment>> {
 
 /// Parse a collection page: h3-titled workout sections, each with textbars.
 /// Workouts with any unparseable line (e.g. running pace) are skipped.
-pub fn parse_collection_page(html: &str) -> Vec<(String, Workout)> {
+pub fn parse_collection_page(html: &str) -> Vec<(String, ExecutableWorkout)> {
     let h3 = regex::Regex::new(r"<h3[^>]*>(.*?)</h3>").unwrap();
     let bar = regex::Regex::new(r#"<div class="textbar"[^>]*>(.*?)</div>"#).unwrap();
 
@@ -287,10 +287,9 @@ pub fn parse_collection_page(html: &str) -> Vec<(String, Workout)> {
             }
         }
         if ok && any && !segments.is_empty() {
-            let w = Workout {
+            let w = ExecutableWorkout {
                 name: title.clone(),
                 description: String::new(),
-                source_format: SourceFormat::Zwo,
                 segments,
                 text_events: vec![],
             };
@@ -304,17 +303,26 @@ pub fn parse_collection_page(html: &str) -> Vec<(String, Workout)> {
 // Commands
 // ---------------------------------------------------------------------------
 
-fn db_get(state: &State<'_, AppState>, key: &str) -> Option<crate::workout_source_cache::Cached> {
+fn db_get(state: &State<'_, AppState>, key: &str) -> Option<crate::database::source_cache::Cached> {
     let conn = state.db.lock().unwrap();
-    crate::workout_source_cache::get(&conn, "woz", key)
+    crate::database::source_cache::get(&conn, "woz", key)
+        .ok()
+        .flatten()
 }
 
 fn db_put(state: &State<'_, AppState>, key: &str, value: &str) {
     let conn = state.db.lock().unwrap();
-    crate::workout_source_cache::put(&conn, "woz", key, None, value, crate::app_state::now_unix_ms() as i64);
+    let _ = crate::database::source_cache::put(
+        &conn,
+        "woz",
+        key,
+        None,
+        value,
+        crate::app_state::now_unix_ms() as i64,
+    );
 }
 
-fn fresh(c: &crate::workout_source_cache::Cached) -> bool {
+fn fresh(c: &crate::database::source_cache::Cached) -> bool {
     (crate::app_state::now_unix_ms() as i64) - c.fetched_at_ms < TTL_MS
 }
 
@@ -367,7 +375,7 @@ pub async fn woz_collections(
     }
 }
 
-type CollectionEntries = Vec<(Workout, WozWorkout)>;
+type CollectionEntries = Vec<(ExecutableWorkout, WozWorkout)>;
 
 fn load_collection_from_db(state: &State<'_, AppState>, collection: &str) -> Option<CollectionEntries> {
     db_get(state, &format!("collection:{collection}"))
@@ -413,7 +421,7 @@ pub async fn woz_workouts(
             "no ridable bike workouts found in this collection",
         ));
     }
-    let entries: Vec<(Workout, WozWorkout)> = parsed
+    let entries: Vec<(ExecutableWorkout, WozWorkout)> = parsed
         .into_iter()
         .enumerate()
         .map(|(idx, (title, w))| {
@@ -470,9 +478,17 @@ pub async fn woz_ride(
             }
         }
     };
-    let zwo = tp_core::parse::zwo::to_zwo(&workout);
+    let definition = tp_core::workout_definition::WorkoutDefinition::from_executable(workout)?;
     let origin_ref = format!("{collection}#{idx}");
-    sources::ride_from_zwo(app, &state, &zwo, "whatsonzwift", &origin_ref, None).await
+    sources::ride_from_definition(
+        app,
+        &state,
+        &definition,
+        "whatsonzwift",
+        &origin_ref,
+        None,
+    )
+    .await
 }
 
 /// Attribution / browse-out: open the collection on whatsonzwift.com.

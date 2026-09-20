@@ -1,5 +1,5 @@
-//! Player runtime: the async task that drives Engine effects into the
-//! trainer, records the journal, and finalizes the ride into a FIT file.
+//! Player runtime: the async task that drives Engine effects into the trainer,
+//! records the workout session, and finalizes it as an Activity plus FIT file.
 //! SPEC.md §5.2, §6, §7. The engine stays pure; all time and I/O live here.
 
 use std::collections::VecDeque;
@@ -15,14 +15,15 @@ use tracing::{error, warn};
 use tp_core::consts::{ENGINE_TICK_MS, ERG_KEEPALIVE_S, SAMPLE_HZ, SMOOTH_WINDOW_S};
 use tp_core::engine::{Effect, Engine, Input, Phase};
 use tp_core::journal::{
-    compute_laps, replay, JournalHeader, JournalWriter, RideEvent, RideEventKind, Sample,
+    compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
 };
 use tp_core::metrics::{normalized_power, session_totals, tss};
-use tp_core::model::Workout;
+use tp_core::workout_definition::WorkoutDefinition;
 
 use crate::app_error::AppError;
-use crate::heart_rate_monitor::HeartRateMonitor;
 use crate::app_state::{now_unix_ms, AppState};
+use crate::database::activities as activity_db;
+use crate::heart_rate_monitor::HeartRateMonitor;
 use crate::trainer::Trainer;
 
 const PLAYER_COMMAND_CAPACITY: usize = 16;
@@ -36,7 +37,7 @@ pub enum Cmd {
     /// Toggle ERG mode. Off = trainer switches to simulation grade 0 (free
     /// resistance); workout targets keep advancing but aren't sent.
     SetErg(bool),
-    End(oneshot::Sender<Result<RideSummary, AppError>>),
+    End(oneshot::Sender<Result<ActivitySummary, AppError>>),
 }
 
 pub struct PlayerHandle {
@@ -47,7 +48,9 @@ pub struct PlayerHandle {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlayerState {
     pub phase: String,
-    pub workout_id: String,
+    pub workout_session_id: String,
+    pub workout_definition_id: String,
+    pub scheduled_workout_id: Option<String>,
     pub workout_name: String,
     pub workout_duration_s: u32,
     pub seg_idx: Option<usize>,
@@ -58,12 +61,13 @@ pub struct PlayerState {
     /// Time actually ridden — pauses and skipped spans excluded.
     pub ride_s: u32,
     pub intensity: f64,
-    pub target: Option<u16>,
-    pub avg_power: Option<u16>,
+    pub target_power_w: Option<u16>,
+    pub target_cadence_rpm: Option<u16>,
+    pub average_power_w: Option<u16>,
     /// Live session totals, mirroring the post-ride numbers (SPEC §6).
     /// `None` until there is data to compute them from.
-    pub np: Option<u16>,
-    pub tss: Option<f64>,
+    pub normalized_power_w: Option<u16>,
+    pub training_stress_score: Option<f64>,
     /// Efficiency factor: NP / average HR. `None` without an HRM.
     pub ef: Option<f64>,
     pub kcal: Option<u32>,
@@ -82,26 +86,27 @@ pub struct PlayerMeasurement {
 pub struct LapRow {
     pub start_s: u32,
     pub duration_s: u32,
-    pub avg_power: Option<u16>,
-    pub max_power: Option<u16>,
-    pub avg_hr: Option<u16>,
+    pub average_power_w: Option<u16>,
+    pub max_power_w: Option<u16>,
+    pub average_heart_rate_bpm: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RideSummary {
-    pub ride_id: String,
+pub struct ActivitySummary {
+    pub activity_id: String,
+    pub scheduled_workout_id: Option<String>,
     pub workout_name: String,
-    pub started_at: u64,
+    pub started_at_unix_ms: u64,
     pub elapsed_s: u32,
     pub timer_s: u32,
-    pub avg_power: Option<u16>,
-    pub max_power: Option<u16>,
-    pub np: Option<u16>,
-    pub if_: Option<f64>,
-    pub tss: Option<f64>,
-    pub avg_hr: Option<u16>,
-    pub max_hr: Option<u16>,
-    pub kj: u32,
+    pub average_power_w: Option<u16>,
+    pub max_power_w: Option<u16>,
+    pub normalized_power_w: Option<u16>,
+    pub intensity_factor: Option<f64>,
+    pub training_stress_score: Option<f64>,
+    pub average_heart_rate_bpm: Option<u16>,
+    pub max_heart_rate_bpm: Option<u16>,
+    pub work_kj: u32,
     pub completed_pct: f64,
     pub fit_path: String,
     pub laps: Vec<LapRow>,
@@ -119,8 +124,9 @@ fn phase_str(p: Phase) -> &'static str {
 /// Spawn the runtime task for a loaded workout. Trainer must be connected.
 pub async fn spawn(
     app: AppHandle,
-    workout_id: String,
-    workout: Workout,
+    workout_definition_id: String,
+    scheduled_workout_id: Option<String>,
+    workout_definition: WorkoutDefinition,
 ) -> Result<PlayerHandle, AppError> {
     let state = app.state::<AppState>();
     let trainer = state.hub.trainer().clone();
@@ -132,14 +138,22 @@ pub async fn spawn(
     let heart_rate_state = heart_rate_monitor.state();
 
     let settings = state.settings();
-    let ride_id = uuid::Uuid::new_v4().to_string();
-    std::fs::create_dir_all(state.rides_dir())?;
-    let journal_path = state.rides_dir().join(format!("{ride_id}.jsonl"));
+    let workout_definition_snapshot_json = workout_definition.to_json_pretty()?;
+    let workout = workout_definition.compile()?;
+    let workout_session_id = uuid::Uuid::new_v4().to_string();
+    let session_started_at_ms = now_unix_ms();
+    std::fs::create_dir_all(state.activities_dir())?;
+    let journal_path = state
+        .activities_dir()
+        .join(format!("{workout_session_id}.jsonl"));
     let header = JournalHeader {
-        ride_id: ride_id.clone(),
-        started_unix_ms: now_unix_ms(),
+        workout_session_id: workout_session_id.clone(),
+        workout_definition_id: workout_definition_id.clone(),
+        scheduled_workout_id: scheduled_workout_id.clone(),
+        workout_definition_snapshot_json,
+        started_unix_ms: session_started_at_ms,
         workout_name: workout.name.clone(),
-        ftp: settings.profile.ftp,
+        ftp_w: settings.profile.ftp,
         weight_kg: settings.profile.weight_kg,
         trainer: trainer_state.name,
         hrm: heart_rate_state.name,
@@ -156,7 +170,9 @@ pub async fn spawn(
     let (cmd_tx, cmd_rx) = mpsc::channel(PLAYER_COMMAND_CAPACITY);
     let initial = PlayerState {
         phase: "ready".into(),
-        workout_id: workout_id.clone(),
+        workout_session_id: workout_session_id.clone(),
+        workout_definition_id: workout_definition_id.clone(),
+        scheduled_workout_id: scheduled_workout_id.clone(),
         workout_name: workout.name.clone(),
         workout_duration_s: workout.duration_s(),
         seg_idx: Some(0),
@@ -168,10 +184,11 @@ pub async fn spawn(
         elapsed_s: 0,
         ride_s: 0,
         intensity: settings.intensity_default,
-        target: None,
-        avg_power: None,
-        np: None,
-        tss: None,
+        target_power_w: None,
+        target_cadence_rpm: workout.target_cadence_rpm_at(0),
+        average_power_w: None,
+        normalized_power_w: None,
+        training_stress_score: None,
         ef: None,
         kcal: None,
         erg_enabled: true,
@@ -185,12 +202,12 @@ pub async fn spawn(
         heart_rate_monitor,
         journal: Some(journal),
         journal_path: journal_path.to_string_lossy().into_owned(),
-        ride_id,
-        workout_id: workout_id.clone(),
-        header_started_ms: now_unix_ms(),
+        workout_session_id,
+        workout_definition_id,
+        scheduled_workout_id,
         ride_started_at: None,
         state_tx,
-        last_target: None,
+        last_target_power_w: None,
         in_free_ride: false,
         erg_enabled: true,
         latest_power_w: None,
@@ -203,7 +220,7 @@ pub async fn spawn(
         live_power: Vec::new(),
         hr_sum: 0,
         hr_n: 0,
-        ftp: settings.profile.ftp,
+        ftp_w: settings.profile.ftp,
     };
     tokio::spawn(rt.run(cmd_rx));
     Ok(PlayerHandle { cmd_tx, state_rx })
@@ -216,14 +233,14 @@ struct Runtime {
     heart_rate_monitor: HeartRateMonitor,
     journal: Option<JournalWriter<File>>,
     journal_path: String,
-    ride_id: String,
-    workout_id: String,
-    header_started_ms: u64,
+    workout_session_id: String,
+    workout_definition_id: String,
+    scheduled_workout_id: Option<String>,
     /// Wall-clock ride origin, set on Start. Journal t_ms is measured from
     /// here (includes paused spans in the timeline; no samples during pause).
     ride_started_at: Option<Instant>,
     state_tx: watch::Sender<PlayerState>,
-    last_target: Option<u16>,
+    last_target_power_w: Option<u16>,
     in_free_ride: bool,
     /// ERG control enabled (user toggle). When false the trainer is left in
     /// simulation mode and target writes are suppressed.
@@ -246,7 +263,7 @@ struct Runtime {
     hr_sum: u64,
     hr_n: u32,
     /// Rider FTP at load time — TSS and IF are relative to it.
-    ftp: u16,
+    ftp_w: u16,
 }
 
 impl Runtime {
@@ -272,12 +289,12 @@ impl Runtime {
                             self.handle_start().await;
                         }
                         Cmd::Pause => {
-                            self.write_event(RideEventKind::Pause, None);
+                            self.write_event(SessionEventKind::Pause, None);
                             let fx = self.engine.handle(Input::Pause);
                             self.apply(fx).await;
                         }
                         Cmd::Resume => {
-                            self.write_event(RideEventKind::Resume, None);
+                            self.write_event(SessionEventKind::Resume, None);
                             let fx = self.engine.handle(Input::Resume);
                             self.apply(fx).await;
                         }
@@ -292,7 +309,7 @@ impl Runtime {
                         Cmd::SetErg(on) => {
                             self.erg_enabled = on;
                             let r = if on {
-                                match self.last_target {
+                                match self.last_target_power_w {
                                     Some(w) if !self.in_free_ride => {
                                         self.trainer.set_target_power(w).await
                                     }
@@ -332,7 +349,7 @@ impl Runtime {
                         && !self.in_free_ride
                         && self.erg_enabled
                     {
-                        if let Some(w) = self.last_target {
+                        if let Some(w) = self.last_target_power_w {
                             if let Err(e) = self.trainer.set_target_power(w).await {
                                 self.trainer_error(&e.to_string()).await;
                             }
@@ -453,7 +470,7 @@ impl Runtime {
         }
 
         self.ride_started_at = Some(Instant::now());
-        self.write_event(RideEventKind::Start, None);
+        self.write_event(SessionEventKind::Start, None);
         let fx = self.engine.handle(Input::Start);
         self.apply(fx).await;
     }
@@ -478,7 +495,7 @@ impl Runtime {
         if complete {
             match self.finalize().await {
                 Ok(summary) => {
-                    let _ = self.app.emit("ride_finished", &summary);
+                    let _ = self.app.emit("activity_recorded", &summary);
                 }
                 Err(e) => {
                     error!("finalize failed: {}", e.message);
@@ -486,7 +503,7 @@ impl Runtime {
                         "toast",
                         serde_json::json!({
                             "level": "error",
-                            "message": format!("Ride save failed: {} (journal kept at {})",
+                            "message": format!("Activity save failed: {} (journal kept at {})",
                                                 e.message, self.journal_path),
                         }),
                     );
@@ -503,7 +520,7 @@ impl Runtime {
         for eff in fx {
             let r: Result<(), tp_ble::BleError> = match eff {
                 Effect::SetTarget(w) => {
-                    self.last_target = Some(*w);
+                    self.last_target_power_w = Some(*w);
                     self.in_free_ride = false;
                     if self.erg_enabled {
                         self.trainer.set_target_power(*w).await
@@ -513,15 +530,15 @@ impl Runtime {
                 }
                 Effect::EnterFreeRide => {
                     self.in_free_ride = true;
-                    self.last_target = None;
-                    self.write_event(RideEventKind::FreerideEnter, None);
+                    self.last_target_power_w = None;
+                    self.write_event(SessionEventKind::FreerideEnter, None);
                     self.trainer.set_flat_road_simulation().await
                 }
                 Effect::TrainerStart => self.trainer.start_or_resume_training().await,
                 Effect::TrainerStop => self.trainer.pause_training().await,
                 Effect::TrainerReset => self.trainer.reset_trainer().await,
                 Effect::LapBoundary { seg_idx } => {
-                    self.write_event(RideEventKind::Lap, Some(*seg_idx));
+                    self.write_event(SessionEventKind::Lap, Some(*seg_idx));
                     Ok(())
                 }
                 Effect::ShowText(t) => {
@@ -547,7 +564,7 @@ impl Runtime {
     async fn trainer_error(&mut self, msg: &str) {
         warn!("trainer error: {msg}");
         if self.engine.phase() == Phase::Riding {
-            self.write_event(RideEventKind::Pause, None);
+            self.write_event(SessionEventKind::Pause, None);
             let fx = self.engine.handle(Input::Pause);
             // Effects here are trainer stop ops that will likely also fail —
             // apply best-effort without recursing into trainer_error.
@@ -573,11 +590,11 @@ impl Runtime {
             .unwrap_or(0)
     }
 
-    fn write_event(&mut self, kind: RideEventKind, seg: Option<usize>) {
-        let e = RideEvent {
+    fn write_event(&mut self, kind: SessionEventKind, segment_index: Option<usize>) {
+        let e = SessionEvent {
             t_ms: self.t_ms(),
             kind,
-            seg,
+            segment_index,
         };
         if let Some(j) = self.journal.as_mut() {
             if let Err(err) = j.write_event(&e) {
@@ -598,16 +615,26 @@ impl Runtime {
         }
         let s = Sample {
             t_ms: self.t_ms(),
-            power: self.latest_power_w,
-            cadence: self.latest_cadence_rpm,
-            hr: self.latest_heart_rate_bpm,
-            target: if self.in_free_ride { None } else { self.last_target },
+            power_w: self.latest_power_w,
+            cadence_rpm: self.latest_cadence_rpm,
+            heart_rate_bpm: self.latest_heart_rate_bpm,
+            target_power_w: if self.in_free_ride {
+                None
+            } else {
+                self.last_target_power_w
+            },
+            target_cadence_rpm: self.current_target_cadence_rpm(),
         };
         if let Some(j) = self.journal.as_mut() {
             if let Err(err) = j.write_sample(&s) {
                 error!("journal write: {err}");
             }
         }
+    }
+
+    fn current_target_cadence_rpm(&self) -> Option<u16> {
+        let elapsed_s = (self.engine.active_ms() / 1000) as u32;
+        self.engine.workout().target_cadence_rpm_at(elapsed_s)
     }
 
     fn push_state(&self) {
@@ -621,12 +648,16 @@ impl Runtime {
         // Live totals, computed exactly as §6 computes them post-ride: NP over
         // the 1 Hz series, TSS off moving time, kJ = Σ power × 1 s. NP is only
         // meaningful once some power has arrived.
-        let ftp = self.ftp;
-        let np = (self.power_n > 0).then(|| normalized_power(&self.live_power));
-        let avg_hr = (self.hr_n > 0).then(|| (self.hr_sum / u64::from(self.hr_n)) as u16);
+        let ftp_w = self.ftp_w;
+        let normalized_power_w =
+            (self.power_n > 0).then(|| normalized_power(&self.live_power));
+        let average_heart_rate_bpm =
+            (self.hr_n > 0).then(|| (self.hr_sum / u64::from(self.hr_n)) as u16);
         let ps = PlayerState {
             phase: phase_str(self.engine.phase()).into(),
-            workout_id: self.workout_id.clone(),
+            workout_session_id: self.workout_session_id.clone(),
+            workout_definition_id: self.workout_definition_id.clone(),
+            scheduled_workout_id: self.scheduled_workout_id.clone(),
             workout_name: workout.name.clone(),
             workout_duration_s: workout.duration_s(),
             seg_idx,
@@ -634,14 +665,23 @@ impl Runtime {
             elapsed_s,
             ride_s,
             intensity: self.engine.intensity(),
-            target: if self.in_free_ride { None } else { self.last_target },
-            avg_power: (self.power_n > 0)
+            target_power_w: if self.in_free_ride {
+                None
+            } else {
+                self.last_target_power_w
+            },
+            target_cadence_rpm: self.current_target_cadence_rpm(),
+            average_power_w: (self.power_n > 0)
                 .then(|| (self.power_sum / u64::from(self.power_n)) as u16),
-            np,
-            tss: np.filter(|_| ftp > 0).map(|np| tss(ride_s, np, ftp)),
+            normalized_power_w,
+            training_stress_score: normalized_power_w
+                .filter(|_| ftp_w > 0)
+                .map(|normalized_power_w| tss(ride_s, normalized_power_w, ftp_w)),
             // EF = NP / average HR. Needs both, and an HRM is optional.
-            ef: match (np, avg_hr) {
-                (Some(np), Some(hr)) if hr > 0 => Some(f64::from(np) / f64::from(hr)),
+            ef: match (normalized_power_w, average_heart_rate_bpm) {
+                (Some(normalized_power_w), Some(heart_rate_bpm)) if heart_rate_bpm > 0 => {
+                    Some(f64::from(normalized_power_w) / f64::from(heart_rate_bpm))
+                }
                 _ => None,
             },
             // Cycling convention: kJ of work ≈ kcal burned (the ~24 % human
@@ -653,10 +693,10 @@ impl Runtime {
         self.state_tx.send_replace(ps);
     }
 
-    /// End-of-ride pipeline: close journal → replay → laps/totals → FIT →
-    /// DB row → summary. SPEC §6–§7. The journal survives any failure here.
-    async fn finalize(&mut self) -> Result<RideSummary, AppError> {
-        self.write_event(RideEventKind::End, None);
+    /// Session finalization: close journal → replay → laps/totals → FIT →
+    /// Activity row → summary. SPEC §6–§7. The journal survives any failure.
+    async fn finalize(&mut self) -> Result<ActivitySummary, AppError> {
+        self.write_event(SessionEventKind::End, None);
         if let Some(j) = self.journal.take() {
             let f = j.into_inner();
             let _ = f.sync_all();
@@ -666,9 +706,9 @@ impl Runtime {
         let laps = compute_laps(&data);
         let state = self.app.state::<AppState>();
         let settings = state.settings();
-        let totals = session_totals(&data, data.header.ftp);
+        let totals = session_totals(&data, data.header.ftp_w);
 
-        let fit_bytes = tp_core::fit::encode_activity(&tp_core::fit::FitRide {
+        let fit_bytes = tp_core::fit::encode_activity(&tp_core::fit::FitActivity {
             header: &data.header,
             samples: &data.samples,
             events: &data.events,
@@ -676,7 +716,8 @@ impl Runtime {
             totals: &totals,
             record_distance: settings.record_distance,
         })?;
-        let fit_path = state.rides_dir().join(format!("{}.fit", self.ride_id));
+        let activity_id = uuid::Uuid::new_v4().to_string();
+        let fit_path = state.activities_dir().join(format!("{activity_id}.fit"));
         std::fs::write(&fit_path, &fit_bytes)?;
 
         // Optional user export folder: copy with a friendly name (SPEC §8
@@ -692,7 +733,7 @@ impl Runtime {
             let (y, m, d) = ymd_utc(data.header.started_unix_ms / 1000);
             let dest = std::path::Path::new(dir).join(format!(
                 "TrainerPro_{safe_name}_{y:04}-{m:02}-{d:02}_{}.fit",
-                &self.ride_id[..8]
+                &activity_id[..8]
             ));
             if let Err(e) = std::fs::write(&dest, &fit_bytes) {
                 let _ = self.app.emit(
@@ -714,62 +755,66 @@ impl Runtime {
         }
         .min(100.0);
 
+        let fit_path_string = fit_path.to_string_lossy().into_owned();
         {
             let conn = state.db.lock().unwrap();
-            conn.execute(
-                "INSERT INTO rides (id, workout_id, workout_name, started_at, elapsed_s,
-                   timer_s, avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence,
-                   kj, ftp_used, intensity_final, fit_path, journal_path, completed_pct)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
-                rusqlite::params![
-                    self.ride_id,
-                    self.workout_id,
-                    data.header.workout_name,
-                    self.header_started_ms as i64,
-                    totals.elapsed_s,
-                    totals.timer_s,
-                    totals.avg_power,
-                    totals.max_power,
-                    totals.np,
-                    totals.if_,
-                    totals.tss,
-                    totals.avg_hr,
-                    totals.max_hr,
-                    totals.avg_cadence,
-                    totals.kj,
-                    data.header.ftp,
-                    self.engine.intensity(),
-                    fit_path.to_string_lossy(),
-                    self.journal_path,
+            activity_db::insert(
+                &conn,
+                &activity_db::NewActivity {
+                    id: &activity_id,
+                    workout_session_id: &data.header.workout_session_id,
+                    scheduled_workout_id: data.header.scheduled_workout_id.as_deref(),
+                    workout_definition_id: Some(&data.header.workout_definition_id),
+                    workout_definition_snapshot_json: &data
+                        .header
+                        .workout_definition_snapshot_json,
+                    workout_name: &data.header.workout_name,
+                    started_at_unix_ms: data.header.started_unix_ms as i64,
+                    elapsed_s: totals.elapsed_s,
+                    timer_s: totals.timer_s,
+                    average_power_w: totals.average_power_w,
+                    max_power_w: totals.max_power_w,
+                    normalized_power_w: totals.normalized_power_w,
+                    intensity_factor: totals.intensity_factor,
+                    training_stress_score: totals.training_stress_score,
+                    average_heart_rate_bpm: totals.average_heart_rate_bpm,
+                    max_heart_rate_bpm: totals.max_heart_rate_bpm,
+                    average_cadence_rpm: totals.average_cadence_rpm,
+                    work_kj: totals.work_kj,
+                    ftp_used_w: data.header.ftp_w,
+                    final_intensity_multiplier: self.engine.intensity(),
+                    fit_path: &fit_path_string,
+                    journal_path: &self.journal_path,
                     completed_pct,
-                ],
+                },
             )?;
         }
 
-        Ok(RideSummary {
-            ride_id: self.ride_id.clone(),
+        Ok(ActivitySummary {
+            activity_id,
+            scheduled_workout_id: data.header.scheduled_workout_id.clone(),
             workout_name: data.header.workout_name.clone(),
-            started_at: data.header.started_unix_ms,
+            started_at_unix_ms: data.header.started_unix_ms,
             elapsed_s: totals.elapsed_s,
             timer_s: totals.timer_s,
-            avg_power: totals.avg_power,
-            max_power: totals.max_power,
-            np: totals.np,
-            if_: totals.if_,
-            tss: totals.tss,
-            avg_hr: totals.avg_hr,
-            max_hr: totals.max_hr,
-            kj: totals.kj,
+            average_power_w: totals.average_power_w,
+            max_power_w: totals.max_power_w,
+            normalized_power_w: totals.normalized_power_w,
+            intensity_factor: totals.intensity_factor,
+            training_stress_score: totals.training_stress_score,
+            average_heart_rate_bpm: totals.average_heart_rate_bpm,
+            max_heart_rate_bpm: totals.max_heart_rate_bpm,
+            work_kj: totals.work_kj,
             completed_pct,
-            fit_path: fit_path.to_string_lossy().into_owned(),
+            fit_path: fit_path_string,
             laps: laps
                 .iter()
                 .map(|l| LapRow {
                     start_s: (l.start_ms / 1000) as u32,
                     duration_s: ((l.end_ms - l.start_ms) / 1000) as u32,
-                    avg_power: l.avg_power,
-                    max_power: l.max_power,
-                    avg_hr: l.avg_hr,
+                    average_power_w: l.average_power_w,
+                    max_power_w: l.max_power_w,
+                    average_heart_rate_bpm: l.average_heart_rate_bpm,
                 })
                 .collect(),
         })

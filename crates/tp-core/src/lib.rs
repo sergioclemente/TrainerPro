@@ -12,3 +12,4 @@ pub mod journal;
 pub mod metrics;
 pub mod model;
 pub mod parse;
+pub mod workout_definition;

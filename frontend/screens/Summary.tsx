@@ -8,20 +8,20 @@ export default function Summary() {
   if (!summary) {
     return (
       <div className="screen">
-        <p className="empty">No ride summary.</p>
-        <button onClick={() => go("history")}>History</button>
+        <p className="empty">No activity summary.</p>
+        <button onClick={() => go("activities")}>Activities</button>
       </div>
     );
   }
 
   async function saveFit() {
-    const date = new Date(summary!.started_at).toISOString().slice(0, 10);
+    const date = new Date(summary!.started_at_unix_ms).toISOString().slice(0, 10);
     const dest = await save({
       defaultPath: `TrainerPro_${summary!.workout_name.replace(/\W+/g, "_")}_${date}.fit`,
       filters: [{ name: "FIT activity", extensions: ["fit"] }],
     });
     if (!dest) return;
-    await ipc.saveFitAs(summary!.ride_id, dest);
+    await ipc.saveFitAs(summary!.activity_id, dest);
     pushToast("info", "FIT file saved");
   }
 
@@ -37,19 +37,38 @@ export default function Summary() {
       <header className="screen-head">
         <h1>{summary.workout_name}</h1>
         <span className="muted">
-          {new Date(summary.started_at).toLocaleString()} ·{" "}
+          {new Date(summary.started_at_unix_ms).toLocaleString()} ·{" "}
           {Math.round(summary.completed_pct)}% completed
         </span>
       </header>
 
       <div className="stat-row">
         {stat("moving time", fmtDuration(summary.timer_s))}
-        {stat("avg power", summary.avg_power != null ? `${summary.avg_power} W` : "–")}
-        {stat("NP", summary.np != null ? `${summary.np} W` : "–")}
-        {stat("IF", summary.if_ != null ? summary.if_.toFixed(2) : "–")}
-        {stat("TSS", summary.tss != null ? String(Math.round(summary.tss)) : "–")}
-        {stat("avg HR", summary.avg_hr != null ? `${summary.avg_hr}` : "–")}
-        {stat("work", `${summary.kj} kJ`)}
+        {stat(
+          "avg power",
+          summary.average_power_w != null ? `${summary.average_power_w} W` : "–",
+        )}
+        {stat(
+          "NP",
+          summary.normalized_power_w != null ? `${summary.normalized_power_w} W` : "–",
+        )}
+        {stat(
+          "IF",
+          summary.intensity_factor != null ? summary.intensity_factor.toFixed(2) : "–",
+        )}
+        {stat(
+          "TSS",
+          summary.training_stress_score != null
+            ? String(Math.round(summary.training_stress_score))
+            : "–",
+        )}
+        {stat(
+          "avg HR",
+          summary.average_heart_rate_bpm != null
+            ? `${summary.average_heart_rate_bpm}`
+            : "–",
+        )}
+        {stat("work", `${summary.work_kj} kJ`)}
       </div>
 
       <h2>Laps</h2>
@@ -70,9 +89,9 @@ export default function Summary() {
               <td>{i + 1}</td>
               <td>{fmtDuration(l.start_s)}</td>
               <td>{fmtDuration(l.duration_s)}</td>
-              <td>{l.avg_power ?? "–"}</td>
-              <td>{l.max_power ?? "–"}</td>
-              <td>{l.avg_hr ?? "–"}</td>
+              <td>{l.average_power_w ?? "–"}</td>
+              <td>{l.max_power_w ?? "–"}</td>
+              <td>{l.average_heart_rate_bpm ?? "–"}</td>
             </tr>
           ))}
         </tbody>
@@ -82,7 +101,7 @@ export default function Summary() {
         <button className="primary" onClick={saveFit}>
           Save .FIT…
         </button>
-        <button onClick={() => ipc.revealFit(summary.ride_id)}>{revealLabel}</button>
+        <button onClick={() => ipc.revealFit(summary.activity_id)}>{revealLabel}</button>
         <button onClick={() => ipc.openGarminImport()}>Open Garmin Connect</button>
         <button className="ghost" onClick={() => go("library")}>
           Done

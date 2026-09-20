@@ -21,6 +21,12 @@ impl From<tp_core::parse::ParseError> for AppError {
     }
 }
 
+impl From<tp_core::workout_definition::WorkoutDefinitionError> for AppError {
+    fn from(e: tp_core::workout_definition::WorkoutDefinitionError) -> Self {
+        AppError::new("invalid_workout", e.to_string())
+    }
+}
+
 impl From<tp_ble::BleError> for AppError {
     fn from(e: tp_ble::BleError) -> Self {
         use tp_ble::BleError::*;

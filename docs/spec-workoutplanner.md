@@ -1,5 +1,11 @@
 # TrainerPro ⇄ WorkoutPlanner Integration Spec (V1 — "Connected Library")
 
+> **Status:** current integration behavior and historical V1 delivery spec.
+> WorkoutPlanner remains an external workout source, but future reconciliation
+> with the provider-neutral model follows [`PRODUCT.md`](PRODUCT.md) and
+> [`workout-platform.md`](workout-platform.md). ZWO remains the provider
+> boundary adapter; TrainerPro normalizes it into canonical TPW.
+
 Chosen design: mock `assets/mocks/mock-v1-connected-library.svg` — a
 **WorkoutPlanner tab** inside TrainerPro's Workouts screen: log in once, list
 the planner's workouts, **Ride** them in TrainerPro, **Edit ↗** them in the
@@ -16,13 +22,13 @@ This document has two independent parts:
 ```
 WorkoutPlanner (source of truth: authoring, storage)   TrainerPro (execution)
 ┌─────────────────────────────┐                        ┌──────────────────────┐
-│ DSL text  ──ZwiftDataVisitor┼── GET /workout_file ──▶│ existing ZWO parser  │
+│ DSL text  ──ZwiftDataVisitor┼── GET /workout_file ──▶│ ZWO parser → TPW     │
 │ workouts table ─────────────┼── GET /workouts ──────▶│ planner tab (list)   │
 │ web editor ◀────────────────┼── Edit ↗ deep link ────┤                      │
 └─────────────────────────────┘                        └──────────────────────┘
 ```
 
-- **ZWO is the interchange format.** WorkoutPlanner already generates it
+- **ZWO is the current integration adapter.** WorkoutPlanner already generates it
   (`src/visitor.ts` → `ZwiftDataVisitor`); TrainerPro already parses it
   (`tp-core::parse::zwo`). Neither side writes new format code.
 - TrainerPro NEVER parses the planner's DSL and NEVER implements an editor.
@@ -149,10 +155,10 @@ the edit-URL construction; never parsed).
 **`planner_ride` pipeline (reuse, don't re-implement):**
 1. `GET /workout_file?wid=&format=zwo&ftp=<profile ftp>` (Basic Auth header
    when configured).
-2. Write body to a temp file → run the **existing** `import_workout` path
-   (sha256 dedup means re-riding an unchanged workout reuses the library row).
-3. Tag the row: new nullable columns on `workouts`:
-   `origin TEXT` (`'planner'`), `origin_id INTEGER` (wid). Migration #2.
+2. Parse the response in memory, normalize it into TPW, and persist the TPW
+   document in SQLite. Re-riding an unchanged definition reuses its row.
+3. Tag the definition with the current provenance fields:
+   `origin TEXT` (`'planner'`), `origin_id INTEGER` (wid).
 4. `load_workout` it → return `PlayerState` (same flow as clicking a local
    card; all existing guards apply).
 

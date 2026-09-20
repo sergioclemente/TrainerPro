@@ -1,21 +1,21 @@
 import { AppError, fmtDuration, ipc, revealLabel } from "../ipc";
 import { useStore } from "../state";
 
-export default function History() {
-  const { rides, refreshRides, pushToast } = useStore();
+export default function Activities() {
+  const { activities, refreshActivities, pushToast } = useStore();
 
   async function del(id: string, name: string, date: string) {
     if (
       !confirm(
-        `Delete the ride “${name}” from ${date}?\n\n` +
-          `Removes TrainerPro's .fit and journal files for this ride. ` +
+        `Delete the activity “${name}” from ${date}?\n\n` +
+          `Removes TrainerPro's .fit and journal files for this activity. ` +
           `Any copy you exported elsewhere is not affected.`,
       )
     )
       return;
     try {
-      await ipc.deleteRide(id);
-      await refreshRides();
+      await ipc.deleteActivity(id);
+      await refreshActivities();
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
     }
@@ -23,11 +23,8 @@ export default function History() {
 
   return (
     <div className="screen">
-      <header className="screen-head">
-        <h1>History</h1>
-      </header>
-      {rides.length === 0 && <p className="empty">No rides yet.</p>}
-      {rides.length > 0 && (
+      {activities.length === 0 && <p className="empty">No activities yet.</p>}
+      {activities.length > 0 && (
         <table className="table">
           <thead>
             <tr>
@@ -42,9 +39,9 @@ export default function History() {
             </tr>
           </thead>
           <tbody>
-            {rides.map((r) => (
+            {activities.map((r) => (
               <tr key={r.id}>
-                <td>{new Date(r.started_at).toLocaleDateString()}</td>
+                <td>{new Date(r.started_at_unix_ms).toLocaleDateString()}</td>
                 <td>
                   {r.workout_name}
                   {r.completed_pct < 99 && (
@@ -52,22 +49,26 @@ export default function History() {
                   )}
                 </td>
                 <td>{fmtDuration(r.timer_s)}</td>
-                <td>{r.avg_power ?? "–"}</td>
-                <td>{r.np ?? "–"}</td>
-                <td>{r.tss != null ? Math.round(r.tss) : "–"}</td>
-                <td>{r.avg_hr ?? "–"}</td>
+                <td>{r.average_power_w ?? "–"}</td>
+                <td>{r.normalized_power_w ?? "–"}</td>
+                <td>
+                  {r.training_stress_score != null
+                    ? Math.round(r.training_stress_score)
+                    : "–"}
+                </td>
+                <td>{r.average_heart_rate_bpm ?? "–"}</td>
                 <td className="row gap">
                   <button className="ghost" onClick={() => ipc.revealFit(r.id)}>
                     {revealLabel}
                   </button>
                   <button
                     className="ghost danger"
-                    title="Delete this ride"
+                    title="Delete this activity"
                     onClick={() =>
                       del(
                         r.id,
                         r.workout_name,
-                        new Date(r.started_at).toLocaleDateString(),
+                        new Date(r.started_at_unix_ms).toLocaleDateString(),
                       )
                     }
                   >

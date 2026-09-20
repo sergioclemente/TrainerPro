@@ -4,9 +4,9 @@
 use std::io::Cursor;
 
 use tp_core::engine::{Effect, Engine, Input, Phase};
-use tp_core::fit::{encode_activity, FitRide};
+use tp_core::fit::{encode_activity, FitActivity};
 use tp_core::journal::{
-    compute_laps, replay, JournalHeader, JournalWriter, RideEvent, RideEventKind, Sample,
+    compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
 };
 use tp_core::metrics::session_totals;
 use tp_core::parse::parse_zwo;
@@ -38,10 +38,13 @@ fn zwo_to_fit_end_to_end() {
 
     // Ride it: 250 ms ticks, journal samples at 1 Hz, lap events from effects.
     let header = JournalHeader {
-        ride_id: "itest-1".into(),
+        workout_session_id: "session-itest-1".into(),
+        workout_definition_id: "definition-itest-1".into(),
+        scheduled_workout_id: None,
+        workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
         started_unix_ms: START_UNIX_MS,
         workout_name: workout.name.clone(),
-        ftp: FTP,
+        ftp_w: FTP,
         weight_kg: 72.0,
         trainer: Some("SimTrainer".into()),
         hrm: None,
@@ -54,7 +57,11 @@ fn zwo_to_fit_end_to_end() {
     let mut texts_shown = 0u32;
 
     journal
-        .write_event(&RideEvent { t_ms, kind: RideEventKind::Start, seg: None })
+        .write_event(&SessionEvent {
+            t_ms,
+            kind: SessionEventKind::Start,
+            segment_index: None,
+        })
         .unwrap();
     for eff in engine.handle(Input::Start) {
         if let Effect::SetTarget(w) = eff {
@@ -68,7 +75,11 @@ fn zwo_to_fit_end_to_end() {
             match eff {
                 Effect::SetTarget(w) => current_target = Some(w),
                 Effect::LapBoundary { seg_idx } => journal
-                    .write_event(&RideEvent { t_ms, kind: RideEventKind::Lap, seg: Some(seg_idx) })
+                    .write_event(&SessionEvent {
+                        t_ms,
+                        kind: SessionEventKind::Lap,
+                        segment_index: Some(seg_idx),
+                    })
                     .unwrap(),
                 Effect::ShowText(_) => texts_shown += 1,
                 _ => {}
@@ -79,17 +90,22 @@ fn zwo_to_fit_end_to_end() {
             journal
                 .write_sample(&Sample {
                     t_ms,
-                    power: current_target,
-                    cadence: Some(90),
-                    hr: Some(140),
-                    target: current_target,
+                    power_w: current_target,
+                    cadence_rpm: Some(90),
+                    heart_rate_bpm: Some(140),
+                    target_power_w: current_target,
+                    target_cadence_rpm: None,
                 })
                 .unwrap();
         }
     }
     assert_eq!(engine.phase(), Phase::Finished);
     journal
-        .write_event(&RideEvent { t_ms, kind: RideEventKind::End, seg: None })
+        .write_event(&SessionEvent {
+            t_ms,
+            kind: SessionEventKind::End,
+            segment_index: None,
+        })
         .unwrap();
     assert_eq!(texts_shown, 1, "one textevent should have fired");
 
@@ -103,13 +119,18 @@ fn zwo_to_fit_end_to_end() {
     let totals = session_totals(&data, FTP);
     assert_eq!(totals.elapsed_s, 120);
     assert_eq!(totals.timer_s, 120, "no pauses in this ride");
-    let avg = totals.avg_power.expect("has power");
+    let average_power_w = totals.average_power_w.expect("has power");
     // Rough energy check: targets range 100..250 W, so avg must be inside.
-    assert!((100..=250).contains(&avg), "avg_power={avg}");
-    assert!(totals.np.is_some() && totals.tss.is_some());
+    assert!(
+        (100..=250).contains(&average_power_w),
+        "average_power_w={average_power_w}"
+    );
+    assert!(
+        totals.normalized_power_w.is_some() && totals.training_stress_score.is_some()
+    );
 
     // Encode FIT and structurally validate container + trailing CRC.
-    let fit = encode_activity(&FitRide {
+    let fit = encode_activity(&FitActivity {
         header: &data.header,
         samples: &data.samples,
         events: &data.events,

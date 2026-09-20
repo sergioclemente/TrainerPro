@@ -5,9 +5,9 @@
 //! activity. Timestamps: unix_s − FIT_EPOCH_OFFSET_S.
 
 use super::profile as p;
-use super::{crc, FitError, FitRide};
+use super::{crc, FitActivity, FitError};
 use crate::consts::FIT_EPOCH_OFFSET_S;
-use crate::journal::RideEventKind;
+use crate::journal::SessionEventKind;
 
 /// One field in a definition record: (field number, size, base type).
 #[derive(Clone, Copy)]
@@ -21,12 +21,12 @@ const fn f(num: u8, size: u8, base: u8) -> FieldDef {
     FieldDef { num, size, base }
 }
 
-pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
-    let h = ride.header;
+pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
+    let h = activity.header;
     let start_ms = h.started_unix_ms;
     let ts_start = fit_ts(start_ms)?;
 
-    let mut body: Vec<u8> = Vec::with_capacity(1024 + ride.samples.len() * 12);
+    let mut body: Vec<u8> = Vec::with_capacity(1024 + activity.samples.len() * 12);
 
     // -- 1. file_id ---------------------------------------------------------
     let file_id_fields = [
@@ -41,7 +41,7 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
     body.push(p::FILE_TYPE_ACTIVITY);
     put_u16(&mut body, p::MANUFACTURER_DEVELOPMENT);
     put_u16(&mut body, p::PRODUCT_TRAINERPRO);
-    put_u32(&mut body, serial_from(&h.ride_id));
+    put_u32(&mut body, serial_from(&h.workout_session_id));
     put_u32(&mut body, ts_start);
 
     // -- 2. device_info ×1–3 ------------------------------------------------
@@ -79,10 +79,10 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
         f(p::EVENT_EVENT_TYPE, 1, p::BASE_ENUM),
     ];
     write_definition(&mut body, p::LOCAL_EVENT, p::MSG_EVENT, &event_fields);
-    let start_t_ms = ride
+    let start_t_ms = activity
         .events
         .iter()
-        .find(|e| e.kind == RideEventKind::Start)
+        .find(|e| e.kind == SessionEventKind::Start)
         .map(|e| e.t_ms)
         .unwrap_or(0);
     write_timer_event(&mut body, fit_ts(start_ms + start_t_ms)?, p::EVENT_TYPE_START);
@@ -94,7 +94,7 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
         f(p::RECORD_CADENCE, 1, p::BASE_UINT8),
         f(p::RECORD_POWER, 2, p::BASE_UINT16),
     ];
-    if ride.record_distance {
+    if activity.record_distance {
         record_fields.push(f(p::RECORD_SPEED, 2, p::BASE_UINT16));
         record_fields.push(f(p::RECORD_DISTANCE, 4, p::BASE_UINT32));
     }
@@ -109,16 +109,16 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
         Pause(u64),
         Resume(u64),
     }
-    let mut items: Vec<(u64, u8, Item)> = ride
+    let mut items: Vec<(u64, u8, Item)> = activity
         .samples
         .iter()
         .enumerate()
         .map(|(i, s)| (s.t_ms, 1u8, Item::Sample(i)))
         .collect();
-    for e in ride.events {
+    for e in activity.events {
         match e.kind {
-            RideEventKind::Pause => items.push((e.t_ms, 2, Item::Pause(e.t_ms))),
-            RideEventKind::Resume => items.push((e.t_ms, 0, Item::Resume(e.t_ms))),
+            SessionEventKind::Pause => items.push((e.t_ms, 2, Item::Pause(e.t_ms))),
+            SessionEventKind::Resume => items.push((e.t_ms, 0, Item::Resume(e.t_ms))),
             _ => {}
         }
     }
@@ -129,14 +129,14 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
     for (_, _, item) in &items {
         match item {
             Item::Sample(i) => {
-                let s = &ride.samples[*i];
+                let s = &activity.samples[*i];
                 body.push(p::LOCAL_RECORD);
                 put_u32(&mut body, fit_ts(start_ms + s.t_ms)?);
-                body.push(opt_u8(s.hr));
-                body.push(opt_u8(s.cadence));
-                put_u16(&mut body, s.power.unwrap_or(p::INVALID_UINT16));
-                if ride.record_distance {
-                    let v = flat.speed_ms(f64::from(s.power.unwrap_or(0)));
+                body.push(opt_u8(s.heart_rate_bpm));
+                body.push(opt_u8(s.cadence_rpm));
+                put_u16(&mut body, s.power_w.unwrap_or(p::INVALID_UINT16));
+                if activity.record_distance {
+                    let v = flat.speed_ms(f64::from(s.power_w.unwrap_or(0)));
                     distance_m += v; // 1 Hz → v m/s × 1 s
                     put_u16(&mut body, scale_u16(v, p::SPEED_SCALE));
                     put_u32(&mut body, scale_u32(distance_m, p::DISTANCE_SCALE));
@@ -166,7 +166,7 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
         f(p::LAP_MAX_POWER, 2, p::BASE_UINT16),
     ];
     write_definition(&mut body, p::LOCAL_LAP, p::MSG_LAP, &lap_fields);
-    for (i, lap) in ride.laps.iter().enumerate() {
+    for (i, lap) in activity.laps.iter().enumerate() {
         body.push(p::LOCAL_LAP);
         put_u16(&mut body, i as u16);
         put_u32(&mut body, fit_ts(start_ms + lap.end_ms)?);
@@ -174,15 +174,15 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
         put_u32(&mut body, ms_u32(lap.end_ms - lap.start_ms)?); // scale 1000 = ms
         put_u32(&mut body, ms_u32(lap.timer_ms)?);
         put_u16(&mut body, lap.calories_kcal);
-        body.push(opt_u8(lap.avg_hr));
-        body.push(opt_u8(lap.max_hr));
-        body.push(opt_u8(lap.avg_cadence));
-        put_u16(&mut body, lap.avg_power.unwrap_or(p::INVALID_UINT16));
-        put_u16(&mut body, lap.max_power.unwrap_or(p::INVALID_UINT16));
+        body.push(opt_u8(lap.average_heart_rate_bpm));
+        body.push(opt_u8(lap.max_heart_rate_bpm));
+        body.push(opt_u8(lap.average_cadence_rpm));
+        put_u16(&mut body, lap.average_power_w.unwrap_or(p::INVALID_UINT16));
+        put_u16(&mut body, lap.max_power_w.unwrap_or(p::INVALID_UINT16));
     }
 
     // -- 6. session ---------------------------------------------------------
-    let t = ride.totals;
+    let t = activity.totals;
     let elapsed_ms = u64::from(t.elapsed_s) * 1000;
     let ts_end = fit_ts(start_ms + elapsed_ms)?;
     let session_fields = [
@@ -213,28 +213,31 @@ pub fn encode_activity(ride: &FitRide) -> Result<Vec<u8>, FitError> {
     body.push(p::SUB_SPORT_INDOOR_CYCLING);
     put_u32(&mut body, ms_u32(elapsed_ms)?);
     put_u32(&mut body, ms_u32(u64::from(t.timer_s) * 1000)?);
-    put_u16(&mut body, t.kj.min(u32::from(u16::MAX - 1)) as u16); // kJ ≈ kcal
-    body.push(opt_u8(t.avg_hr));
-    body.push(opt_u8(t.max_hr));
-    body.push(opt_u8(t.avg_cadence));
-    put_u16(&mut body, t.avg_power.unwrap_or(p::INVALID_UINT16));
-    put_u16(&mut body, t.max_power.unwrap_or(p::INVALID_UINT16));
+    put_u16(&mut body, t.work_kj.min(u32::from(u16::MAX - 1)) as u16); // kJ ≈ kcal
+    body.push(opt_u8(t.average_heart_rate_bpm));
+    body.push(opt_u8(t.max_heart_rate_bpm));
+    body.push(opt_u8(t.average_cadence_rpm));
+    put_u16(&mut body, t.average_power_w.unwrap_or(p::INVALID_UINT16));
+    put_u16(&mut body, t.max_power_w.unwrap_or(p::INVALID_UINT16));
     put_u16(&mut body, 0); // first_lap_index
-    put_u16(&mut body, ride.laps.len() as u16);
-    put_u16(&mut body, t.np.unwrap_or(p::INVALID_UINT16));
+    put_u16(&mut body, activity.laps.len() as u16);
     put_u16(
         &mut body,
-        t.tss
+        t.normalized_power_w.unwrap_or(p::INVALID_UINT16),
+    );
+    put_u16(
+        &mut body,
+        t.training_stress_score
             .map(|v| scale_u16(v, p::TSS_SCALE))
             .unwrap_or(p::INVALID_UINT16),
     );
     put_u16(
         &mut body,
-        t.if_
+        t.intensity_factor
             .map(|v| scale_u16(v, p::IF_SCALE))
             .unwrap_or(p::INVALID_UINT16),
     );
-    put_u16(&mut body, h.ftp);
+    put_u16(&mut body, h.ftp_w);
 
     // -- 7. activity --------------------------------------------------------
     let activity_fields = [
@@ -349,9 +352,9 @@ fn scale_u32(v: f64, scale: f64) -> u32 {
     (v * scale).round().clamp(0.0, f64::from(u32::MAX - 1)) as u32
 }
 
-/// Deterministic per-install serial (FNV-1a over the ride id; uint32z, so
-/// never 0). tp-core has no persistence — the ride id stands in for a true
-/// per-install random serial.
+/// Deterministic per-install serial (FNV-1a over the workout-session id;
+/// uint32z, so never 0). tp-core has no persistence, so the session id stands
+/// in for a true per-install random serial.
 fn serial_from(id: &str) -> u32 {
     let mut h: u32 = 0x811C_9DC5;
     for b in id.bytes() {
@@ -417,8 +420,8 @@ impl FlatRoad {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fit::FitRide;
-    use crate::journal::{JournalHeader, Lap, RideEvent, RideEventKind, Sample};
+    use crate::fit::FitActivity;
+    use crate::journal::{JournalHeader, Lap, Sample, SessionEvent, SessionEventKind};
     use crate::metrics::SessionTotals;
 
     // -- minimal FIT decoder ------------------------------------------------
@@ -514,7 +517,7 @@ mod tests {
         msgs
     }
 
-    // -- synthetic ride -----------------------------------------------------
+    // -- synthetic activity -------------------------------------------------
 
     /// 2026-01-01T00:00:00Z.
     const START_UNIX_S: u64 = 1_767_225_600;
@@ -522,10 +525,13 @@ mod tests {
 
     fn header() -> JournalHeader {
         JournalHeader {
-            ride_id: "ride-abc".into(),
+            workout_session_id: "session-abc".into(),
+            workout_definition_id: "definition-abc".into(),
+            scheduled_workout_id: None,
+            workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: START_UNIX_S * 1000,
             workout_name: "2x20".into(),
-            ftp: 250,
+            ftp_w: 250,
             weight_kg: 75.0,
             trainer: Some("KICKR".into()),
             hrm: Some("HRM-Dual".into()),
@@ -540,32 +546,38 @@ mod tests {
         for t in 0u64..10 {
             v.push(Sample {
                 t_ms: t * 1000,
-                power: Some(200 + t as u16),
-                cadence: Some(90),
-                hr: if t == 3 { None } else { Some(140) },
-                target: Some(200),
+                power_w: Some(200 + t as u16),
+                cadence_rpm: Some(90),
+                heart_rate_bpm: if t == 3 { None } else { Some(140) },
+                target_power_w: Some(200),
+                target_cadence_rpm: Some(90),
             });
         }
         for t in 15u64..20 {
             v.push(Sample {
                 t_ms: t * 1000,
-                power: Some(210),
-                cadence: Some(92),
-                hr: Some(145),
-                target: Some(210),
+                power_w: Some(210),
+                cadence_rpm: Some(92),
+                heart_rate_bpm: Some(145),
+                target_power_w: Some(210),
+                target_cadence_rpm: Some(90),
             });
         }
         v
     }
 
-    fn events() -> Vec<RideEvent> {
-        let e = |t_ms, kind, seg| RideEvent { t_ms, kind, seg };
+    fn events() -> Vec<SessionEvent> {
+        let e = |t_ms, kind, segment_index| SessionEvent {
+            t_ms,
+            kind,
+            segment_index,
+        };
         vec![
-            e(0, RideEventKind::Start, None),
-            e(5_000, RideEventKind::Lap, Some(0)),
-            e(9_500, RideEventKind::Pause, None),
-            e(14_500, RideEventKind::Resume, None),
-            e(19_500, RideEventKind::End, None),
+            e(0, SessionEventKind::Start, None),
+            e(5_000, SessionEventKind::Lap, Some(0)),
+            e(9_500, SessionEventKind::Pause, None),
+            e(14_500, SessionEventKind::Resume, None),
+            e(19_500, SessionEventKind::End, None),
         ]
     }
 
@@ -575,22 +587,22 @@ mod tests {
                 start_ms: 0,
                 end_ms: 5_000,
                 timer_ms: 5_000,
-                avg_power: Some(202),
-                max_power: Some(204),
-                avg_hr: Some(140),
-                max_hr: Some(140),
-                avg_cadence: Some(90),
+                average_power_w: Some(202),
+                max_power_w: Some(204),
+                average_heart_rate_bpm: Some(140),
+                max_heart_rate_bpm: Some(140),
+                average_cadence_rpm: Some(90),
                 calories_kcal: 1,
             },
             Lap {
                 start_ms: 5_000,
                 end_ms: 19_500,
                 timer_ms: 9_500,
-                avg_power: Some(208),
-                max_power: Some(210),
-                avg_hr: Some(143),
-                max_hr: Some(145),
-                avg_cadence: Some(91),
+                average_power_w: Some(208),
+                max_power_w: Some(210),
+                average_heart_rate_bpm: Some(143),
+                max_heart_rate_bpm: Some(145),
+                average_cadence_rpm: Some(91),
                 calories_kcal: 2,
             },
         ]
@@ -600,15 +612,15 @@ mod tests {
         SessionTotals {
             elapsed_s: 20,
             timer_s: 15,
-            avg_power: Some(205),
-            max_power: Some(210),
-            np: Some(207),
-            if_: Some(0.828),
-            tss: Some(2.86),
-            avg_hr: Some(142),
-            max_hr: Some(145),
-            avg_cadence: Some(90),
-            kj: 3,
+            average_power_w: Some(205),
+            max_power_w: Some(210),
+            normalized_power_w: Some(207),
+            intensity_factor: Some(0.828),
+            training_stress_score: Some(2.86),
+            average_heart_rate_bpm: Some(142),
+            max_heart_rate_bpm: Some(145),
+            average_cadence_rpm: Some(90),
+            work_kj: 3,
         }
     }
 
@@ -618,7 +630,7 @@ mod tests {
         let e = events();
         let l = laps();
         let t = totals();
-        encode_activity(&FitRide {
+        encode_activity(&FitActivity {
             header: &h,
             samples: &s,
             events: &e,
@@ -727,7 +739,7 @@ mod tests {
         let msgs = decode(&encode(false));
         let recs: Vec<&DecMsg> =
             msgs.iter().filter(|m| m.global == p::MSG_RECORD).collect();
-        // t=3 sample has hr: None
+        // The t=3 sample has no heart-rate value.
         assert_eq!(recs[3].uint(p::RECORD_TIMESTAMP), TS0 + 3);
         assert_eq!(recs[3].raw(p::RECORD_HEART_RATE).unwrap(), &[0xFF]);
     }
@@ -878,7 +890,7 @@ mod tests {
         let e = events();
         let l = laps();
         let t = totals();
-        let err = encode_activity(&FitRide {
+        let err = encode_activity(&FitActivity {
             header: &h,
             samples: &s,
             events: &e,
@@ -890,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_ride_encodes_and_validates() {
+    fn empty_activity_encodes_and_validates() {
         let h = JournalHeader {
             trainer: None,
             hrm: None,
@@ -899,17 +911,17 @@ mod tests {
         let t = SessionTotals {
             elapsed_s: 0,
             timer_s: 0,
-            avg_power: None,
-            max_power: None,
-            np: None,
-            if_: None,
-            tss: None,
-            avg_hr: None,
-            max_hr: None,
-            avg_cadence: None,
-            kj: 0,
+            average_power_w: None,
+            max_power_w: None,
+            normalized_power_w: None,
+            intensity_factor: None,
+            training_stress_score: None,
+            average_heart_rate_bpm: None,
+            max_heart_rate_bpm: None,
+            average_cadence_rpm: None,
+            work_kj: 0,
         };
-        let buf = encode_activity(&FitRide {
+        let buf = encode_activity(&FitActivity {
             header: &h,
             samples: &[],
             events: &[],
@@ -942,13 +954,14 @@ mod tests {
         let h = header();
         let s = vec![Sample {
             t_ms: 0,
-            power: None,
-            cadence: None,
-            hr: None,
-            target: None,
+            power_w: None,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            target_power_w: None,
+            target_cadence_rpm: None,
         }];
         let t = totals();
-        let buf = encode_activity(&FitRide {
+        let buf = encode_activity(&FitActivity {
             header: &h,
             samples: &s,
             events: &[],
@@ -971,7 +984,7 @@ mod tests {
         h.trainer = Some("トレーナー très long name ééééééé".into());
         let s = samples();
         let t = totals();
-        let buf = encode_activity(&FitRide {
+        let buf = encode_activity(&FitActivity {
             header: &h,
             samples: &s,
             events: &[],

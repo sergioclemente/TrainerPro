@@ -2,8 +2,8 @@
 //! SPEC.md §6 (totals), §2 (estimates). Pure functions only.
 
 use crate::consts::NP_WINDOW_S;
-use crate::journal::{RideData, RideEventKind};
-use crate::model::Workout;
+use crate::journal::{SessionEventKind, SessionRecording};
+use crate::model::ExecutableWorkout;
 
 /// Coggan-style 7-zone mapping from watts at a given FTP.
 /// Boundaries (% FTP): Z1 <55, Z2 55–75, Z3 76–90, Z4 91–105, Z5 106–120,
@@ -75,20 +75,20 @@ pub fn tss(timer_s: u32, np: u16, ftp: u16) -> f64 {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SessionTotals {
-    /// Wall-clock ride span (includes pauses).
+    /// Wall-clock execution span (includes pauses).
     pub elapsed_s: u32,
     /// Moving time (pauses excluded).
     pub timer_s: u32,
-    pub avg_power: Option<u16>,
-    pub max_power: Option<u16>,
-    pub np: Option<u16>,
-    pub if_: Option<f64>,
-    pub tss: Option<f64>,
-    pub avg_hr: Option<u16>,
-    pub max_hr: Option<u16>,
-    pub avg_cadence: Option<u16>,
+    pub average_power_w: Option<u16>,
+    pub max_power_w: Option<u16>,
+    pub normalized_power_w: Option<u16>,
+    pub intensity_factor: Option<f64>,
+    pub training_stress_score: Option<f64>,
+    pub average_heart_rate_bpm: Option<u16>,
+    pub max_heart_rate_bpm: Option<u16>,
+    pub average_cadence_rpm: Option<u16>,
     /// Total work in kJ (Σ power × 1 s / 1000).
-    pub kj: u32,
+    pub work_kj: u32,
 }
 
 /// Round a millisecond timeline value to whole seconds (half-up).
@@ -116,11 +116,11 @@ fn avg_max(values: impl Iterator<Item = u16>) -> (Option<u16>, Option<u16>) {
     }
 }
 
-/// Session totals from a replayed ride. Timer time = elapsed minus
+/// Session totals from a replayed recording. Timer time = elapsed minus
 /// pause→resume gaps (from events). Power/HR/cadence averages are over
 /// samples where the field is present; NP treats absent power as 0.
-pub fn session_totals(data: &RideData, ftp: u16) -> SessionTotals {
-    // Ride span: from t = 0 (start) to the latest timestamp seen on any
+pub fn session_totals(data: &SessionRecording, ftp: u16) -> SessionTotals {
+    // Session span: from t = 0 (start) to the latest timestamp seen on any
     // event or sample (the End event, when present, is the latest).
     let end_ms = data
         .events
@@ -130,18 +130,18 @@ pub fn session_totals(data: &RideData, ftp: u16) -> SessionTotals {
         .max()
         .unwrap_or(0);
 
-    // Sum pause→resume gaps; a trailing unmatched pause (ride ended while
-    // paused) extends to the end of the ride.
+    // Sum pause→resume gaps; a trailing unmatched pause (session ended while
+    // paused) extends to the end of the session.
     let mut paused_ms = 0u64;
     let mut pause_start: Option<u64> = None;
     for e in &data.events {
         match e.kind {
-            RideEventKind::Pause => {
+            SessionEventKind::Pause => {
                 if pause_start.is_none() {
                     pause_start = Some(e.t_ms);
                 }
             }
-            RideEventKind::Resume => {
+            SessionEventKind::Resume => {
                 if let Some(p) = pause_start.take() {
                     paused_ms += e.t_ms.saturating_sub(p);
                 }
@@ -156,61 +156,66 @@ pub fn session_totals(data: &RideData, ftp: u16) -> SessionTotals {
     let elapsed_s = ms_to_s(end_ms);
     let timer_s = ms_to_s(end_ms.saturating_sub(paused_ms));
 
-    let (avg_power, max_power) = avg_max(data.samples.iter().filter_map(|s| s.power));
-    let (avg_hr, max_hr) = avg_max(data.samples.iter().filter_map(|s| s.hr));
-    let (avg_cadence, _) = avg_max(data.samples.iter().filter_map(|s| s.cadence));
+    let (average_power_w, max_power_w) =
+        avg_max(data.samples.iter().filter_map(|s| s.power_w));
+    let (average_heart_rate_bpm, max_heart_rate_bpm) =
+        avg_max(data.samples.iter().filter_map(|s| s.heart_rate_bpm));
+    let (average_cadence_rpm, _) =
+        avg_max(data.samples.iter().filter_map(|s| s.cadence_rpm));
 
     // kJ: each 1 Hz sample contributes power × 1 s joules; absent power = 0 J.
     let joules: u64 = data
         .samples
         .iter()
-        .filter_map(|s| s.power)
+        .filter_map(|s| s.power_w)
         .map(u64::from)
         .sum();
-    let kj = ((joules as f64) / 1000.0).round() as u32;
+    let work_kj = ((joules as f64) / 1000.0).round() as u32;
 
     // NP over the full 1 Hz series (absent power = 0 W), only meaningful if
     // any power data exists at all.
-    let np = if avg_power.is_some() {
-        let series: Vec<u16> = data.samples.iter().map(|s| s.power.unwrap_or(0)).collect();
+    let normalized_power_w = if average_power_w.is_some() {
+        let series: Vec<u16> = data.samples.iter().map(|s| s.power_w.unwrap_or(0)).collect();
         Some(normalized_power(&series))
     } else {
         None
     };
-    let if_ = match np {
-        Some(np) if ftp > 0 => Some(intensity_factor(np, ftp)),
+    let session_intensity_factor = match normalized_power_w {
+        Some(normalized_power_w) if ftp > 0 => {
+            Some(intensity_factor(normalized_power_w, ftp))
+        }
         _ => None,
     };
-    let tss_v = match np {
-        Some(np) if ftp > 0 => Some(tss(timer_s, np, ftp)),
+    let training_stress_score = match normalized_power_w {
+        Some(normalized_power_w) if ftp > 0 => Some(tss(timer_s, normalized_power_w, ftp)),
         _ => None,
     };
 
     SessionTotals {
         elapsed_s,
         timer_s,
-        avg_power,
-        max_power,
-        np,
-        if_,
-        tss: tss_v,
-        avg_hr,
-        max_hr,
-        avg_cadence,
-        kj,
+        average_power_w,
+        max_power_w,
+        normalized_power_w,
+        intensity_factor: session_intensity_factor,
+        training_stress_score,
+        average_heart_rate_bpm,
+        max_heart_rate_bpm,
+        average_cadence_rpm,
+        work_kj,
     }
 }
 
 /// Library-display estimate for a workout at a given FTP: simulate the
 /// target power series at 1 Hz (FreeRide counts as 0 W), run NP/IF/TSS.
 /// Returns (IF, TSS).
-pub fn estimate_if_tss(workout: &Workout, ftp: u16) -> (f64, f64) {
+pub fn estimate_if_tss(workout: &ExecutableWorkout, ftp: u16) -> (f64, f64) {
     let duration_s = workout.duration_s();
     if duration_s == 0 || ftp == 0 {
         return (0.0, 0.0);
     }
     let series: Vec<u16> = (0..duration_s)
-        .map(|t| workout.target_at(t, ftp, 1.0).unwrap_or(0))
+        .map(|t| workout.target_power_w_at(t, ftp, 1.0).unwrap_or(0))
         .collect();
     let np = normalized_power(&series);
     (intensity_factor(np, ftp), tss(duration_s, np, ftp))
@@ -219,17 +224,20 @@ pub fn estimate_if_tss(workout: &Workout, ftp: u16) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::journal::{JournalHeader, RideEvent, Sample};
-    use crate::model::{PowerTarget, Segment, SourceFormat};
+    use crate::journal::{JournalHeader, Sample, SessionEvent};
+    use crate::model::{PowerTarget, Segment};
 
     const EPS: f64 = 1e-9;
 
     fn header() -> JournalHeader {
         JournalHeader {
-            ride_id: "r1".into(),
+            workout_session_id: "session-1".into(),
+            workout_definition_id: "definition-1".into(),
+            scheduled_workout_id: None,
+            workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: 1_700_000_000_000,
             workout_name: "test".into(),
-            ftp: 250,
+            ftp_w: 250,
             weight_kg: 72.0,
             trainer: Some("SimTrainer".into()),
             hrm: None,
@@ -237,29 +245,29 @@ mod tests {
         }
     }
 
-    fn sample(t_s: u64, power: Option<u16>) -> Sample {
+    fn sample(t_s: u64, power_w: Option<u16>) -> Sample {
         Sample {
             t_ms: t_s * 1000,
-            power,
-            cadence: None,
-            hr: None,
-            target: None,
+            power_w,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            target_power_w: None,
+            target_cadence_rpm: None,
         }
     }
 
-    fn event(t_ms: u64, kind: RideEventKind) -> RideEvent {
-        RideEvent {
+    fn event(t_ms: u64, kind: SessionEventKind) -> SessionEvent {
+        SessionEvent {
             t_ms,
             kind,
-            seg: None,
+            segment_index: None,
         }
     }
 
-    fn workout(segments: Vec<Segment>) -> Workout {
-        Workout {
+    fn workout(segments: Vec<Segment>) -> ExecutableWorkout {
+        ExecutableWorkout {
             name: "w".into(),
             description: String::new(),
-            source_format: SourceFormat::Zwo,
             segments,
             text_events: vec![],
         }
@@ -403,10 +411,10 @@ mod tests {
         // 3600 samples @ 250 W, End event at exactly 1 h.
         let samples: Vec<Sample> = (0..3600).map(|t| sample(t, Some(250))).collect();
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(3_600_000, RideEventKind::End),
+            event(0, SessionEventKind::Start),
+            event(3_600_000, SessionEventKind::End),
         ];
-        let data = RideData {
+        let data = SessionRecording {
             header: header(),
             samples,
             events,
@@ -414,27 +422,27 @@ mod tests {
         let t = session_totals(&data, 250);
         assert_eq!(t.elapsed_s, 3600);
         assert_eq!(t.timer_s, 3600);
-        assert_eq!(t.avg_power, Some(250));
-        assert_eq!(t.max_power, Some(250));
-        assert_eq!(t.np, Some(250));
-        assert!((t.if_.unwrap() - 1.0).abs() < EPS);
-        assert!((t.tss.unwrap() - 100.0).abs() < EPS);
+        assert_eq!(t.average_power_w, Some(250));
+        assert_eq!(t.max_power_w, Some(250));
+        assert_eq!(t.normalized_power_w, Some(250));
+        assert!((t.intensity_factor.unwrap() - 1.0).abs() < EPS);
+        assert!((t.training_stress_score.unwrap() - 100.0).abs() < EPS);
         // kJ = 3600 s × 250 W / 1000 = 900.
-        assert_eq!(t.kj, 900);
-        assert_eq!(t.avg_hr, None);
-        assert_eq!(t.max_hr, None);
-        assert_eq!(t.avg_cadence, None);
+        assert_eq!(t.work_kj, 900);
+        assert_eq!(t.average_heart_rate_bpm, None);
+        assert_eq!(t.max_heart_rate_bpm, None);
+        assert_eq!(t.average_cadence_rpm, None);
     }
 
     #[test]
     fn session_totals_with_pause_gap_and_sparse_hr_cadence() {
-        // Timeline: ride 10 s → pause 10 s → ride 5 s → end at 25 s.
+        // Timeline: record 10 s → pause 10 s → record 5 s → end at 25 s.
         // Samples only while moving: t = 0..9 (@100 W) and t = 20..24 (@200 W).
         let mut samples: Vec<Sample> = Vec::new();
         for t in 0..10u64 {
             let mut s = sample(t, Some(100));
             // HR present on the first 6 samples only: 4×140 then 2×150.
-            s.hr = if t < 4 {
+            s.heart_rate_bpm = if t < 4 {
                 Some(140)
             } else if t < 6 {
                 Some(150)
@@ -442,19 +450,19 @@ mod tests {
                 None
             };
             // Cadence present on even seconds only.
-            s.cadence = if t % 2 == 0 { Some(90) } else { None };
+            s.cadence_rpm = if t % 2 == 0 { Some(90) } else { None };
             samples.push(s);
         }
         for t in 20..25u64 {
             samples.push(sample(t, Some(200)));
         }
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(10_000, RideEventKind::Pause),
-            event(20_000, RideEventKind::Resume),
-            event(25_000, RideEventKind::End),
+            event(0, SessionEventKind::Start),
+            event(10_000, SessionEventKind::Pause),
+            event(20_000, SessionEventKind::Resume),
+            event(25_000, SessionEventKind::End),
         ];
-        let data = RideData {
+        let data = SessionRecording {
             header: header(),
             samples,
             events,
@@ -467,36 +475,36 @@ mod tests {
 
         // avg power over the 15 samples with power:
         // (10·100 + 5·200)/15 = 2000/15 = 133.33 → 133.
-        assert_eq!(t.avg_power, Some(133));
-        assert_eq!(t.max_power, Some(200));
+        assert_eq!(t.average_power_w, Some(133));
+        assert_eq!(t.max_power_w, Some(200));
 
         // 15-sample series is shorter than the 30 s NP window → NP = avg.
-        assert_eq!(t.np, Some(133));
-        assert!((t.if_.unwrap() - 133.0 / 200.0).abs() < EPS);
+        assert_eq!(t.normalized_power_w, Some(133));
+        assert!((t.intensity_factor.unwrap() - 133.0 / 200.0).abs() < EPS);
         let expected_tss = 15.0 * 133.0 * (133.0 / 200.0) / (200.0 * 3600.0) * 100.0;
-        assert!((t.tss.unwrap() - expected_tss).abs() < EPS);
+        assert!((t.training_stress_score.unwrap() - expected_tss).abs() < EPS);
 
         // HR averaged over the 6 present samples: (4·140 + 2·150)/6 = 143.33 → 143.
-        assert_eq!(t.avg_hr, Some(143));
-        assert_eq!(t.max_hr, Some(150));
+        assert_eq!(t.average_heart_rate_bpm, Some(143));
+        assert_eq!(t.max_heart_rate_bpm, Some(150));
         // Cadence over 5 present samples (t = 0,2,4,6,8), all 90.
-        assert_eq!(t.avg_cadence, Some(90));
+        assert_eq!(t.average_cadence_rpm, Some(90));
 
         // kJ accumulation: 10·100 + 5·200 = 2000 J → 2 kJ.
-        assert_eq!(t.kj, 2);
+        assert_eq!(t.work_kj, 2);
     }
 
     #[test]
-    fn session_totals_ride_ending_while_paused() {
+    fn session_totals_ending_while_paused() {
         // Pause at 10 s, End at 15 s with no Resume: the trailing paused
         // stretch counts toward elapsed but not timer.
         let samples: Vec<Sample> = (0..10).map(|t| sample(t, Some(150))).collect();
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(10_000, RideEventKind::Pause),
-            event(15_000, RideEventKind::End),
+            event(0, SessionEventKind::Start),
+            event(10_000, SessionEventKind::Pause),
+            event(15_000, SessionEventKind::End),
         ];
-        let data = RideData {
+        let data = SessionRecording {
             header: header(),
             samples,
             events,
@@ -504,7 +512,7 @@ mod tests {
         let t = session_totals(&data, 200);
         assert_eq!(t.elapsed_s, 15);
         assert_eq!(t.timer_s, 10);
-        assert_eq!(t.avg_power, Some(150));
+        assert_eq!(t.average_power_w, Some(150));
     }
 
     #[test]
@@ -515,14 +523,14 @@ mod tests {
             .map(|t| sample(t, Some(100)))
             .collect();
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(5_000, RideEventKind::Pause),
-            event(10_000, RideEventKind::Resume),
-            event(15_000, RideEventKind::Pause),
-            event(25_000, RideEventKind::Resume),
-            event(30_000, RideEventKind::End),
+            event(0, SessionEventKind::Start),
+            event(5_000, SessionEventKind::Pause),
+            event(10_000, SessionEventKind::Resume),
+            event(15_000, SessionEventKind::Pause),
+            event(25_000, SessionEventKind::Resume),
+            event(30_000, SessionEventKind::End),
         ];
-        let data = RideData {
+        let data = SessionRecording {
             header: header(),
             samples,
             events,
@@ -534,33 +542,33 @@ mod tests {
 
     #[test]
     fn session_totals_missing_power_entirely() {
-        // HR-only ride: no power on any sample → power-derived fields None,
+        // HR-only session: no power on any sample → power-derived fields None,
         // kJ 0; HR still aggregates.
         let samples: Vec<Sample> = (0..40)
             .map(|t| {
                 let mut s = sample(t, None);
-                s.hr = Some(120);
+                s.heart_rate_bpm = Some(120);
                 s
             })
             .collect();
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(40_000, RideEventKind::End),
+            event(0, SessionEventKind::Start),
+            event(40_000, SessionEventKind::End),
         ];
-        let data = RideData {
+        let data = SessionRecording {
             header: header(),
             samples,
             events,
         };
         let t = session_totals(&data, 250);
-        assert_eq!(t.avg_power, None);
-        assert_eq!(t.max_power, None);
-        assert_eq!(t.np, None);
-        assert_eq!(t.if_, None);
-        assert_eq!(t.tss, None);
-        assert_eq!(t.kj, 0);
-        assert_eq!(t.avg_hr, Some(120));
-        assert_eq!(t.max_hr, Some(120));
+        assert_eq!(t.average_power_w, None);
+        assert_eq!(t.max_power_w, None);
+        assert_eq!(t.normalized_power_w, None);
+        assert_eq!(t.intensity_factor, None);
+        assert_eq!(t.training_stress_score, None);
+        assert_eq!(t.work_kj, 0);
+        assert_eq!(t.average_heart_rate_bpm, Some(120));
+        assert_eq!(t.max_heart_rate_bpm, Some(120));
     }
 
     #[test]
@@ -572,56 +580,56 @@ mod tests {
             samples.push(sample(t, None));
         }
         let events = vec![
-            event(0, RideEventKind::Start),
-            event(60_000, RideEventKind::End),
+            event(0, SessionEventKind::Start),
+            event(60_000, SessionEventKind::End),
         ];
-        let data = RideData {
+        let data = SessionRecording {
             header: header(),
             samples,
             events,
         };
         let t = session_totals(&data, 250);
-        assert_eq!(t.avg_power, Some(300)); // present samples only
+        assert_eq!(t.average_power_w, Some(300)); // present samples only
         let series: Vec<u16> = std::iter::repeat_n(300u16, 30)
             .chain(std::iter::repeat_n(0u16, 30))
             .collect();
-        assert_eq!(t.np, Some(normalized_power(&series)));
-        assert!(t.np.unwrap() < 300); // zeros drag NP below the present-avg
-        assert_eq!(t.kj, 9); // 30 × 300 J = 9000 J
+        assert_eq!(t.normalized_power_w, Some(normalized_power(&series)));
+        assert!(t.normalized_power_w.unwrap() < 300); // zeros drag NP below the present-avg
+        assert_eq!(t.work_kj, 9); // 30 × 300 J = 9000 J
     }
 
     #[test]
-    fn session_totals_empty_ride() {
-        let data = RideData {
+    fn session_totals_empty_session() {
+        let data = SessionRecording {
             header: header(),
             samples: vec![],
             events: vec![
-                event(0, RideEventKind::Start),
-                event(5_000, RideEventKind::End),
+                event(0, SessionEventKind::Start),
+                event(5_000, SessionEventKind::End),
             ],
         };
         let t = session_totals(&data, 250);
         assert_eq!(t.elapsed_s, 5);
         assert_eq!(t.timer_s, 5);
-        assert_eq!(t.avg_power, None);
-        assert_eq!(t.np, None);
-        assert_eq!(t.if_, None);
-        assert_eq!(t.tss, None);
-        assert_eq!(t.kj, 0);
+        assert_eq!(t.average_power_w, None);
+        assert_eq!(t.normalized_power_w, None);
+        assert_eq!(t.intensity_factor, None);
+        assert_eq!(t.training_stress_score, None);
+        assert_eq!(t.work_kj, 0);
     }
 
     #[test]
     fn session_totals_zero_ftp_skips_if_tss() {
         let samples: Vec<Sample> = (0..10).map(|t| sample(t, Some(150))).collect();
-        let data = RideData {
+        let data = SessionRecording {
             header: header(),
             samples,
-            events: vec![event(0, RideEventKind::Start)],
+            events: vec![event(0, SessionEventKind::Start)],
         };
         let t = session_totals(&data, 0);
-        assert_eq!(t.np, Some(150));
-        assert_eq!(t.if_, None);
-        assert_eq!(t.tss, None);
+        assert_eq!(t.normalized_power_w, Some(150));
+        assert_eq!(t.intensity_factor, None);
+        assert_eq!(t.training_stress_score, None);
     }
 
     #[test]
@@ -682,7 +690,9 @@ mod tests {
             cadence_rpm: None,
         }]);
         let ftp = 200;
-        let series: Vec<u16> = (0..300).map(|t| w.target_at(t, ftp, 1.0).unwrap()).collect();
+        let series: Vec<u16> = (0..300)
+            .map(|t| w.target_power_w_at(t, ftp, 1.0).unwrap())
+            .collect();
         let np = normalized_power(&series);
         let (if_, tss_v) = estimate_if_tss(&w, ftp);
         assert!((if_ - intensity_factor(np, ftp)).abs() < EPS);

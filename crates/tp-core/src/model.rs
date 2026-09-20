@@ -60,25 +60,17 @@ pub struct TextEvent {
     pub duration_s: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SourceFormat {
-    Zwo,
-    Erg,
-    Mrc,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Workout {
+pub struct ExecutableWorkout {
     pub name: String,
     pub description: String,
-    pub source_format: SourceFormat,
     /// Flat segment list; interval repeats are pre-expanded by the parser.
     pub segments: Vec<Segment>,
     /// Sorted by `offset_s`; offsets are workout-absolute.
     pub text_events: Vec<TextEvent>,
 }
 
-impl Workout {
+impl ExecutableWorkout {
     pub fn duration_s(&self) -> u32 {
         self.segments.iter().map(Segment::duration_s).sum()
     }
@@ -100,7 +92,7 @@ impl Workout {
     /// ERG target in whole watts at offset `t_s`. `None` inside FreeRide or
     /// past the end. Ramps resolve both endpoints then interpolate linearly
     /// in watts by elapsed fraction.
-    pub fn target_at(&self, t_s: u32, ftp: u16, intensity: f64) -> Option<u16> {
+    pub fn target_power_w_at(&self, t_s: u32, ftp: u16, intensity: f64) -> Option<u16> {
         let (idx, into) = self.segment_at(t_s)?;
         match &self.segments[idx] {
             Segment::Steady { power, .. } => Some(power.resolve(ftp, intensity)),
@@ -119,17 +111,29 @@ impl Workout {
             Segment::FreeRide { .. } => None,
         }
     }
+
+    /// Compiled cadence prescription in rpm at active-time offset `t_s`.
+    /// `None` inside FreeRide, when cadence is not prescribed, or past the
+    /// end of the workout.
+    pub fn target_cadence_rpm_at(&self, t_s: u32) -> Option<u16> {
+        let (segment_index, _) = self.segment_at(t_s)?;
+        match &self.segments[segment_index] {
+            Segment::Steady { cadence_rpm, .. } | Segment::Ramp { cadence_rpm, .. } => {
+                *cadence_rpm
+            }
+            Segment::FreeRide { .. } => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn wk(segments: Vec<Segment>) -> Workout {
-        Workout {
+    fn wk(segments: Vec<Segment>) -> ExecutableWorkout {
+        ExecutableWorkout {
             name: "t".into(),
             description: String::new(),
-            source_format: SourceFormat::Zwo,
             segments,
             text_events: vec![],
         }
@@ -150,10 +154,10 @@ mod tests {
             end: PowerTarget::Watts(200),
             cadence_rpm: None,
         }]);
-        assert_eq!(w.target_at(0, 250, 1.0), Some(100));
-        assert_eq!(w.target_at(50, 250, 1.0), Some(150));
-        assert_eq!(w.target_at(99, 250, 1.0), Some(199));
-        assert_eq!(w.target_at(100, 250, 1.0), None); // past end
+        assert_eq!(w.target_power_w_at(0, 250, 1.0), Some(100));
+        assert_eq!(w.target_power_w_at(50, 250, 1.0), Some(150));
+        assert_eq!(w.target_power_w_at(99, 250, 1.0), Some(199));
+        assert_eq!(w.target_power_w_at(100, 250, 1.0), None); // past end
     }
 
     #[test]
@@ -162,14 +166,17 @@ mod tests {
             Segment::Steady {
                 duration_s: 60,
                 power: PowerTarget::Watts(100),
-                cadence_rpm: None,
+                cadence_rpm: Some(95),
             },
             Segment::FreeRide { duration_s: 30 },
         ]);
         assert_eq!(w.segment_at(59), Some((0, 59)));
         assert_eq!(w.segment_at(60), Some((1, 0)));
-        assert_eq!(w.target_at(60, 250, 1.0), None); // FreeRide
+        assert_eq!(w.target_power_w_at(60, 250, 1.0), None); // FreeRide
+        assert_eq!(w.target_cadence_rpm_at(0), Some(95));
+        assert_eq!(w.target_cadence_rpm_at(60), None); // FreeRide
         assert_eq!(w.segment_at(90), None);
+        assert_eq!(w.target_cadence_rpm_at(90), None);
         assert_eq!(w.duration_s(), 90);
     }
 }

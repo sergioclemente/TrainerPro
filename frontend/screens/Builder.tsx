@@ -527,7 +527,6 @@ export default function Builder() {
   return (
     <div className="screen builder" onKeyDown={onKeyDown} tabIndex={-1}>
       <div className="b-top">
-        <h1>Build a Workout</h1>
         <input
           ref={nameRef}
           className="b-name"

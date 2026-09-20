@@ -8,13 +8,33 @@ export interface WorkoutSummary {
   id: string;
   name: string;
   description: string;
-  source_format: string;
+  training_focus: string | null;
   duration_s: number;
   est_if: number;
   est_tss: number;
   graph: [number, number][]; // (t_s, %FTP) breakpoints
   origin: string | null;
 }
+
+export interface SchedulePlacement {
+  date_local: string;
+  time_local: string | null;
+  time_zone: string | null;
+}
+
+export type NextUpItem =
+  | {
+      kind: "scheduled";
+      scheduled_workout_id: string;
+      placement: SchedulePlacement;
+      workout: WorkoutSummary;
+    }
+  | {
+      kind: "recommendation";
+      recommender: string;
+      training_focus: string;
+      workout: WorkoutSummary;
+    };
 
 export interface ImportResult {
   summary: WorkoutSummary;
@@ -38,7 +58,9 @@ export interface ScanResult {
 
 export interface PlayerState {
   phase: "ready" | "riding" | "paused" | "finished";
-  workout_id: string;
+  workout_session_id: string;
+  workout_definition_id: string;
+  scheduled_workout_id: string | null;
   workout_name: string;
   workout_duration_s: number;
   seg_idx: number | null;
@@ -48,11 +70,14 @@ export interface PlayerState {
   /** Time actually ridden: pauses and skipped spans excluded. */
   ride_s: number;
   intensity: number;
-  target: number | null;
-  avg_power: number | null;
+  /** Resolved workout power prescription after FTP/intensity adjustment. */
+  target_power_w: number | null;
+  /** Compiled workout cadence prescription. */
+  target_cadence_rpm: number | null;
+  average_power_w: number | null;
   /** Live session totals, same maths as the post-ride summary. */
-  np: number | null;
-  tss: number | null;
+  normalized_power_w: number | null;
+  training_stress_score: number | null;
   /** Efficiency factor: NP / average HR. Null without an HRM. */
   ef: number | null;
   kcal: number | null;
@@ -69,39 +94,41 @@ export interface PlayerMeasurement {
 export interface LapRow {
   start_s: number;
   duration_s: number;
-  avg_power: number | null;
-  max_power: number | null;
-  avg_hr: number | null;
+  average_power_w: number | null;
+  max_power_w: number | null;
+  average_heart_rate_bpm: number | null;
 }
 
-export interface RideSummary {
-  ride_id: string;
+export interface ActivitySummary {
+  activity_id: string;
+  scheduled_workout_id: string | null;
   workout_name: string;
-  started_at: number;
+  started_at_unix_ms: number;
   elapsed_s: number;
   timer_s: number;
-  avg_power: number | null;
-  max_power: number | null;
-  np: number | null;
-  if_: number | null;
-  tss: number | null;
-  avg_hr: number | null;
-  max_hr: number | null;
-  kj: number;
+  average_power_w: number | null;
+  max_power_w: number | null;
+  normalized_power_w: number | null;
+  intensity_factor: number | null;
+  training_stress_score: number | null;
+  average_heart_rate_bpm: number | null;
+  max_heart_rate_bpm: number | null;
+  work_kj: number;
   completed_pct: number;
   fit_path: string;
   laps: LapRow[];
 }
 
-export interface RideRow {
+export interface ActivityRow {
   id: string;
+  scheduled_workout_id: string | null;
   workout_name: string;
-  started_at: number;
+  started_at_unix_ms: number;
   timer_s: number;
-  avg_power: number | null;
-  np: number | null;
-  tss: number | null;
-  avg_hr: number | null;
+  average_power_w: number | null;
+  normalized_power_w: number | null;
+  training_stress_score: number | null;
+  average_heart_rate_bpm: number | null;
   completed_pct: number;
   fit_path: string;
 }
@@ -125,6 +152,26 @@ export interface Settings {
   export_dir: string | null;
   /** Workout-library providers keyed by id (planner, woz, …). */
   sources: Record<string, SourceConfig>;
+}
+
+export interface IntervalsConnectionStatus {
+  connected: boolean;
+  external_account_id: string | null;
+  display_name: string | null;
+  time_zone: string | null;
+  last_sync_succeeded_at_unix_ms: number | null;
+  last_sync_error: string | null;
+}
+
+export interface IntervalsSyncReport {
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  removed: number;
+  unsupported: number;
+  issues: string[];
+  oldest_date_local: string;
+  newest_date_local: string;
 }
 
 export interface SegmentRow {
@@ -226,6 +273,7 @@ export const ipc = {
   listWorkouts: () => invoke<WorkoutSummary[]>("list_workouts"),
   deleteWorkout: (id: string) => invoke<void>("delete_workout", { id }),
   getWorkoutDetail: (id: string) => invoke<WorkoutDetail>("get_workout_detail", { id }),
+  listNextUp: () => invoke<NextUpItem[]>("list_next_up"),
 
   startScan: () => invoke<void>("start_scan"),
   connectDevice: (role: Role, platformId: string, name?: string) =>
@@ -234,19 +282,20 @@ export const ipc = {
   forgetDevice: (role: Role) => invoke<void>("forget_device", { role }),
   getDeviceState: () => invoke<DeviceSlot[]>("get_device_state"),
 
-  loadWorkout: (id: string) => invoke<PlayerState>("load_workout", { id }),
+  loadWorkout: (id: string, scheduledWorkoutId: string | null = null) =>
+    invoke<PlayerState>("load_workout", { id, scheduledWorkoutId }),
   startRide: () => invoke<void>("start_ride"),
   pauseRide: () => invoke<void>("pause_ride"),
   resumeRide: () => invoke<void>("resume_ride"),
   skipSegment: () => invoke<void>("skip_segment"),
   setIntensity: (pct: number) => invoke<void>("set_intensity", { pct }),
   setErg: (enabled: boolean) => invoke<void>("set_erg", { enabled }),
-  endRide: () => invoke<RideSummary>("end_ride"),
+  endRide: () => invoke<ActivitySummary>("end_ride"),
   clearRide: () => invoke<void>("clear_ride"),
   getPlayerState: () => invoke<PlayerState | null>("get_player_state"),
 
-  listRides: () => invoke<RideRow[]>("list_rides"),
-  deleteRide: (id: string) => invoke<void>("delete_ride", { id }),
+  listActivities: () => invoke<ActivityRow[]>("list_activities"),
+  deleteActivity: (id: string) => invoke<void>("delete_activity", { id }),
   saveFitAs: (id: string, destPath: string) => invoke<void>("save_fit_as", { id, destPath }),
   revealFit: (id: string) => invoke<void>("reveal_fit", { id }),
   openGarminImport: () => invoke<void>("open_garmin_import"),
@@ -268,6 +317,15 @@ export const ipc = {
 
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Settings) => invoke<Settings>("update_settings", { settings }),
+
+  getIntervalsIcuConnection: () =>
+    invoke<IntervalsConnectionStatus>("get_intervals_icu_connection"),
+  connectIntervalsIcu: (apiKey: string) =>
+    invoke<IntervalsConnectionStatus>("connect_intervals_icu", { apiKey }),
+  refreshIntervalsIcu: (todayDateLocal: string) =>
+    invoke<IntervalsSyncReport>("refresh_intervals_icu", { todayDateLocal }),
+  disconnectIntervalsIcu: () =>
+    invoke<IntervalsConnectionStatus>("disconnect_intervals_icu"),
 };
 
 export function fmtDuration(totalS: number): string {

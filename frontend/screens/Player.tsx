@@ -57,7 +57,7 @@ export default function Player() {
     });
   }, []);
 
-  const workoutId = player?.workout_id;
+  const workoutId = player?.workout_definition_id;
   useEffect(() => {
     if (!workoutId) return;
     let live = true;
@@ -144,20 +144,20 @@ export default function Player() {
     return (
       <div className="screen">
         <p className="empty">No workout loaded.</p>
-        <button onClick={() => go("library")}>Back to library</button>
+        <button onClick={() => go("library")}>Back to Workouts</button>
       </div>
     );
   }
 
-  const workout = workouts.find((w) => w.id === player.workout_id);
+  const workout = workouts.find((w) => w.id === player.workout_definition_id);
   const power = measurement?.power_smoothed_3s_w ?? measurement?.power_w ?? null;
-  const target = player.target;
+  const targetPower = player.target_power_w;
   const weight = settings?.profile.weight_kg ?? null;
   const wkg =
     power !== null && weight !== null && weight > 0 ? (power / weight).toFixed(1) : null;
   const powerClass =
-    power !== null && target !== null && target > 0
-      ? Math.abs(power - target) / target <= 0.05
+    power !== null && targetPower !== null && targetPower > 0
+      ? Math.abs(power - targetPower) / targetPower <= 0.05
         ? "on-target"
         : "off-target"
       : "";
@@ -174,14 +174,13 @@ export default function Player() {
   // HR — is the one in the stats strip.
   const hr = measurement?.heart_rate_bpm ?? null;
   const liveEf = power !== null && hr !== null && hr > 0 ? (power / hr).toFixed(2) : null;
-  /** The interval's prescribed cadence, when the ZWO named one. */
-  const targetCadence = segment?.cadence_rpm ?? null;
+  const targetCadence = player.target_cadence_rpm;
   const targetLabel = !player.erg_enabled
     ? "ERG off"
     : player.phase === "ready"
       ? "ready to start"
-      : target !== null
-        ? `target ${target} W`
+      : targetPower !== null
+        ? `target ${targetPower} W`
         : "free ride";
 
   async function endRide() {
@@ -193,7 +192,7 @@ export default function Player() {
     try {
       const summary = await ipc.endRide();
       useStore.setState({ summary, screen: "summary", player: null, measurement: null });
-      void useStore.getState().refreshRides();
+      void useStore.getState().refreshActivities();
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
     }
@@ -293,9 +292,9 @@ export default function Player() {
 
       {showStats && (
         <div className="stats-strip">
-          <Stat value={player.avg_power} unit="W" label="avg power" />
-          <Stat value={player.np} unit="W" label="NP" />
-          <Stat value={player.tss} label="TSS" digits={0} />
+          <Stat value={player.average_power_w} unit="W" label="avg power" />
+          <Stat value={player.normalized_power_w} unit="W" label="NP" />
+          <Stat value={player.training_stress_score} label="TSS" digits={0} />
           {/* Named apart from the live EF under the heart rate — same units,
               different question: NP over average HR for the ride so far. */}
           <Stat value={player.ef} label="session EF" digits={2} />

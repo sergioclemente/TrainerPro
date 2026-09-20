@@ -3,11 +3,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { ipc } from "../ipc";
 import { useStore } from "../state";
 import LibrariesPanel from "./Libraries";
+import ConnectionsPanel from "./Connections";
 
 // Settings is now a tabbed screen. "Libraries" (workout sources) used to be its
 // own top-level screen — it's mostly configuration, so it lives here now as a
 // tab alongside Basic info and Export.
-type Tab = "basic" | "export" | "libraries";
+type Tab = "basic" | "export" | "libraries" | "connections";
 
 export default function SettingsScreen() {
   const { settings, refreshSettings, pushToast, settingsTab } = useStore();
@@ -59,12 +60,12 @@ export default function SettingsScreen() {
     ["basic", "Basic info"],
     ["export", "Export"],
     ["libraries", "Libraries"],
+    ["connections", "Connections"],
   ];
 
   return (
     <div className="screen">
       <header className="screen-head">
-        <h1>Settings</h1>
         <div className="tabs">
           {TABS.map(([id, label]) => (
             <button
@@ -121,7 +122,7 @@ export default function SettingsScreen() {
               {settings.export_dir && <button onClick={clearExportDir}>Reset</button>}
             </div>
             <p className="muted footnote" style={{ marginTop: 0 }}>
-              Finished rides always save into the app's data folder; when an export
+              Completed activities always save into the app's data folder; when an export
               folder is set, a copy with a friendly name is written there too.
             </p>
           </div>
@@ -129,6 +130,7 @@ export default function SettingsScreen() {
       )}
 
       {tab === "libraries" && <LibrariesPanel />}
+      {tab === "connections" && <ConnectionsPanel />}
     </div>
   );
 }

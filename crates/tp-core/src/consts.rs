@@ -29,3 +29,11 @@ pub const FIT_EPOCH_OFFSET_S: u64 = 631_065_600;
 /// Power fraction sanity bounds for parsed workout targets (of FTP).
 pub const POWER_FRACTION_MIN: f64 = 0.05;
 pub const POWER_FRACTION_MAX: f64 = 3.0;
+/// Highest cadence accepted by the semantic workout model.
+pub const WORKOUT_CADENCE_RPM_MAX: u16 = 300;
+/// Most repetitions accepted for one semantic workout repeat.
+pub const WORKOUT_REPEAT_COUNT_MAX: u32 = 100;
+/// Deepest supported nesting of semantic workout repeats.
+pub const WORKOUT_REPEAT_DEPTH_MAX: usize = 8;
+/// Largest flat workout the semantic compiler will allocate.
+pub const WORKOUT_EXECUTABLE_SEGMENTS_MAX: u64 = 10_000;

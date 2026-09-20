@@ -37,7 +37,6 @@ export default function Devices() {
   return (
     <div className="screen">
       <header className="screen-head">
-        <h1>Devices</h1>
         <button onClick={scan} disabled={scanning}>
           {scanning ? "Scanning…" : "Scan for devices"}
         </button>
