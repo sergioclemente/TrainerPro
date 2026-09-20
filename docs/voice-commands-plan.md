@@ -1,7 +1,7 @@
 # Voice commands plan
 
 Status: Player-only MVP implemented; release readiness remains
-Last updated: 2026-09-17
+Last updated: 2026-09-18
 
 This is the active task list for local voice commands. Durable architecture
 lives in [`architecture.md`](architecture.md), and settled alternatives live in
@@ -148,6 +148,12 @@ Safety invariants:
   EmbeddingGemma's `model_q4.ort` and Moonshine's `encoder.ort`. Each produced
   the expected source-specific persistent Voice error; Retry remained bounded
   to Voice, and pointer intensity control continued to update the Player.
+- A fresh release-mode QA bundle on September 18, 2026 used the exact
+  `com.trainerpro.desktop.qa` identity, connected Simulated KICKR, loaded both
+  application-local models to **Listening**, and retained pointer intensity
+  plus keyboard start control with Voice disabled. Voice was re-enabled after
+  the smoke test. The matching production bundle was also rebuilt without the
+  simulator feature.
 - The repeatable human-microphone scenario is
   [`backend/tests/e2e/scenarios/voice-player-simulated-workout.md`](../backend/tests/e2e/scenarios/voice-player-simulated-workout.md).
   Its full run is intentionally deferred to final QA rather than blocking
@@ -197,9 +203,11 @@ Safety invariants:
 - [ ] Run the complete simulator-backed spoken-command QA scenario.
 - [ ] Verify countdown, end, and voice cues through speakers for echo-driven
   false activation and missed commands.
-- [ ] Verify pointer and keyboard controls while permission is denied, voice is
-  disabled, and voice is in persistent error.
-- [ ] Build the release TrainerPro QA `.app`, verify its exact QA bundle
+- [x] Verify pointer and keyboard controls while Voice is disabled, and pointer
+  controls while Voice is in a persistent model-load error.
+- [ ] Verify pointer and keyboard controls while microphone permission is
+  denied or revoked.
+- [x] Build the release TrainerPro QA `.app`, verify its exact QA bundle
   identity, and validate packaged permission plus application-local model
   loading.
 - [ ] Manually validate ride-affecting commands with a physical trainer;
@@ -252,6 +260,10 @@ commit `663c475a86e5d738041646c7a522160db6870839` on
 
 ## Change log
 
+- 2026-09-18: Rebuilt and audited release-mode QA and production application
+  bundles. The packaged QA smoke test reached **Listening** with local models,
+  connected the simulator, and kept pointer and keyboard controls functional
+  with Voice disabled.
 - 2026-09-17: Reconciled this document with the implemented Player-only MVP,
   removed abandoned command-model spike history, corrected full-catalog-first
   routing, and reorganized remaining work into release, evaluation, and
