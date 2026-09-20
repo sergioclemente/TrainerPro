@@ -62,7 +62,7 @@ export interface Toast {
 
 interface Store {
   screen: Screen;
-  /** Which tab the Settings screen opens on (basic | export | libraries). */
+  /** Which tab the Settings screen opens on (basic | export | libraries | connections). */
   settingsTab: string;
   nextUp: NextUpItem[];
   nextUpStatus: "idle" | "loading" | "ready" | "error";

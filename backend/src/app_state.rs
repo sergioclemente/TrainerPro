@@ -14,6 +14,9 @@ use crate::player_runtime::PlayerHandle;
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub data_dir: PathBuf,
+    /// OS credential-vault service name, scoped by the active Tauri bundle id
+    /// so production and QA credentials remain isolated.
+    pub credential_service: String,
     pub hub: DeviceHub,
     pub player: tokio::sync::Mutex<Option<PlayerHandle>>,
     /// Last planner_list result; used for edit-URL construction.

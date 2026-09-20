@@ -70,10 +70,12 @@ Outcome: scheduled workouts from an external planning authority are locally
 available and remain ridable offline.
 
 Status: the read-only API contract and representative cycling `workout_doc`
-shape have been validated against a live account. A pure adapter and bounded
-personal-API-key client are implemented and fixture-tested. Provider-scoped,
-transactional schedule persistence is implemented behind the unwired sync
-boundary. Credential storage, connection UI, and sync orchestration remain
+shape have been validated against a live account. The desktop app now validates
+a personal API key, stores it in the OS credential manager, exposes connection
+and sync health in Settings, and refreshes a bounded provider-local schedule
+window into provider-scoped transactional persistence. Cached workouts render
+before the startup refresh and remain executable when the provider is
+unavailable. Production OAuth and a manual end-to-end app/hardware pass remain
 outstanding.
 
 - Add provider connections, capability declarations, provider links, external

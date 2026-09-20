@@ -1,9 +1,9 @@
 # Intervals.icu inbound discovery
 
 Status: read-only API discovery for the first connected-provider integration.
-This evidence now backs a pure `workout_doc`-to-TPW adapter and bounded
-authenticated calendar client, but not an implemented provider connection or
-sync contract.
+This evidence now backs the implemented personal-key account validation,
+bounded calendar client, `workout_doc`-to-TPW adapter, and transactional inbound
+sync. OAuth and every outbound capability remain future work.
 
 ## Confirmed public contract
 
@@ -105,7 +105,9 @@ answer:
 4. How are deletion, cancellation, all-day placement, and timed placement
    represented?
 
-Provider-scoped persistence now preserves stable local identities, remote
-revision, last-good data, and bounded deletion semantics. The next production
-slice is the user-facing connection and sync orchestration around that
-boundary.
+Provider-scoped persistence preserves stable local identities, remote revision,
+last-good data, and bounded deletion semantics. The desktop connection stores
+the API key in the OS credential manager, syncs a 7-day lookback and 42-day
+lookahead window, and exposes lifecycle/health through Settings. The remaining
+manual gate is an end-to-end connect, edit, delete, offline restart, and ride
+pass against a real account before production OAuth work.

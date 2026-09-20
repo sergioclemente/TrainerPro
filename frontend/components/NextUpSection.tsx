@@ -1,35 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AppError, NextUpItem, SchedulePlacement, fmtDuration, ipc } from "../ipc";
 import WorkoutGraph from "./WorkoutGraph";
 import { useStore } from "../state";
+import { dateKeyInZone } from "../date";
 
-function localDateKey(now: Date): string {
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function dateKeyInZone(now: Date, timeZone: string | null): string {
-  if (!timeZone) return localDateKey(now);
-  try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(now);
-    const part = (type: Intl.DateTimeFormatPartTypes) =>
-      parts.find((candidate) => candidate.type === type)?.value;
-    const year = part("year");
-    const month = part("month");
-    const day = part("day");
-    if (year && month && day) return `${year}-${month}-${day}`;
-  } catch {
-    // An invalid provider time zone should not make Next Up unusable.
-  }
-  return localDateKey(now);
-}
+let automaticProviderSyncStarted = false;
 
 function shiftDateKey(key: string, days: number): string {
   const [year, month, day] = key.split("-").map(Number);
@@ -71,10 +46,53 @@ function itemKey(item: NextUpItem): string {
 }
 
 export default function NextUpSection() {
-  const { nextUp, nextUpStatus, nextUpError, refreshNextUp, pushToast } = useStore();
+  const {
+    nextUp,
+    nextUpStatus,
+    nextUpError,
+    refreshNextUp,
+    refreshWorkouts,
+    pushToast,
+  } = useStore();
+  const [syncing, setSyncing] = useState(false);
+
+  async function refreshProvider(showSuccess: boolean) {
+    setSyncing(true);
+    try {
+      const connection = await ipc.getIntervalsIcuConnection();
+      if (!connection.connected) {
+        await refreshNextUp();
+        return;
+      }
+      const report = await ipc.refreshIntervalsIcu(
+        dateKeyInZone(new Date(), connection.time_zone),
+      );
+      await Promise.all([refreshNextUp(), refreshWorkouts()]);
+      if (showSuccess) {
+        pushToast(
+          report.issues.length > 0 ? "warn" : "info",
+          report.issues.length > 0
+            ? `Synced with ${report.issues.length} workout issue(s)`
+            : "Intervals.icu is up to date",
+        );
+      }
+    } catch (error) {
+      const message = (error as AppError).message ?? String(error);
+      pushToast("warn", `Intervals.icu sync failed: ${message}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   useEffect(() => {
     void refreshNextUp();
+    if (!automaticProviderSyncStarted) {
+      automaticProviderSyncStarted = true;
+      void refreshProvider(false);
+    }
+    // The automatic attempt is intentionally once per app run; manual refresh
+    // remains available and cached Next Up renders before the network returns.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshNextUp]);
 
   async function openDetail(item: NextUpItem) {
@@ -111,8 +129,8 @@ export default function NextUpSection() {
           <h2>Next Up</h2>
           <p className="muted next-up-subtitle">Choose what you want to ride.</p>
         </div>
-        <button className="ghost" onClick={() => void refreshNextUp()}>
-          Refresh
+        <button className="ghost" onClick={() => void refreshProvider(true)} disabled={syncing}>
+          {syncing ? "Syncing…" : "Refresh"}
         </button>
       </header>
 

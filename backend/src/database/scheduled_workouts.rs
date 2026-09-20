@@ -1,13 +1,5 @@
 //! Scheduled-workout persistence.
 
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "provider persistence lands before the connection command that consumes it"
-    )
-)]
-
 use std::collections::HashSet;
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
@@ -291,11 +283,48 @@ pub fn remove_missing_in_window(
     Ok(missing_ids.len() as u32)
 }
 
+/// Retire every active schedule owned by a disconnected provider account.
+/// Activity references and the last synchronized definitions remain intact.
+pub fn remove_all_for_connection(
+    transaction: &Transaction<'_>,
+    provider_connection_id: &str,
+    removed_at_unix_ms: i64,
+) -> rusqlite::Result<u32> {
+    let mut statement = transaction.prepare(
+        "SELECT id FROM scheduled_workouts
+         WHERE provider_connection_id = ?1 AND removed_at_unix_ms IS NULL",
+    )?;
+    let ids = statement
+        .query_map([provider_connection_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+
+    for id in &ids {
+        transaction.execute(
+            "UPDATE workout_definitions
+             SET retired_at_unix_ms = ?1, updated_at = ?1
+             WHERE id = (
+               SELECT workout_definition_id FROM scheduled_workouts WHERE id = ?2
+             )",
+            rusqlite::params![removed_at_unix_ms, id],
+        )?;
+        transaction.execute(
+            "UPDATE scheduled_workouts
+             SET removed_at_unix_ms = ?1, updated_at_unix_ms = ?1
+             WHERE id = ?2",
+            rusqlite::params![removed_at_unix_ms, id],
+        )?;
+    }
+    Ok(ids.len() as u32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::database::provider_connections::{self, ConnectedProvider};
-    use crate::database::workout_definitions::{self, NewWorkoutDefinition};
+    use crate::database::workout_definitions::{
+        self, NewWorkoutDefinition, ProviderWorkoutDefinition,
+    };
 
     const TPW_JSON: &str = r#"{"format":"TPW","version":1,"title":"Endurance","prescription":{"sport":"cycling","steps":[{"type":"steady","duration_seconds":3600,"power":{"type":"percent_ftp","percent":70}}]}}"#;
 
@@ -425,5 +454,77 @@ mod tests {
             [],
         );
         assert!(missing_connection.is_err());
+    }
+
+    #[test]
+    fn disconnect_removes_only_the_connections_active_schedules() {
+        let mut conn = super::super::test_connection();
+        insert_definition(&conn, "local-definition");
+        insert_schedule(&conn, "local-schedule", "local-definition", "2030-01-01");
+        provider_connections::connect(
+            &conn,
+            &ConnectedProvider {
+                id: "connection",
+                provider: "intervals_icu",
+                external_account_id: "i123",
+                display_name: None,
+                time_zone: "Europe/Zurich",
+                connected_at_unix_ms: 1,
+            },
+        )
+        .unwrap();
+        workout_definitions::insert_provider_copy(
+            &conn,
+            &ProviderWorkoutDefinition {
+                id: "provider-definition",
+                tpw_json: TPW_JSON,
+                origin: "intervals_icu",
+                origin_id: Some(42),
+                origin_ref: "42",
+                synced_at_unix_ms: 10,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO scheduled_workouts (
+               id, workout_definition_id, scheduled_date_local,
+               created_at_unix_ms, updated_at_unix_ms,
+               provider_connection_id, external_event_id)
+             VALUES ('provider-schedule','provider-definition','2030-01-02',
+                     10,10,'connection','42')",
+            [],
+        )
+        .unwrap();
+
+        let transaction = conn.transaction().unwrap();
+        assert_eq!(
+            remove_all_for_connection(&transaction, "connection", 20).unwrap(),
+            1
+        );
+        transaction.commit().unwrap();
+
+        assert_eq!(
+            list_for_next_up(&conn)
+                .unwrap()
+                .iter()
+                .map(|row| row.schedule.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local-schedule"]
+        );
+        assert_eq!(
+            get(&conn, "provider-schedule")
+                .unwrap()
+                .unwrap()
+                .removed_at_unix_ms,
+            Some(20)
+        );
+        assert_eq!(
+            workout_definitions::list(&conn)
+                .unwrap()
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local-definition"]
+        );
     }
 }

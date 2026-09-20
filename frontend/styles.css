@@ -584,6 +584,8 @@ button.big {
   font-size: 14px;
 }
 .form input[type="text"],
+.form input[type="url"],
+.form input[type="password"],
 .form input:not([type]) {
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -591,6 +593,59 @@ button.big {
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 15px;
+}
+
+/* --- connected workout providers --- */
+.connection-list {
+  max-width: 720px;
+}
+.connection-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+.connection-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.connection-head h2 {
+  margin: 0 0 6px;
+}
+.connection-head p {
+  margin: 0;
+}
+.connection-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.connection-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.connection-facts div {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.connection-facts dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.connection-facts dd {
+  margin: 0;
+}
+.connection-error {
+  color: var(--warn);
+  margin: 0;
 }
 
 /* --- toasts --- */

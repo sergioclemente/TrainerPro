@@ -13,7 +13,8 @@ are in [`ALTERNATIVES.md`](ALTERNATIVES.md).
 
 Workout sources normalize into **TrainerPro Workout (TPW)** before persistence.
 Local ZWO/ERG/MRC files and WorkoutPlanner's ZWO response are boundary payloads;
-What's on Zwift already builds a semantic model. None becomes workout identity.
+What's on Zwift already builds a semantic model, and Intervals.icu maps its
+structured `workout_doc` directly. None becomes workout identity.
 
 ```mermaid
 flowchart TD
@@ -21,7 +22,8 @@ flowchart TD
         LOCAL["My Library<br/>local .zwo / .erg / .mrc files"]
         WP["WorkoutPlanner<br/>self-hosted server<br/>Basic Auth, /workout_file ZWO"]
         WOZ["Zwift<br/>whatsonzwift.com fetch<br/>textbars to model"]
-        FUTURE["Future source...<br/>one tab component +<br/>one backend module"]
+        ICU["Intervals.icu<br/>scheduled workout_doc"]
+        FUTURE["Future source..."]
     end
 
     ADAPTERS["Boundary adapters<br/>ZWO / ERG / MRC / source model"]
@@ -34,6 +36,7 @@ flowchart TD
     LOCAL -->|file picker / drag-drop| ADAPTERS
     WP -->|GET /workout_file| ADAPTERS
     WOZ --> ADAPTERS
+    ICU --> TPW
     FUTURE -.-> TPW
     ADAPTERS --> TPW
     TPW --> DB
@@ -45,8 +48,40 @@ flowchart TD
 Adding a source = one frontend tab component registered in `frontend/sources.ts`,
 plus a backend module that produces `WorkoutDefinition` or maps its supported
 payload through a boundary adapter. Provenance columns (`origin`, `origin_ref`)
-remain the current source badges; provider links and sync state replace them in
-the connected-provider phase.
+remain the current source badges. Intervals.icu schedules additionally carry a
+provider connection, external event identity/revision, and sync timestamps.
+
+## Intervals.icu inbound sync
+
+The first connected-provider path is deliberately concrete. It does not turn
+the older workout-library registry into a connector framework.
+
+```mermaid
+sequenceDiagram
+    participant U as Rider
+    participant UI as Settings / Workouts
+    participant K as OS credential manager
+    participant I as Intervals.icu
+    participant D as SQLite
+
+    U->>UI: Connect with personal API key
+    UI->>I: GET athlete/0
+    I-->>UI: account id, name, time zone
+    UI->>K: store key by provider connection id
+    UI->>D: save non-secret active connection
+    UI->>I: GET bounded WORKOUT events
+    I-->>UI: structured workout_doc events
+    UI->>D: transaction: upsert TPW + schedules, reconcile missing events
+    D-->>UI: sync report/status
+    Note over UI,D: Next Up renders cached rows before later refresh attempts
+```
+
+One Intervals.icu account can be active at a time. The refresh boundary covers
+7 days behind and 42 days ahead of the athlete-local date. Provider mapping and
+database reconciliation happen only after a complete HTTP response; fetch
+failure cannot erase cached data. Disconnect removes the vault credential and
+soft-removes active provider schedules/definitions in one database transaction,
+preserving Activity links and historical rows.
 
 ## Next Up projection and Workouts surface
 

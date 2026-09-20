@@ -1,13 +1,5 @@
 //! Transactional inbound schedule sync for the concrete Intervals.icu client.
 
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the sync boundary lands before the connection command that invokes it"
-    )
-)]
-
 use std::collections::HashSet;
 
 use rusqlite::Connection;
@@ -44,6 +36,8 @@ pub(crate) enum IntervalsSyncError {
         connection_id: String,
         provider: String,
     },
+    #[error("provider connection {connection_id} is disconnected")]
+    ConnectionInactive { connection_id: String },
     #[error("invalid completed sync window {oldest_date_local:?} through {newest_date_local:?}")]
     InvalidDateRange {
         oldest_date_local: String,
@@ -93,6 +87,11 @@ pub(crate) fn persist_calendar_window(
         return Err(IntervalsSyncError::WrongProvider {
             connection_id: provider_connection_id.to_string(),
             provider: connection.provider,
+        });
+    }
+    if connection.disconnected_at_unix_ms.is_some() {
+        return Err(IntervalsSyncError::ConnectionInactive {
+            connection_id: provider_connection_id.to_string(),
         });
     }
 
@@ -522,20 +521,29 @@ mod tests {
     fn provider_identity_scopes_equal_external_event_ids() {
         let mut conn = crate::database::test_connection();
         connection(&conn, "first", "i123");
-        connection(&conn, "second", "i456");
+        let first = persist_calendar_window(
+            &mut conn,
+            "first",
+            "2030-01-01",
+            "2030-01-07",
+            &[fixture()],
+            10,
+        )
+        .unwrap();
+        assert_eq!(first.inserted, 1);
 
-        for connection_id in ["first", "second"] {
-            let summary = persist_calendar_window(
-                &mut conn,
-                connection_id,
-                "2030-01-01",
-                "2030-01-07",
-                &[fixture()],
-                10,
-            )
-            .unwrap();
-            assert_eq!(summary.inserted, 1);
-        }
+        provider_connections::mark_disconnected(&conn, "first", 20).unwrap();
+        connection(&conn, "second", "i456");
+        let second = persist_calendar_window(
+            &mut conn,
+            "second",
+            "2030-01-01",
+            "2030-01-07",
+            &[fixture()],
+            30,
+        )
+        .unwrap();
+        assert_eq!(second.inserted, 1);
         assert_ne!(
             synced_row(&conn, "first").schedule.id,
             synced_row(&conn, "second").schedule.id

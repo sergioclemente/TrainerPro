@@ -2,8 +2,9 @@
 
 > **Status:** current implementation baseline. The Workouts screen leads with
 > Next Up and keeps the Library below it, and TPW/SQLite are authoritative for
-> workout definitions. Connected providers remain the next product direction,
-> sequenced in [`ROADMAP.md`](ROADMAP.md), with target software boundaries in
+> workout definitions. The first Intervals.icu inbound connection is implemented;
+> later provider and round-trip work is sequenced in [`ROADMAP.md`](ROADMAP.md),
+> with target software boundaries in
 > [`workout-platform.md`](workout-platform.md). Update the relevant sections of
 > this spec as those migrations land.
 
@@ -562,6 +563,7 @@ CREATE TABLE provider_connections (
   last_sync_error TEXT,
   created_at_unix_ms INTEGER NOT NULL,
   updated_at_unix_ms INTEGER NOT NULL,
+  disconnected_at_unix_ms INTEGER,
   UNIQUE(provider, external_account_id));
 
 CREATE TABLE scheduled_workouts (
@@ -614,6 +616,10 @@ CREATE UNIQUE INDEX scheduled_workouts_provider_event
   ON scheduled_workouts(provider_connection_id, external_event_id)
   WHERE provider_connection_id IS NOT NULL;
 
+CREATE UNIQUE INDEX provider_connections_one_active_account
+  ON provider_connections(provider)
+  WHERE disconnected_at_unix_ms IS NULL;
+
 CREATE TABLE devices (role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm')),
   platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
 
@@ -648,6 +654,12 @@ placement transactionally, preserves local IDs, and soft-removes only missing
 events whose previous placement was inside that fetched window. Its
 provider-owned definition is retired from Library queries at the same time but
 retained for traceability and restored in place if the event reappears.
+Only one Intervals.icu account is active at a time. Disconnecting marks the
+connection inactive and transactionally retires its active schedules and
+definitions; it does not destroy rows referenced by Activity history.
+The personal API key is stored in the OS credential manager under a service
+name derived from the Tauri bundle identifier, keeping production and QA
+credentials separate. It is never written to SQLite or application settings.
 Recommendations are not persisted; the initial `local_favorites` recommender
 ranks definitions by Activity count within the preceding 180 days, with latest
 Activity as the tie-breaker, excludes definitions already scheduled, and
@@ -678,12 +690,22 @@ sources:   source_test(id, values) -> {ok, detail}   (provider connection test;
            planner_open_editor(wid) · woz_collections(force) · woz_workouts(collection, force)
            woz_ride(collection, idx) · woz_open_page(collection)
 profile:   get_settings() -> Settings · update_settings(settings)
+intervals: get_intervals_icu_connection() -> ConnectionStatus
+           connect_intervals_icu(api_key) -> ConnectionStatus
+           refresh_intervals_icu(today_date_local) -> SyncReport
+           disconnect_intervals_icu() -> ConnectionStatus
 ```
 
-**Intervals.icu:** no connection, authentication, schedule sync, or activity
-upload is implemented yet. The reserved `activities.icu_activity_id` column
-remains unused. The accepted direction is an inbound planning connection first,
-followed by an explicitly designed round trip; see
+**Intervals.icu:** the current desktop connection validates a personal API key,
+reads athlete identity/time zone, and synchronizes structured cycling workouts
+from 7 days before through 42 days after the supplied athlete-local date.
+Workouts performs one background refresh per app run after showing cached Next
+Up data; Settings → Connections and the Next Up Refresh action also allow an
+explicit refresh. API/network failures retain the last-good cache and update
+observable connection health. This retrieval window does not settle the open
+Next Up display/overdue policy. OAuth, activity upload, and schedule write-back
+are not implemented. The reserved `activities.icu_activity_id` column remains
+unused. See
 [`provider-integrations.md`](provider-integrations.md) and
 [`workout-platform.md`](workout-platform.md).
 
@@ -732,7 +754,8 @@ Player takes over the full window when a ride is loaded.
 5. **Summary** (post-ride): §7.4.
 6. **Activities**: table of completed activities (date, workout, duration,
    avg P, NP, TSS, avg HR) with FIT reveal and deletion actions.
-7. **Settings**: FTP, weight, record-distance toggle, app version.
+7. **Settings**: FTP, weight, record-distance toggle, FIT export folder,
+   workout-library configuration, and connected-provider lifecycle/status.
 
 Styling: dark theme only in v1. Readable at 2 m: metric tiles ≥ 96 pt numerals.
 
@@ -749,6 +772,9 @@ Styling: dark theme only in v1. Readable at 2 m: metric tiles ≥ 96 pt numerals
 | `control_lost` | CP timeout ×2 mid-ride | auto-pause + reconnect banner (§5.4) |
 | `fit_encode_failed` | encoder error at ride end | journal preserved; error reported; no activity inserted |
 | `disk_full` / io | writes fail | block ride start; toast during ride, journal keeps trying |
+| `intervals_auth` / `intervals_account_conflict` | invalid key or a different account is already active | keep cached workouts; point to Settings → Connections |
+| `intervals_network` / `intervals_http` / `intervals_response` / `intervals_sync` | provider fetch, payload, or reconciliation failure | retain last-good cache; show toast and connection health |
+| `credential_store` | OS credential manager missing or unavailable | keep connection metadata; request reconnection in Settings |
 
 Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
 `debug`. "Report a problem" = reveal log folder.

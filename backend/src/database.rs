@@ -190,6 +190,16 @@ const MIGRATIONS: &[&str] = &[
       ON scheduled_workouts(provider_connection_id, external_event_id)
       WHERE provider_connection_id IS NOT NULL;
     ",
+    // v11: provider connection lifecycle. Only one account for a given
+    // provider can actively supply schedules at a time; disconnected rows and
+    // their linked history remain available for traceability.
+    "
+    ALTER TABLE provider_connections ADD COLUMN disconnected_at_unix_ms INTEGER;
+
+    CREATE UNIQUE INDEX provider_connections_one_active_account
+      ON provider_connections(provider)
+      WHERE disconnected_at_unix_ms IS NULL;
+    ",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -223,6 +233,7 @@ mod tests {
     use super::*;
 
     const PRE_PROVIDER_SYNC_MIGRATION_COUNT: usize = 9;
+    const PRE_CONNECTION_LIFECYCLE_MIGRATION_COUNT: usize = 10;
 
     #[test]
     fn tpw_migration_resets_workouts_but_preserves_activities_and_settings() {
@@ -384,5 +395,48 @@ mod tests {
             )
             .unwrap();
         assert_eq!(retired_at, None);
+    }
+
+    #[test]
+    fn connection_lifecycle_migration_preserves_existing_account() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (index, sql) in MIGRATIONS
+            .iter()
+            .take(PRE_CONNECTION_LIFECYCLE_MIGRATION_COUNT)
+            .enumerate()
+        {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", (index + 1) as i64)
+                .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO provider_connections (
+               id, provider, external_account_id, time_zone,
+               created_at_unix_ms, updated_at_unix_ms)
+             VALUES ('connection','intervals_icu','i123','Europe/Zurich',1,1)",
+            [],
+        )
+        .unwrap();
+
+        let conn = prepare(conn).unwrap();
+        let disconnected_at_unix_ms: Option<i64> = conn
+            .query_row(
+                "SELECT disconnected_at_unix_ms FROM provider_connections
+                 WHERE id = 'connection'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(disconnected_at_unix_ms, None);
+        assert!(conn
+            .execute(
+                "INSERT INTO provider_connections (
+                   id, provider, external_account_id, time_zone,
+                   created_at_unix_ms, updated_at_unix_ms)
+                 VALUES ('second','intervals_icu','i456','Europe/Zurich',2,2)",
+                [],
+            )
+            .is_err());
     }
 }

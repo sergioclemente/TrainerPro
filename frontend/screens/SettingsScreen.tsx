@@ -3,11 +3,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { ipc } from "../ipc";
 import { useStore } from "../state";
 import LibrariesPanel from "./Libraries";
+import ConnectionsPanel from "./Connections";
 
 // Settings is now a tabbed screen. "Libraries" (workout sources) used to be its
 // own top-level screen — it's mostly configuration, so it lives here now as a
 // tab alongside Basic info and Export.
-type Tab = "basic" | "export" | "libraries";
+type Tab = "basic" | "export" | "libraries" | "connections";
 
 export default function SettingsScreen() {
   const { settings, refreshSettings, pushToast, settingsTab } = useStore();
@@ -59,6 +60,7 @@ export default function SettingsScreen() {
     ["basic", "Basic info"],
     ["export", "Export"],
     ["libraries", "Libraries"],
+    ["connections", "Connections"],
   ];
 
   return (
@@ -128,6 +130,7 @@ export default function SettingsScreen() {
       )}
 
       {tab === "libraries" && <LibrariesPanel />}
+      {tab === "connections" && <ConnectionsPanel />}
     </div>
   );
 }

@@ -4,14 +4,6 @@
 //! the structured `workout_doc` returned by the provider into TrainerPro's
 //! semantic workout model without reparsing the event description.
 
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the pure adapter lands before the sync client that consumes it"
-    )
-)]
-
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -29,6 +21,7 @@ pub(crate) const PROVIDER_ID: &str = "intervals_icu";
 const API_BASE_URL: &str = "https://intervals.icu";
 const API_KEY_USERNAME: &str = "API_KEY";
 const REQUEST_TIMEOUT_SECONDS: u64 = 30;
+const ATHLETE_PATH: &str = "/api/v1/athlete/0";
 const CALENDAR_EVENTS_PATH: &str = "/api/v1/athlete/0/events";
 
 pub(crate) struct IntervalsIcuClient {
@@ -57,6 +50,8 @@ pub(crate) enum IntervalsApiError {
     HttpStatus { status: StatusCode },
     #[error("Intervals.icu returned an invalid calendar response: {0}")]
     InvalidResponse(#[source] reqwest::Error),
+    #[error("Intervals.icu returned invalid athlete metadata: {message}")]
+    InvalidAthlete { message: String },
 }
 
 impl IntervalsIcuClient {
@@ -67,12 +62,43 @@ impl IntervalsIcuClient {
     fn with_base_url(base_url: &str) -> Result<Self, IntervalsApiError> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
+            .user_agent(concat!("TrainerPro/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(IntervalsApiError::Client)?;
         Ok(Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
         })
+    }
+
+    /// Validate a personal API key and obtain the non-secret account metadata
+    /// required to scope provider identity and timed schedule placement.
+    pub(crate) async fn fetch_athlete(
+        &self,
+        api_key: &str,
+    ) -> Result<IntervalsAthlete, IntervalsApiError> {
+        if api_key.trim().is_empty() {
+            return Err(IntervalsApiError::MissingApiKey);
+        }
+        let response = self
+            .http
+            .get(format!("{}{}", self.base_url, ATHLETE_PATH))
+            .basic_auth(API_KEY_USERNAME, Some(api_key))
+            .send()
+            .await
+            .map_err(IntervalsApiError::Request)?;
+        let athlete: IntervalsAthlete = parse_response(response).await?;
+        if athlete.id.trim().is_empty() {
+            return Err(IntervalsApiError::InvalidAthlete {
+                message: "missing athlete id".into(),
+            });
+        }
+        if athlete.timezone.trim().is_empty() {
+            return Err(IntervalsApiError::InvalidAthlete {
+                message: "missing athlete timezone".into(),
+            });
+        }
+        Ok(athlete)
     }
 
     /// Fetch a bounded calendar window without asking Intervals.icu to resolve
@@ -110,16 +136,35 @@ impl IntervalsIcuClient {
             .await
             .map_err(IntervalsApiError::Request)?;
 
-        match response.status() {
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                Err(IntervalsApiError::Unauthorized)
-            }
-            status if !status.is_success() => Err(IntervalsApiError::HttpStatus { status }),
-            _ => response
-                .json::<Vec<IntervalsCalendarEvent>>()
-                .await
-                .map_err(IntervalsApiError::InvalidResponse),
-        }
+        parse_response(response).await
+    }
+}
+
+async fn parse_response<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, IntervalsApiError> {
+    match response.status() {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(IntervalsApiError::Unauthorized),
+        status if !status.is_success() => Err(IntervalsApiError::HttpStatus { status }),
+        _ => response
+            .json::<T>()
+            .await
+            .map_err(IntervalsApiError::InvalidResponse),
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub(crate) struct IntervalsAthlete {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    pub timezone: String,
+}
+
+impl IntervalsAthlete {
+    pub(crate) fn display_name(&self) -> Option<&str> {
+        let name = self.name.trim();
+        (!name.is_empty()).then_some(name)
     }
 }
 
@@ -137,8 +182,10 @@ pub(crate) fn is_iso_date(value: &str) -> bool {
 #[derive(Debug, Deserialize)]
 pub(crate) struct IntervalsCalendarEvent {
     pub id: i64,
+    #[cfg(test)]
     #[serde(default)]
     pub uid: Option<String>,
+    #[cfg(test)]
     #[serde(default)]
     pub external_id: Option<serde_json::Value>,
     #[serde(default)]
@@ -632,6 +679,33 @@ mod tests {
             .contains("authorization: basic qvbjx0tfwtpzew50agv0awmta2v5"));
         assert!(!request.contains("resolve="));
         assert!(!request.contains("ext="));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("user-agent: trainerpro/"));
+    }
+
+    #[tokio::test]
+    async fn fetches_authenticated_athlete_identity_and_timezone() {
+        let body = r#"{"id":"i123","name":"Ada Rider","timezone":"Europe/Zurich"}"#;
+        let (base_url, request) = stub(http("200 OK", body));
+        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
+
+        let athlete = client.fetch_athlete("synthetic-key").await.unwrap();
+
+        assert_eq!(
+            athlete,
+            IntervalsAthlete {
+                id: "i123".into(),
+                name: "Ada Rider".into(),
+                timezone: "Europe/Zurich".into(),
+            }
+        );
+        assert_eq!(athlete.display_name(), Some("Ada Rider"));
+        let request = request.join().unwrap();
+        assert!(request.starts_with("GET /api/v1/athlete/0 HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: basic qvbjx0tfwtpzew50agv0awmta2v5"));
     }
 
     #[tokio::test]
@@ -652,6 +726,10 @@ mod tests {
     async fn blank_keys_and_invalid_ranges_fail_before_network_io() {
         let client = IntervalsIcuClient::with_base_url("http://127.0.0.1:1").unwrap();
         assert!(matches!(
+            client.fetch_athlete(" ").await,
+            Err(IntervalsApiError::MissingApiKey)
+        ));
+        assert!(matches!(
             client
                 .fetch_workout_events(" ", "2030-01-01", "2030-01-07")
                 .await,
@@ -669,6 +747,18 @@ mod tests {
                 .await,
             Err(IntervalsApiError::InvalidDateRange { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn athlete_metadata_requires_a_timezone() {
+        let (base_url, request) = stub(http("200 OK", r#"{"id":"i123","timezone":""}"#));
+        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
+
+        assert!(matches!(
+            client.fetch_athlete("synthetic-key").await,
+            Err(IntervalsApiError::InvalidAthlete { .. })
+        ));
+        request.join().unwrap();
     }
 
     #[test]

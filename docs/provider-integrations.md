@@ -20,11 +20,24 @@ requires. Manual FIT upload remains the supported path in the meantime.
 
 TrainerPro has a pure, fixture-tested adapter from Intervals.icu's structured
 cycling `workout_doc` into TPW and a bounded calendar client using the
-documented personal-API-key authentication. Provider-scoped schedule
-persistence is transactional and idempotent, but the runtime connection is not
-wired yet: there is no credential setting, IPC command, automatic schedule
-refresh or upload, or retry UI. The database also reserves
-`activities.icu_activity_id` for later activity sync.
+documented personal-API-key authentication. Settings → Connections validates
+the account and exposes sync health. The API key lives in the OS credential
+manager, scoped separately for production and QA; SQLite contains only the
+non-secret athlete identity, time zone, lifecycle, and sync status.
+
+Connecting triggers an initial refresh. The Workouts screen renders its cached
+Next Up projection immediately and attempts one background refresh per app run;
+the user can also refresh from Workouts or Settings. Each completed response
+transactionally and idempotently reconciles the window from 7 days before to 42
+days after the athlete-local date. A failed fetch leaves the last-good workouts
+available offline. Disconnecting removes the credential and retires that
+account's active cached schedules without deleting Activity history.
+
+This is the personal/local authentication path. Intervals.icu's guidance says a
+distributed integration should use OAuth, so OAuth remains a release gate
+before treating the connector as a general multi-user production integration.
+There is no activity upload, schedule write-back, webhook, or retry queue yet.
+The database reserves `activities.icu_activity_id` for later activity sync.
 
 Read-only API assumptions and the privacy-safe live probe are documented in
 [`intervals-icu-discovery.md`](intervals-icu-discovery.md).

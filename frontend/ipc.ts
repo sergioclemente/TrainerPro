@@ -154,6 +154,26 @@ export interface Settings {
   sources: Record<string, SourceConfig>;
 }
 
+export interface IntervalsConnectionStatus {
+  connected: boolean;
+  external_account_id: string | null;
+  display_name: string | null;
+  time_zone: string | null;
+  last_sync_succeeded_at_unix_ms: number | null;
+  last_sync_error: string | null;
+}
+
+export interface IntervalsSyncReport {
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  removed: number;
+  unsupported: number;
+  issues: string[];
+  oldest_date_local: string;
+  newest_date_local: string;
+}
+
 export interface SegmentRow {
   kind: "steady" | "ramp" | "freeride";
   label: string;
@@ -297,6 +317,15 @@ export const ipc = {
 
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Settings) => invoke<Settings>("update_settings", { settings }),
+
+  getIntervalsIcuConnection: () =>
+    invoke<IntervalsConnectionStatus>("get_intervals_icu_connection"),
+  connectIntervalsIcu: (apiKey: string) =>
+    invoke<IntervalsConnectionStatus>("connect_intervals_icu", { apiKey }),
+  refreshIntervalsIcu: (todayDateLocal: string) =>
+    invoke<IntervalsSyncReport>("refresh_intervals_icu", { todayDateLocal }),
+  disconnectIntervalsIcu: () =>
+    invoke<IntervalsConnectionStatus>("disconnect_intervals_icu"),
 };
 
 export function fmtDuration(totalS: number): string {

@@ -43,6 +43,7 @@ fn main() {
             app.manage(AppState {
                 db: std::sync::Mutex::new(conn),
                 data_dir,
+                credential_service: format!("{}.provider-credentials", app.config().identifier),
                 hub,
                 player: tokio::sync::Mutex::new(None),
                 planner_cache: std::sync::Mutex::new(Vec::new()),
@@ -82,6 +83,10 @@ fn main() {
             commands::activity_history::open_garmin_import,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            commands::intervals_icu::get_intervals_icu_connection,
+            commands::intervals_icu::connect_intervals_icu,
+            commands::intervals_icu::refresh_intervals_icu,
+            commands::intervals_icu::disconnect_intervals_icu,
             workout_planner_source::source_test,
             workout_planner_source::planner_cached,
             workout_planner_source::planner_list,
