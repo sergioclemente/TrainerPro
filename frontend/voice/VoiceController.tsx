@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import type { AppError } from "../ipc";
+import { traceEvent, type TraceFields } from "../trace";
 import {
   playVoiceErrorCue,
   playVoiceReadyCue,
@@ -92,6 +93,15 @@ function browserVoicePermission(state: PermissionState): VoiceMachineState["perm
   return state === "prompt" ? "unknown" : state;
 }
 
+function traceVoiceRoute(
+  utteranceId: number,
+  generation: number,
+  outcome: string,
+  fields: TraceFields = {},
+): void {
+  traceEvent("voice_route", { utterance_id: utteranceId, generation, outcome, ...fields });
+}
+
 async function queryMicrophonePermission(): Promise<PermissionStatus | null> {
   if (!navigator.permissions?.query) return null;
   try {
@@ -131,6 +141,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const speechTimerRef = useRef<number | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
   const surfaceRef = useRef<VoiceSurface | null>(null);
+  const utteranceSequenceRef = useRef(0);
   const controlSurfaceRef = useRef<VoiceSurface | null>(null);
   controlSurfaceRef.current ??= createVoiceControlSurface({
     getCommandsSuspended: () => stateRef.current.commandsSuspended,
@@ -202,6 +213,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 
   const failCurrent = useCallback((generation: number, error: unknown) => {
     if (!isCurrent(generation)) return;
+    traceEvent("voice_error", {
+      generation,
+      code: (error as AppError)?.code ?? (error as { name?: string })?.name ?? "unknown",
+    });
     invalidateCapture();
     void playVoiceErrorCue();
     dispatch({ type: "failed", generation, message: errorMessage(error) });
@@ -228,6 +243,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }
 
     routerRestartAttemptsRef.current += 1;
+    traceEvent("voice_restart", {
+      component: "semantic_router",
+      attempt: routerRestartAttemptsRef.current,
+    });
     showFeedback({
       command: "Voice command",
       result: ROUTER_RESTARTED,
@@ -263,11 +282,17 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }
   }, [resetStream, showFeedback]);
 
-  const routeCompletedLine = useCallback(async (transcript: string, generation: number) => {
+  const routeCompletedLine = useCallback(async (
+    transcript: string,
+    generation: number,
+    utteranceId: number,
+    finalizedAt: number,
+  ) => {
     const router = routerRef.current;
     const surface = surfaceRef.current;
     const controls = controlSurfaceRef.current;
     if (!router || !surface || !controls) {
+      traceVoiceRoute(utteranceId, generation, "unavailable");
       await rejectUtterance(generation, false);
       return;
     }
@@ -278,6 +303,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         transcript,
       };
       if (transcriptPreparation.kind === "rejected") {
+        traceVoiceRoute(utteranceId, generation, "transcript_rejected");
         await rejectUtterance(generation, transcriptPreparation.visible);
         return;
       }
@@ -287,6 +313,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         stateRef.current.commandsSuspended,
       );
       if (intentGroups.length === 0) {
+        traceVoiceRoute(utteranceId, generation, "no_available_intent");
         await rejectUtterance(generation, false);
         return;
       }
@@ -299,11 +326,25 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         );
         routerRestartAttemptsRef.current = 0;
       } catch (error) {
+        traceVoiceRoute(
+          utteranceId,
+          generation,
+          errorMessage(error).includes("timed out") ? "timeout" : "error",
+        );
         recoverSemanticRouter(router, generation, error);
         return;
       }
-      if (!isCurrentCapture(generation) || surfaceRef.current !== surface) return;
+      if (!isCurrentCapture(generation) || surfaceRef.current !== surface) {
+        traceVoiceRoute(utteranceId, generation, "stale", {
+          duration_ms: Math.round(result.totalDurationMs),
+        });
+        return;
+      }
       if (result.intentId === null || result.matchedPhrase === null || result.score === null) {
+        traceVoiceRoute(utteranceId, generation, "no_match", {
+          score: result.score,
+          duration_ms: Math.round(result.totalDurationMs),
+        });
         await rejectUtterance(generation, false);
         return;
       }
@@ -321,17 +362,46 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         match,
       );
       if (commandPreparation.kind === "rejected") {
+        traceVoiceRoute(utteranceId, generation, "command_rejected", {
+          intent: result.intentId,
+          score: result.score,
+          duration_ms: Math.round(result.totalDurationMs),
+        });
         await rejectUtterance(generation, commandPreparation.visible);
         return;
       }
+      traceVoiceRoute(utteranceId, generation, "matched", {
+        intent: result.intentId,
+        score: result.score,
+        duration_ms: Math.round(result.totalDurationMs),
+      });
       dispatch({ type: "model-result", generation });
+      const dispatchStartedAt = performance.now();
       try {
         const outcome = await commandPreparation.execute();
-        if (!isCurrentCapture(generation) || surfaceRef.current !== surface) return;
+        const current = isCurrentCapture(generation) && surfaceRef.current === surface;
+        traceEvent("voice_dispatch", {
+          utterance_id: utteranceId,
+          generation,
+          intent: result.intentId,
+          outcome: current ? "ok" : "stale_after_execute",
+          duration_ms: Math.round(performance.now() - dispatchStartedAt),
+          line_to_action_ms: Math.round(performance.now() - finalizedAt),
+        });
+        if (!current) return;
         showFeedback({ command: commandPreparation.label, result: outcome, kind: "success" });
         await playVoiceSuccessCue();
       } catch (error) {
         if (!isCurrentCapture(generation) || surfaceRef.current !== surface) return;
+        traceEvent("voice_dispatch", {
+          utterance_id: utteranceId,
+          generation,
+          intent: result.intentId,
+          outcome: "error",
+          error_code: (error as AppError)?.code ?? "unknown",
+          duration_ms: Math.round(performance.now() - dispatchStartedAt),
+          line_to_action_ms: Math.round(performance.now() - finalizedAt),
+        });
         const message = errorMessage(error);
         pushToast("error", message);
         showFeedback({
@@ -394,7 +464,13 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       return;
     }
     dispatch({ type: "utterance-accepted" });
-    void routeCompletedLine(transcript, current.generation);
+    const utteranceId = ++utteranceSequenceRef.current;
+    const finalizedAt = performance.now();
+    traceEvent("voice_line_finalized", {
+      utterance_id: utteranceId,
+      generation: current.generation,
+    });
+    void routeCompletedLine(transcript, current.generation, utteranceId, finalizedAt);
   }, [clearSpeechTimer, resetStream, routeCompletedLine]);
 
   const recoverCapture = useCallback((
@@ -404,6 +480,11 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     if (!isCurrent(generation)) return;
     invalidateCapture();
     const reasonMessage = CAPTURE_DISCONTINUITY_MESSAGES[reason];
+    traceEvent("voice_restart", {
+      component: "capture",
+      reason,
+      attempt: stateRef.current.captureRestartAttempts + 1,
+    });
 
     void queryMicrophonePermission().then((permission) => {
       if (permission?.state === "denied") {

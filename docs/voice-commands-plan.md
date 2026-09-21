@@ -1,7 +1,7 @@
 # Voice commands plan
 
 Status: Player-only MVP implemented; release readiness remains
-Last updated: 2026-09-18
+Last updated: 2026-09-20
 
 This is the active task list for local voice commands. Durable architecture
 lives in [`architecture.md`](architecture.md), and settled alternatives live in
@@ -159,6 +159,17 @@ Safety invariants:
   Its full run is intentionally deferred to final QA rather than blocking
   implementation.
 
+### Failure tracing
+
+Each app launch writes the normal Rust and frontend tracing stream to
+`trainerpro.log` in that app identity's standard log directory. Voice adds only
+the pipeline boundaries needed to diagnose a dropped command:
+`voice_line_finalized`, `voice_route`, `voice_dispatch`, and `player_phase`,
+plus exceptional `voice_restart` / `voice_error` lines. Events use logfmt fields
+and never include audio, transcripts, matched phrases, workout data, ride
+measurements, device identity, or paths. CPU and memory investigation remains
+external to the application.
+
 ## Active release backlog
 
 ### Product and legal
@@ -260,6 +271,8 @@ commit `663c475a86e5d738041646c7a522160db6870839` on
 
 ## Change log
 
+- 2026-09-20: Rebased onto the merged canonical workout/data model and added a
+  small per-launch structured trace for locating dropped voice commands.
 - 2026-09-18: Rebuilt and audited release-mode QA and production application
   bundles. The packaged QA smoke test reached **Listening** with local models,
   connected the simulator, and kept pointer and keyboard controls functional

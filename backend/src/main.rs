@@ -13,6 +13,7 @@ mod heart_rate_monitor;
 mod intervals_icu;
 mod intervals_icu_sync;
 mod local_date;
+mod logging;
 mod next_up;
 mod player_runtime;
 mod trainer;
@@ -25,19 +26,14 @@ use tauri::Manager;
 use crate::app_state::AppState;
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,tp_ble=debug".into()),
-        )
-        .init();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            let log_dir = app.path().app_log_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            logging::init(&log_dir)?;
             let conn = database::open(&data_dir.join("trainerpro.sqlite3"))?;
             let hub = device_hub::DeviceHub::default();
             hub.start_event_forwarders(app.handle().clone());
@@ -88,6 +84,7 @@ fn main() {
             commands::intervals_icu::connect_intervals_icu,
             commands::intervals_icu::refresh_intervals_icu,
             commands::intervals_icu::disconnect_intervals_icu,
+            logging::trace_frontend,
             workout_planner_source::source_test,
             workout_planner_source::planner_cached,
             workout_planner_source::planner_list,

@@ -19,6 +19,7 @@ import {
   WorkoutSummary,
   ipc,
 } from "./ipc";
+import { traceEvent } from "./trace";
 
 export type Screen =
   | "library"
@@ -108,6 +109,7 @@ interface Store {
 }
 
 let toastSeq = 0;
+let lastTracedPlayerPhase: PlayerState["phase"] | null = null;
 
 export const useStore = create<Store>((set, get) => ({
   screen: "library",
@@ -247,7 +249,13 @@ export async function wireEvents(): Promise<void> {
     s.setState({ measurement: e.payload }),
   );
 
-  await listen<PlayerState>("player_state", (e) => s.setState({ player: e.payload }));
+  await listen<PlayerState>("player_state", (e) => {
+    if (e.payload.phase !== lastTracedPlayerPhase) {
+      lastTracedPlayerPhase = e.payload.phase;
+      traceEvent("player_phase", { phase: e.payload.phase });
+    }
+    s.setState({ player: e.payload });
+  });
 
   await listen<ScanResult>("scan_result", (e) => {
     const cur = s.getState().scanResults;

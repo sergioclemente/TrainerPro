@@ -327,6 +327,8 @@ export const ipc = {
     invoke<IntervalsSyncReport>("refresh_intervals_icu", { todayDateLocal }),
   disconnectIntervalsIcu: () =>
     invoke<IntervalsConnectionStatus>("disconnect_intervals_icu"),
+
+  traceFrontend: (message: string) => invoke<void>("trace_frontend", { message }),
 };
 
 export function fmtDuration(totalS: number): string {
