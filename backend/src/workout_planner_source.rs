@@ -1,7 +1,7 @@
-//! WorkoutPlanner integration client + IPC commands.
-//! spec-workoutplanner.md Part B. ZWO is the interchange: this module never
-//! parses the planner's DSL — it fetches ZWO from /workout_file and feeds
-//! TrainerPro's existing import path.
+//! WorkoutPlanner integration client + IPC commands. ZWO is the interchange:
+//! this module never parses the planner's DSL; it fetches ZWO from
+//! `/workout_file` and feeds TrainerPro's existing import path. See
+//! `docs/feature-workoutplanner.md`.
 
 use serde::Serialize;
 use sha2::Digest;
@@ -281,7 +281,6 @@ pub async fn planner_list(state: State<'_, AppState>) -> Result<PlannerListResul
 }
 
 /// Fetch ZWO → normalize into TPW → tag origin → load into the player.
-/// spec §B2.
 #[tauri::command]
 pub async fn planner_ride(
     app: AppHandle,
@@ -429,8 +428,8 @@ struct StoredPreview {
     zwo: String,
 }
 
-/// Open the planner's web editor for a cached workout. Until A4 wid-links
-/// ship, the URL carries title/sport/DSL query params (spec §B3).
+/// Open the planner's web editor for a cached workout. The URL carries
+/// title/sport/DSL query parameters because the server has no ID deep link.
 #[tauri::command]
 pub async fn planner_open_editor(
     app: AppHandle,

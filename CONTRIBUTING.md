@@ -1,92 +1,93 @@
 # Contributing to TrainerPro
 
-Thanks for your interest! This is a small project with strong architectural
-opinions — a quick read here will save you a rewritten PR.
+TrainerPro is a small project with deliberate product and architecture
+boundaries. Discuss substantial features before implementing them; focused bug
+fixes and documentation corrections can go directly to a pull request.
 
-## Ground rules
+## Development setup
 
-- **Open an issue before building a feature.** Small bug fixes and doc fixes
-  can go straight to a PR.
-- Good areas for contribution: workout sources, exporters, parsers for new
-  file formats, device drivers (behind the existing traits), Windows
-  validation, tests for currently-untested modules.
-- Decisions recorded in [`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) are
-  settled unless you bring new information — re-litigating them in a PR
-  without an issue first won't go well.
-
-## Dev setup
-
-Prerequisites: [Rust](https://rustup.rs) (stable), Node 20+, and on macOS the
-Xcode Command Line Tools.
+Install stable Rust, Node 20+, and the platform build tools. Then run:
 
 ```bash
 npm install
 npm run tauri:qa
 ```
 
-This launches **TrainerPro QA** with an isolated data directory. The regular
-TrainerPro bundle remains the day-to-day app and keeps its workouts, activities,
-and paired devices separate. Prefer the simulated devices in QA, and do not
-connect both app flavors to the same physical trainer at once.
+TrainerPro QA uses a separate bundle identifier and data directory. Prefer the
+simulated trainer and HRM; they support the same contracts and fault injection
+as the physical-device paths.
 
-No trainer needed: pair **Simulated KICKR** / **Simulated HRM** from the
-Devices screen. The simulator implements the same traits as the real drivers,
-including fault injection.
+## Before submitting
 
-## Before you push
+Run focused tests while developing. For changes spanning Rust and TypeScript,
+finish with:
 
 ```bash
 cargo test --workspace
-cargo fmt --all
-cargo clippy --workspace
-npx tsc --noEmit
+npm run build
 ```
 
-New parser, engine, metrics, or FIT code must come with unit tests — `tp-core`
-is pure and hardware-free, so there's no excuse not to.
+Check formatting before applying it repository-wide. If the baseline fails in
+unrelated files, do not create formatting churn. Before committing, inspect
+`git diff --check`, the changed-file list, and `git status`.
+
+Never commit `dist/`, `target/`, credentials, personal activity data, or built
+application bundles.
 
 ## Architecture guardrails
 
-Two invariants keep this codebase testable. PRs that break them will be asked
-to restructure, however good the feature is:
+- Keep `tp-core` pure: no I/O, async, BLE, or Tauri dependencies.
+- Keep trainer and heart-rate hardware behind `TrainerConnection` and
+  `HeartRateConnection`; the simulator must be able to exercise the behavior.
+- Extend the component that already owns a responsibility. Do not create
+  parallel state channels or generic abstractions without multiple consumers,
+  a real invariant, or a clear ownership boundary.
+- Treat serialized Rust values and `frontend/ipc.ts` as one API.
+- TPW is the canonical workout definition. ZWO, ERG, MRC, and provider formats
+  are boundary adapters, not internal identity.
 
-1. **`tp-core` stays zero-I/O, zero-async, zero-BLE/Tauri.** If your change
-   needs I/O, a clock, or a network, it belongs in the `backend` Tauri crate;
-   `tp-core` gets the pure logic and the tests.
-2. **Hardware only behind the `TrainerConnection` / `HeartRateConnection` traits**
-   (`crates/tp-ble/src/traits.rs`). If the simulator can't exercise your
-   change, redesign it until it can.
-
-Two conventions worth knowing:
-
-- **TPW is the canonical workout representation.** ZWO, ERG, and MRC are
-  boundary formats normalized into TPW before persistence. Connected-workout
-  work must follow [`docs/TPW.md`](docs/TPW.md),
-  [`docs/PRODUCT.md`](docs/PRODUCT.md), and
-  [`docs/workout-platform.md`](docs/workout-platform.md); do not extend a file
-  format as the product model.
-- **The UI is push-only.** The frontend never polls; state arrives via the
-  Tauri event stream (see `wireEvents()` in `frontend/state.ts`).
+See [the architecture guide](docs/architecture.md) for ownership and flows,
+[the behavior spec](docs/SPEC.md) for current requirements, and
+[the TPW specification](docs/TPW.md) for the workout format.
 
 ## Adding a workout source
 
-The steps below apply to the current source-plugin architecture. Provider-sync
-work on the roadmap uses capability-specific connectors and the canonical
-WorkoutDefinition pipeline described in
-[`docs/workout-platform.md`](docs/workout-platform.md).
+The existing library-source extension point consists of a backend adapter that
+produces a `WorkoutDefinition` and a frontend descriptor in
+`frontend/sources.ts`. Configuration uses the existing source values bag.
 
-1. Backend: a module that produces `WorkoutDefinition`, or adapts a provider's
-   supported boundary payload into one, then uses the shared source pipeline
-   (see `workout_planner_source.rs` / `whatsonzwift_source.rs` as examples).
-   Config lives in the schemaless `SourceConfig` bag — no DB migration needed.
-2. Frontend: one tab component + one descriptor appended to
-   `frontend/sources.ts`. The Libraries settings form is generated from the
-   descriptor's `fields`.
+Provider schedule sync is a different lifecycle. Add a concrete integration
+with explicit identity, ownership, retry, and reconciliation semantics; do not
+turn the library-source registry into a generic connector framework.
 
-See [`docs/architecture.md`](docs/architecture.md) for the diagram.
+## Documentation
+
+Documentation is part of the product contract. Apply these rules whenever a
+change affects it:
+
+1. **State purpose and audience.** Every file under `docs/` begins with a
+   one-line purpose and audience.
+2. **Choose one category.** A document is product/feature-oriented (intent,
+   behavior, scope, external contract) or technical/architecture-oriented
+   (boundaries, flows, invariants, normative formats).
+3. **Give each fact one home.** Link to the canonical explanation instead of
+   copying it. `PRODUCT.md` owns the durable destination, `SPEC.md` current
+   observable behavior, and `ROADMAP.md` unfinished sequencing.
+4. **Prefer current truth.** Delete completed plans and superseded research;
+   Git history is the archive.
+5. **Let code own implementation detail.** Internal types, SQL, IPC payloads,
+   protocol bytes, constants, and test matrices belong in code and tests unless
+   they form a public or normative contract.
+6. **Keep rationale proportional.** Preserve it only when it prevents a likely
+   future mistake. Do not retain catalogs of rejected alternatives.
+7. **Stay concise.** About 1,000 words is the default budget. A normative
+   reference may be longer when every extra section is part of its contract.
+
+A new feature document needs durable external knowledge or a distinct audience
+that cannot be served by an existing document. Name it `docs/feature-<name>.md`.
 
 ## Releases
 
-Maintainer-run: tag `v*` triggers `.github/workflows/release.yml`, which
-builds unsigned macOS/Windows installers and attaches them to a GitHub
-release.
+A `v*` tag triggers `.github/workflows/release.yml`, which builds unsigned
+macOS and Windows packages and attaches them to a draft GitHub release. Signing
+and notarization credentials remain maintainer responsibilities.

@@ -1,4 +1,4 @@
-//! FIT Activity file encoder. SPEC.md §7.
+//! FIT Activity file encoder.
 //!
 //! Input is everything already computed by journal replay + metrics; this
 //! module only serializes bytes. Output must decode with Garmin FitCSVTool

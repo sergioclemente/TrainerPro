@@ -1,4 +1,4 @@
-// Zustand store fed by Tauri events (SPEC.md §9: no polling from the UI).
+// Zustand store fed by Tauri events; ongoing runtime state is not polled.
 
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";

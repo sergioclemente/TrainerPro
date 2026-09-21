@@ -1,4 +1,4 @@
-//! ERG/MRC (CompuTrainer text) parser. SPEC.md §3.2.
+//! ERG/MRC (CompuTrainer text) parser.
 //!
 //! Contract highlights:
 //! - Unit truth: `MINUTES WATTS|PERCENT` column line in [COURSE HEADER];

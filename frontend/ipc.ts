@@ -1,4 +1,4 @@
-// Typed mirror of the backend command surface (SPEC.md §9, backend/src/commands/).
+// Typed mirror of the backend command surface in backend/src/commands/.
 
 import { invoke } from "@tauri-apps/api/core";
 

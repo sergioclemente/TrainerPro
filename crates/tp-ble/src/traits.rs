@@ -1,6 +1,6 @@
 //! Hardware-agnostic device contracts. Everything above this layer (player
 //! runtime, UI) sees only these traits — real FTMS hardware and the simulator
-//! are interchangeable. SPEC.md §4.1.
+//! are interchangeable.
 
 use async_trait::async_trait;
 use tokio::sync::{broadcast, watch};
@@ -43,7 +43,7 @@ pub enum ConnectionStatus {
 }
 
 /// A controllable smart trainer in ERG mode. Methods take `&self`; drivers
-/// serialize control-point access internally (one op in flight, SPEC §4.2).
+/// serialize control-point access internally with one operation in flight.
 #[async_trait]
 pub trait TrainerConnection: Send + Sync {
     /// Close the link and stop this connection's background tasks.
@@ -52,7 +52,7 @@ pub trait TrainerConnection: Send + Sync {
     /// changes are delivered through `subscribe_status()` rather than polled.
     async fn probe_connection(&self) -> Result<bool, BleError>;
     async fn set_target_power(&self, watts: u16) -> Result<(), BleError>;
-    /// FreeRide segments: simulation mode, grade 0 %. SPEC §0.
+    /// FreeRide segments: simulation mode, grade 0%.
     async fn set_flat_road_simulation(&self) -> Result<(), BleError>;
     async fn start_or_resume_training(&self) -> Result<(), BleError>;
     async fn pause_training(&self) -> Result<(), BleError>;

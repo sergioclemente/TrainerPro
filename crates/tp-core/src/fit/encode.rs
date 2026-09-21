@@ -1,5 +1,5 @@
 //! FIT container encoding: 14-byte header, definition + data records
-//! (little-endian), trailing CRC-16. Message sequence per SPEC.md §7.2:
+//! (little-endian), trailing CRC-16. Message sequence:
 //! file_id → device_info → event(start) → records (1 Hz, with stop/start
 //! event pairs interleaved chronologically at pauses) → laps → session →
 //! activity. Timestamps: unix_s − FIT_EPOCH_OFFSET_S.

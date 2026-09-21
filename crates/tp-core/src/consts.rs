@@ -1,4 +1,4 @@
-//! Single source for tunable constants. SPEC.md §14.
+//! Single source for shared product and runtime constants.
 
 /// Engine tick interval driven by the player runtime.
 pub const ENGINE_TICK_MS: u64 = 250;

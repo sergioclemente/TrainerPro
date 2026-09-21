@@ -2,196 +2,76 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A desktop indoor-cycling workout player. Load a structured workout (ZWO / ERG /
-MRC), drive a smart trainer over Bluetooth FTMS in ERG mode, and export every
-ride as a Garmin-compatible **.FIT** activity.
+TrainerPro is a desktop indoor-cycling workout player. It finds the next
+workout, controls an FTMS smart trainer in ERG mode, records the ride, and
+produces a Garmin-compatible FIT activity.
 
-- **Dashboard player**: zone-colored workout graph, big power/cadence/HR
-  numerals, target vs. actual, interval countdown, keyboard controls.
-- **ERG control** of FTMS trainers (Wahoo KICKR family and any FTMS trainer),
-  with ramp re-targeting, keep-alive, auto-pause on drop, and auto-reconnect.
-- **Crash-safe recording**: 1 Hz journal during the ride, FIT encoding at ride
-  end, one lap per interval, NP/IF/TSS computed locally.
-- **Pluggable workout sources** (local files, a self-hosted
-  [WorkoutPlanner](https://github.com/sergioclemente/WorkoutPlanner) server,
-  or whatsonzwift.com — remote sources are opt-in) and a built-in trainer
-  simulator, so the whole app runs without hardware.
+- **Execution-first Workouts screen:** scheduled workouts and recommendations
+  appear in Next Up, with the local and connected libraries below.
+- **Reliable trainer control:** FTMS ERG targets, ramps, keep-alive,
+  auto-pause, and reconnect behavior.
+- **Crash-safe recording:** a 1 Hz journal is converted to FIT at ride end,
+  with laps and locally computed NP, IF, and TSS.
+- **Offline-capable sources:** local ZWO/ERG/MRC files, WorkoutPlanner,
+  What's on Zwift, and cached Intervals.icu schedules.
+- **Hardware-free development:** simulated trainer and heart-rate devices use
+  the same interfaces as physical BLE hardware.
 
 ## Status
 
 | Platform | Status |
 |---|---|
-| macOS | Working (unsigned builds) |
-| Windows | Planned — architecture is shared, needs validation + installer signing |
+| macOS | Working; distributed builds are currently unsigned |
+| Windows | Shared implementation exists; hardware and installer validation remain |
 | Linux | Not supported |
 
 ## Install
 
-Grab the latest `.dmg` (macOS) from
-[Releases](https://github.com/sergioclemente/TrainerPro/releases).
-
-Builds are currently **unsigned**: on macOS, Gatekeeper will refuse the first
-launch — right-click the app → **Open** → **Open** (or
-`xattr -cr /Applications/TrainerPro.app`). Windows installers will show a
-SmartScreen "unknown publisher" warning for the same reason.
+Download the latest macOS build from
+[Releases](https://github.com/sergioclemente/TrainerPro/releases). Because the
+build is unsigned, first launch requires right-clicking the application and
+choosing **Open**. Windows packages similarly show an unknown-publisher warning.
 
 ## Architecture
 
-Platform shells at the top, physical devices at the bottom; everything between
-is shared code.
+The React frontend talks to a Rust Tauri backend. `tp-core` contains pure
+workout, engine, recording, metrics, and FIT logic. `tp-ble` owns BLE drivers,
+connection traits, scanning, and simulators. SQLite is authoritative for TPW
+workout definitions, schedules, provider state, and the Activity index; session
+journals and FIT files remain durable activity artifacts.
 
-```mermaid
-flowchart TD
-    subgraph SHELLS["Desktop shells - Tauri 2"]
-        MAC["macOS app<br/>WKWebView"]
-        WIN["Windows app - planned<br/>WebView2"]
-    end
+See [the architecture guide](docs/architecture.md) for boundaries and flows.
 
-    subgraph FRONTEND["Frontend - React + TypeScript"]
-        SCREENS["Screens<br/>Workouts / Devices / Player<br/>Summary / Activities / Settings"]
-        STORE["zustand store"]
-    end
+## Documentation
 
-    subgraph APP["Backend - Rust / Tauri host"]
-        IPC["IPC commands + event stream"]
-        SOURCES["Workout source plugin layer"]
-        RUNTIME["Player runtime<br/>engine ticks / ERG loop / recorder"]
-        HUB["Device hub<br/>device policy + stable role owners"]
-        STORAGE[("SQLite TPW definitions + schedules<br/>+ activity index")]
-    end
+| Document | Use it for |
+|---|---|
+| [Product](docs/PRODUCT.md) | Product direction, vocabulary, decisions, and non-goals |
+| [Behavior spec](docs/SPEC.md) | Current user-visible behavior and acceptance expectations |
+| [Architecture](docs/architecture.md) | Technical ownership, invariants, and system flows |
+| [TPW](docs/TPW.md) | Normative TrainerPro Workout JSON format |
+| [Roadmap](docs/ROADMAP.md) | Unfinished work and external gates |
+| [Intervals.icu](docs/feature-intervals-icu.md) | Inbound schedule-sync contract |
+| [WorkoutPlanner](docs/feature-workoutplanner.md) | Connected-library contract |
 
-    subgraph CORE["tp-core - pure Rust, no I/O"]
-        PARSERS["Parsers: ZWO / ERG / MRC<br/>Writer: ZWO"]
-        TPW["TPW definition<br/>validation + compiler"]
-        ENGINE["Workout engine<br/>deterministic state machine"]
-        METRICS["Metrics: NP / IF / TSS / zones"]
-        JOURNAL["Crash-safe session journal"]
-        FITENC["FIT activity encoder"]
-    end
-
-    subgraph BLE["tp-ble - device layer"]
-        CENTRAL["DeviceManager<br/>scan/connect coordination"]
-        TRAITS["TrainerConnection +<br/>HeartRateConnection traits"]
-        FTMS["FTMS driver<br/>ERG control point"]
-        HRDRV["Heart-rate driver"]
-        SIMU["Simulator<br/>fault-injectable"]
-    end
-
-    OSBLE["OS Bluetooth stacks - btleplug<br/>CoreBluetooth (macOS) / WinRT (Windows)"]
-    DEVICES["Smart trainer (any FTMS) + BLE heart-rate strap"]
-
-    MAC --> SCREENS
-    WIN --> SCREENS
-    STORE --> SCREENS
-    SCREENS -->|invoke| IPC
-    IPC -->|events| STORE
-    IPC --> SOURCES
-    IPC --> RUNTIME
-    IPC --> HUB
-    SOURCES --> PARSERS
-    SOURCES --> TPW
-    PARSERS --> TPW
-    TPW --> STORAGE
-    STORAGE --> TPW
-    TPW --> RUNTIME
-    RUNTIME --> STORAGE
-    RUNTIME --> ENGINE
-    RUNTIME --> JOURNAL
-    RUNTIME --> METRICS
-    RUNTIME --> FITENC
-    RUNTIME -->|stable Trainer owner| HUB
-    HUB -->|scan / connect intent| CENTRAL
-    HUB -->|replaceable connections| TRAITS
-    CENTRAL --> FTMS
-    CENTRAL --> HRDRV
-    TRAITS --> FTMS
-    TRAITS --> HRDRV
-    TRAITS --> SIMU
-    FTMS --> OSBLE
-    HRDRV --> OSBLE
-    OSBLE -.->|BLE| DEVICES
-```
-
-This diagram describes the current shipped architecture. The **Workouts**
-screen now leads with an execution-first **Next Up** rail above the Library,
-backed by SQLite semantic workout definitions. Intervals.icu is the first
-connected provider and supplies an executable local cache of scheduled
-workouts. See
-[`docs/PRODUCT.md`](docs/PRODUCT.md) and the target flow in
-[`docs/workout-platform.md`](docs/workout-platform.md).
-
-Two invariants keep this portable and testable:
-
-- **`tp-core` has zero I/O and zero async** — parsers, engine, metrics, journal
-  and FIT encoder are pure functions, unit-tested without hardware on any OS.
-- **All hardware sits behind `TrainerConnection`/`HeartRateConnection`** —
-  the simulator implements the same contracts as the BLE drivers. Stable
-  `Trainer` and `HeartRateMonitor` owners replace those connections during
-  recovery, so consumers keep one status and measurement subscription.
-
-More detail: [`docs/architecture.md`](docs/architecture.md) (source plugin
-interface, ride data flow, cross-platform notes) ·
-[`docs/PRODUCT.md`](docs/PRODUCT.md) (product direction and vocabulary) ·
-[`docs/ROADMAP.md`](docs/ROADMAP.md) (outcome sequence) ·
-[`docs/workout-platform.md`](docs/workout-platform.md) (target software design
-and PR plan) · [`docs/TPW.md`](docs/TPW.md) (TrainerPro Workout format) ·
-[`docs/SPEC.md`](docs/SPEC.md) (build spec) ·
-[`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) (decision records) ·
-[`docs/provider-integrations.md`](docs/provider-integrations.md) (provider
-integration status) ·
-[`docs/spec-workoutplanner.md`](docs/spec-workoutplanner.md) (planner
-integration).
-
-## Development
-
-Prerequisites: [Rust](https://rustup.rs) (stable), Node 20+, and on macOS the
-Xcode Command Line Tools (`xcode-select --install`).
-
-```bash
-npm install
-npm run tauri:qa         # launches an isolated TrainerPro QA app
-
-# Tests
-cargo test --workspace     # core, BLE codecs, planner, woz parsers
-npx tsc --noEmit           # frontend types
-
-# Packaged macOS app smoke tests
-# See backend/tests/e2e/README.md
-
-# Useful diagnostics
-TP_PARSE_FILE=some.zwo cargo test -p tp-core parse_env_file -- --ignored --nocapture
-cargo test --bin tp-app live_fetch -- --ignored --nocapture   # whatsonzwift live check
-```
-
-The QA flavor uses its own app name, bundle identifier, and data directory, so
-development workouts, rides, and paired devices do not affect an installed
-TrainerPro app. Use the simulated devices for QA; do not connect both app
-flavors to the same physical trainer at once. Build a standalone QA app with
-`npm run tauri:qa:build -- --bundles app`.
-
-No trainer? Pair the **Simulated KICKR** and **Simulated HRM** from the
-Devices screen — they appear in every scan and behave like the real thing
-(first-order power response, effort-driven heart rate, fault injection).
+Documentation purpose and maintenance rules are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Repository layout
 
-```
-frontend/               React frontend (screens, store, IPC client, sources)
-backend/                lifecycle, IPC, I/O, device hub, player runtime
-crates/tp-core/         pure domain: parsers, engine, metrics, journal, FIT
-crates/tp-ble/          BLE: traits, FTMS/HR drivers, simulator
-tools/                  maintained internal command-line utilities
-docs/                   product, roadmap, specs, decisions, architecture notes
-assets/icon/            app icon sources (SVG masters + candidates)
-samples/                example workout files
+```text
+frontend/       React UI, state, and typed IPC client
+backend/        Tauri host, persistence, integrations, and runtime services
+crates/tp-core/ Pure workout, engine, journal, metrics, and FIT domain logic
+crates/tp-ble/  BLE contracts, drivers, device manager, and simulators
+docs/           Product, behavior, architecture, and feature contracts
 ```
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) — short version: discuss features in
-an issue first, keep `tp-core` pure, keep hardware behind the device traits,
-and bring tests.
+Local setup, QA workflows, architectural guardrails, documentation rules, and
+verification commands are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)

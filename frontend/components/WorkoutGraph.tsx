@@ -1,5 +1,5 @@
 // Workout profile graph: zone-colored segment polygons + progress cursor.
-// Data is the (t_s, %FTP) breakpoint polyline stored at import (SPEC §3.3) —
+// Data is the `(t_s, %FTP)` breakpoint polyline stored at import;
 // exactly two points per segment, so polygon i ↔ segment i. When `segments`
 // is provided (detail view), bars are hoverable with a step tooltip.
 

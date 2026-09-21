@@ -1,4 +1,4 @@
-//! Pure FTMS / Heart Rate packet codecs. SPEC.md §4.2–§4.3. No BLE deps —
+//! Pure FTMS and Heart Rate packet codecs. No BLE dependencies;
 //! everything here is unit-testable byte manipulation.
 
 use crate::traits::TrainerMeasurement;
@@ -61,7 +61,7 @@ pub fn pause_training() -> Vec<u8> {
 }
 
 /// Simulation parameters, grade 0 % (FreeRide): wind 0 m/s, grade 0.00 %,
-/// crr 0.0040 (40 × 0.0001), cw 0.51 kg/m (51 × 0.01). SPEC §4.2 table.
+/// crr 0.0040 (40 × 0.0001), cw 0.51 kg/m (51 × 0.01).
 pub fn flat_road_simulation() -> Vec<u8> {
     let wind = 0i16.to_le_bytes();
     let grade = 0i16.to_le_bytes();
@@ -102,7 +102,7 @@ pub fn parse_cp_response(data: &[u8]) -> Result<ControlPointResponse, CodecError
 // Indoor Bike Data (0x2AD2)
 // ---------------------------------------------------------------------------
 
-/// Flag-walking parser per SPEC §4.2: fields appear in bit order when set;
+/// Flag-walking parser: fields appear in bit order when set;
 /// never assume fixed offsets. Unused fields are skipped by size.
 pub fn parse_indoor_bike_data(data: &[u8]) -> Result<TrainerMeasurement, CodecError> {
     let mut r = Reader::new(data);
@@ -161,7 +161,7 @@ pub fn parse_indoor_bike_data(data: &[u8]) -> Result<TrainerMeasurement, CodecEr
 // Heart Rate Measurement (0x2A37)
 // ---------------------------------------------------------------------------
 
-/// Returns `None` for a 0 bpm reading (sensor warming up, SPEC §4.3).
+/// Returns `None` for a 0 bpm reading while the sensor is warming up.
 pub fn parse_heart_rate(data: &[u8]) -> Result<Option<u16>, CodecError> {
     let mut r = Reader::new(data);
     let flags = r.u8()?;

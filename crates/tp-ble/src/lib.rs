@@ -1,9 +1,9 @@
-//! tp-ble: BLE device layer for TrainerPro. SPEC.md §4.
+//! `tp-ble`: BLE device layer for TrainerPro.
 //!
 //! Layering: `codec` is pure byte parsing/building (unit-tested, no BLE); the
 //! concrete connection types implement the `traits` contracts; `DeviceManager`
 //! scans and connects; the simulated connections carry development and CI
-//! (SPEC.md §4.5).
+//! through the same public contracts.
 
 mod ble_heart_rate_connection;
 pub mod codec;

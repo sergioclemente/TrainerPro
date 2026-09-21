@@ -1,4 +1,4 @@
-//! Workout file parsers. SPEC.md §3.
+//! Workout file boundary parsers.
 
 pub mod ergmrc;
 pub mod zwo;

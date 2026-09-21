@@ -1,208 +1,169 @@
-# Architecture notes
+# TrainerPro architecture
 
-Companion diagrams to the overview in the [README](../README.md). The full
-build spec is [`SPEC.md`](SPEC.md); design rationale and rejected alternatives
-are in [`ALTERNATIVES.md`](ALTERNATIVES.md).
+**Purpose:** Define current technical ownership, dependency boundaries, and
+major data flows. **Audience:** Engineers changing application structure or
+cross-component behavior.
 
-> **Scope:** this document describes current implemented flows. The accepted
-> connected-workout target architecture is in
-> [`workout-platform.md`](workout-platform.md), and the product behavior it
-> serves is in [`PRODUCT.md`](PRODUCT.md).
+Observable behavior belongs in [SPEC.md](SPEC.md); the normative workout format
+is [TPW/1](TPW.md).
 
-## Workout source normalization
-
-Workout sources normalize into **TrainerPro Workout (TPW)** before persistence.
-Local ZWO/ERG/MRC files and WorkoutPlanner's ZWO response are boundary payloads;
-What's on Zwift already builds a semantic model, and Intervals.icu maps its
-structured `workout_doc` directly. None becomes workout identity.
+## System map
 
 ```mermaid
 flowchart TD
-    subgraph SRCS["Workout sources - tabs from frontend/sources.ts registry"]
-        LOCAL["My Library<br/>local .zwo / .erg / .mrc files"]
-        WP["WorkoutPlanner<br/>self-hosted server<br/>Basic Auth, /workout_file ZWO"]
-        WOZ["Zwift<br/>whatsonzwift.com fetch<br/>textbars to model"]
-        ICU["Intervals.icu<br/>scheduled workout_doc"]
-        FUTURE["Future source..."]
-    end
-
-    ADAPTERS["Boundary adapters<br/>ZWO / ERG / MRC / source model"]
-    TPW["TPW WorkoutDefinition<br/>validate + canonical JSON"]
-    DB[("SQLite<br/>workout_definitions")]
-    COMPILE["Compile to<br/>ExecutableWorkout"]
-    PLAYER["Player runtime"]
-    FIT["FIT file to Garmin Connect"]
-
-    LOCAL -->|file picker / drag-drop| ADAPTERS
-    WP -->|GET /workout_file| ADAPTERS
-    WOZ --> ADAPTERS
-    ICU --> TPW
-    FUTURE -.-> TPW
-    ADAPTERS --> TPW
-    TPW --> DB
-    DB --> COMPILE
-    COMPILE --> PLAYER
-    PLAYER --> FIT
+    UI[React screens + Zustand] -->|typed Tauri IPC| APP[Backend application layer]
+    APP --> DB[(SQLite)]
+    APP --> FILES[Session journals + FIT files]
+    APP --> PROVIDERS[Concrete provider clients]
+    APP --> CORE[tp-core]
+    APP --> HUB[Device hub]
+    HUB --> MANAGER[tp-ble DeviceManager]
+    MANAGER --> TRAITS[TrainerConnection / HeartRateConnection]
+    TRAITS --> BLE[FTMS + HRM drivers]
+    TRAITS --> SIM[Simulators]
+    CORE --> TPW[TPW validation + compilation]
+    CORE --> ENGINE[Engine + metrics + journal + FIT]
 ```
 
-Adding a source = one frontend tab component registered in `frontend/sources.ts`,
-plus a backend module that produces `WorkoutDefinition` or maps its supported
-payload through a boundary adapter. Provenance columns (`origin`, `origin_ref`)
-remain the current source badges. Intervals.icu schedules additionally carry a
-provider connection, external event identity/revision, and sync timestamps.
+The frontend presents state and user intent. The backend owns I/O, clocks,
+credentials, persistence, provider requests, runtime orchestration, and Tauri
+events. Domain calculations remain below those boundaries.
 
-## Intervals.icu inbound sync
+## Ownership boundaries
 
-The first connected-provider path is deliberately concrete. It does not turn
-the older workout-library registry into a connector framework.
+### `tp-core`
+
+`tp-core` is deterministic and pure: no I/O, async runtime, BLE, Tauri, or
+wall-clock access. It owns:
+
+- TPW validation and compilation;
+- executable workout and target calculations;
+- the workout engine state machine and effects;
+- journal parsing and aggregation;
+- NP, IF, TSS, zones, and related metrics; and
+- FIT encoding.
+
+### `tp-ble`
+
+`tp-ble` owns transport behavior. `DeviceManager` serializes adapter
+initialization, scanning, scan cancellation, and connection setup. Hardware is
+exposed only through `TrainerConnection` and `HeartRateConnection`; simulators
+implement the same contracts.
+
+The application-level `Trainer` and `HeartRateMonitor` are stable role owners.
+They replace connection objects during recovery while consumers retain their
+status and measurement subscriptions. Ownership of an object is not proof of a
+live transport; `DeviceStatus` is the connectivity source of truth.
+
+### Backend application layer
+
+The backend owns Tauri commands and events, the player runtime, provider
+clients, credential access, SQLite data modules, source caches, and activity
+artifacts. SQL remains in focused `database` modules rather than IPC commands
+or provider code.
+
+### Frontend
+
+The React frontend owns presentation and transient interaction state. It
+hydrates through commands and receives ongoing runtime/device state through
+events rather than polling. Rust serialization and `frontend/ipc.ts` form one
+interface and change together.
+
+## Workout and ownership model
+
+SQLite is authoritative for normalized workout definitions, schedules,
+provider connections, and Activities. TPW JSON is the stored semantic workout
+definition. ZWO, ERG, MRC, and provider payloads are adapters at system
+boundaries.
+
+The main lifecycle is:
+
+```text
+WorkoutDefinition
+    -> validate, compile, and snapshot
+ExecutableWorkout
+    -> execute
+WorkoutSession
+    -> record and finalize
+Activity
+```
+
+A ScheduledWorkout references a WorkoutDefinition but owns placement and
+provider identity separately. Provider-scheduled definitions are executable
+cache entries, excluded from local Library listing and deduplication. A local
+clone has a separate identity and lifecycle.
+
+## Source normalization
+
+Local files, WorkoutPlanner ZWO, What's on Zwift models, and Intervals.icu
+`workout_doc` all normalize into `WorkoutDefinition`. The shared compiler then
+produces the flat executable shape required by the trainer engine.
+
+Library sources use the existing descriptor registry because they share a real
+UI/configuration consumer. Scheduled-workout sync does not use that registry:
+it has provider connection identity, bounded reconciliation, remote revisions,
+and disconnect semantics that library browsing does not.
+
+## Next Up and provider sync
+
+Next Up is computed, never persisted. The backend combines active scheduled
+workouts with recommendations derived from Activity history. SQLite supplies
+cached results before any provider refresh.
+
+Intervals.icu uses a concrete inbound pipeline:
 
 ```mermaid
 sequenceDiagram
-    participant U as Rider
-    participant UI as Settings / Workouts
-    participant K as OS credential manager
-    participant I as Intervals.icu
-    participant D as SQLite
+    participant UI as Workouts / Settings
+    participant APP as Backend
+    participant API as Intervals.icu
+    participant DB as SQLite
+    participant Vault as OS credential manager
 
-    U->>UI: Connect with personal API key
-    UI->>I: GET athlete/0
-    I-->>UI: account id, name, time zone
-    UI->>K: store key by provider connection id
-    UI->>D: save non-secret active connection
-    UI->>I: GET bounded WORKOUT events
-    I-->>UI: structured workout_doc events
-    UI->>D: transaction: upsert TPW + schedules, reconcile missing events
-    D-->>UI: sync report/status
-    Note over UI,D: Next Up renders cached rows before later refresh attempts
+    UI->>APP: connect or refresh
+    APP->>API: validate key and read athlete metadata
+    APP->>Vault: store key by provider connection
+    APP->>DB: store non-secret connection metadata
+    APP->>API: fetch bounded WORKOUT events
+    API-->>APP: structured workout_doc events
+    APP->>DB: transactionally upsert TPW and schedules
+    APP->>DB: reconcile missing events in fetched window
 ```
 
-One Intervals.icu account can be active at a time. The refresh boundary covers
-7 days behind and 42 days ahead of the athlete-local date. Provider mapping and
-database reconciliation happen only after a complete HTTP response; fetch
-failure cannot erase cached data. Disconnect removes the vault credential and
-soft-removes active provider schedules/definitions in one database transaction,
-preserving Activity links and historical rows.
+Mapping completes before persistence. A failed request cannot erase cached
+data. Repeated sync preserves local identities. Remote edits update the linked
+definition and placement; missing events and disconnects soft-retire provider
+state while retaining Activity references.
 
-Definitions owned by provider schedules remain executable through Next Up but
-are excluded from the local Library and its TPW deduplication boundary. An
-identical local import therefore creates an independently owned copy that is
-not retired by provider reconciliation or disconnect.
+## Device and player flow
 
-## Next Up projection and Workouts surface
+The hub starts stable Trainer and HRM owners. Foreground scans and connection
+setup coordinate through `DeviceManager`; established links then operate
+concurrently. Adapter disconnect events drive connection replacement and
+status transitions.
 
-The Workouts screen leads with a horizontal Next Up rail and keeps the Library
-below it. The backend assembles the scheduled and recommended entries; the
-frontend presents the full ordered result without turning it into a calendar.
+The player runtime wraps the pure engine. It owns periodic ticks, trainer
+effects, keep-alive, measurement aggregation, reconnect policy, journal writes,
+and Tauri events. A trainer-control failure pauses execution; recovery reapplies
+control and targets but waits for explicit resume. HRM failures affect only the
+heart-rate path.
 
-```mermaid
-flowchart LR
-    S[(scheduled_workouts)] --> N[Next Up projection]
-    A[(activities)] -->|180-day frequency + recency| R[Local favorites]
-    W[(workout_definitions)] --> N
-    W --> R
-    R --> N
-    N --> IPC[list_next_up]
-    IPC --> UI[Workouts: Next Up + Library]
-```
+## Session and Activity flow
 
-Scheduled rows are calendar-local placements over a WorkoutDefinition. Active,
-unfulfilled rows from the preceding seven calendar days onward appear first in
-date/time order; older missed rows remain stored but leave this projection.
-Recommendations follow, are computed rather than persisted, and exclude
-definitions already scheduled in the projection.
-The backend derives the current calendar date from the active planning
-authority's stored IANA time zone, falling back to the machine-local zone when
-no planning authority is connected.
-Starting a scheduled item carries its schedule identity into the session
-journal and resulting Activity.
+Starting creates a session ID and snapshots the TPW definition. Runtime samples
+and control events append to a crash-safe JSONL journal. Ending replays the
+journal, computes summaries and laps, writes FIT, and inserts the Activity in
+one application flow. Activities retain the snapshot and optional schedule
+identity so later edits or provider disconnects cannot rewrite history.
 
-## Device connection lifecycle
+## Architectural decisions
 
-`Trainer` and `HeartRateMonitor` are stable backend owners. A BLE or simulated
-driver implements the corresponding one-link connection trait. Connection
-replacement and retry state stay private to the owner, so the player and UI
-subscribe once and never receive an optional connection object.
-
-`tp-ble::DeviceManager` owns adapter-level scan and connection coordination.
-Public and targeted scans are serialized. Startup uses one scan for all
-configured physical roles and begins each device's setup as soon as it is
-resolved. Discovery of the other role may continue, and resolved GATT setups
-may proceed concurrently. Established links operate concurrently. A foreground
-connection cancels public discovery, while an automatic retry waits for it. A
-saved HRM lookup is preemptible by trainer recovery. The application hub chooses
-when to scan or connect without implementing Bluetooth quiescence itself.
-
-```mermaid
-sequenceDiagram
-    participant UI
-    participant O as Trainer / HeartRateMonitor owner
-    participant F as Connection factory
-    participant C as Replaceable connection
-    participant P as Player / event bridge
-
-    P->>O: subscribe_state + subscribe_measurements
-    UI->>O: connect(platform_id)
-    O-->>P: DeviceState: Connecting
-    O->>F: connect(platform_id)
-    F-->>O: Box<...Connection>
-    O-->>P: DeviceState: Connected
-    C-->>O: ConnectionStatus: Disconnected
-    O-->>P: DeviceState: Reconnecting (new generation)
-    O->>C: disconnect and stop link tasks
-    O->>F: retry connect(platform_id)
-    F-->>O: replacement connection
-    O-->>P: DeviceState: Connected
-    UI->>O: disconnect
-    O->>O: cancel retry / invalidate generation
-    O-->>P: DeviceState: Disconnected
-```
-
-Trainer and heart-rate owners remain separate even though this lifecycle is
-similar: trainer loss pauses a ride, while heart-rate loss only clears the
-heart-rate measurement.
-
-## Workout session to activity flow
-
-```mermaid
-sequenceDiagram
-    participant U as Rider
-    participant P as Player runtime
-    participant E as Engine
-    participant T as Trainer owner
-    participant J as Session journal
-    participant D as SQLite activities
-    participant G as Garmin Connect
-
-    U->>P: Load WorkoutDefinition (optionally from ScheduledWorkout)
-    P->>J: create with session id + schedule id + TPW snapshot
-    U->>P: Start
-    loop every 250 ms
-        P->>E: Tick
-        E-->>P: effects: SetTarget, LapBoundary
-        P->>T: set_target_power
-    end
-    T-->>P: measurements: power, cadence
-    P->>J: 1 Hz samples + lap events
-    U->>P: End ride
-    P->>J: replay journal
-    P->>P: laps, NP, IF, TSS
-    P->>P: encode .FIT
-    P->>D: insert immutable Activity
-    Note over J,D: activity links schedule/session and preserves TPW snapshot
-    U->>G: upload .FIT
-```
-
-## Cross-platform status
-
-| Layer | macOS (shipped) | Windows (planned) | Shared? |
-|---|---|---|---|
-| Shell / webview | WKWebView | WebView2 (bootstrapper via NSIS) | Tauri 2 config |
-| BLE | CoreBluetooth via btleplug | WinRT via btleplug | drivers + traits unchanged |
-| Everything else | — | — | 100 % shared (tp-core, backend, frontend) |
-
-Windows-specific work is validation, not architecture: btleplug's WinRT
-backend has its own timing personality (the CoreBluetooth race-guards we
-carry — scan quiescing, serialized connects — are kept on both platforms),
-peripheral IDs are per-machine on both OSes, and installers need
-`bundle.active` + signing decisions. The full test suite (all hardware-free)
-runs identically on both platforms.
+- Tauri and Rust keep domain and device behavior shared across desktop shells.
+- FTMS is the trainer-control protocol; legacy vendor protocols remain demand
+  driven.
+- SQLite is the structured source of truth; journals and FIT remain appropriate
+  durable Activity artifacts.
+- Journal-first recording prevents a process crash from destroying an entire
+  ride and makes final FIT summaries deterministic.
+- Provider abstractions are introduced only around demonstrated shared
+  ownership or behavior, not speculative symmetry.
