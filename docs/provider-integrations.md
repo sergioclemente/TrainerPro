@@ -31,37 +31,36 @@ the user can also refresh from Workouts or Settings. Each completed response
 transactionally and idempotently reconciles the window from 7 days before to 42
 days after the athlete-local date. A failed fetch leaves the last-good workouts
 available offline. Disconnecting removes the credential and retires that
-account's active cached schedules without deleting Activity history.
+account's active cached schedules without deleting Activity history. A missed
+schedule remains in Next Up through seven calendar days after its scheduled
+date; older rows remain stored but leave the projection.
 
 This is the personal/local authentication path. Intervals.icu's guidance says a
-distributed integration should use OAuth, so OAuth remains a release gate
-before treating the connector as a general multi-user production integration.
-There is no activity upload, schedule write-back, webhook, or retry queue yet.
-The database reserves `activities.icu_activity_id` for later activity sync.
+distributed integration should use OAuth. Personal API keys remain the current
+scope; before broad multi-user distribution, TrainerPro must confirm a safe
+native-app OAuth flow with Intervals.icu or introduce an appropriate token-
+exchange service. There is no Activity upload, schedule write-back, webhook, or
+outbound retry queue, and those capabilities are not in the current plan. The
+unused `activities.icu_activity_id` column does not imply an Activity-sync
+commitment.
 
 Read-only API assumptions and the privacy-safe live probe are documented in
 [`intervals-icu-discovery.md`](intervals-icu-discovery.md).
 
-The accepted direction is broader than the original post-ride-export proposal:
-Intervals.icu is the first candidate planning authority for inbound scheduled
-workouts, offline execution, activity upload, and an explicitly designed
-two-way sync. Its open API, external IDs, and calendar webhooks make that worth
-proving. Personal API-key reads and the scheduled-workout shape are now
-validated; production OAuth/token custody, polling/webhooks, conflicts, and
-device-export behavior remain implementation gates.
+The accepted current direction is deliberately narrower than the earlier
+round-trip proposal: Intervals.icu is an inbound planning authority that feeds
+an offline executable cache. Personal API-key reads and the scheduled-workout
+shape are validated. Activity upload, calendar writes, webhooks, and conflict
+resolution are deferred rather than unfinished gates.
 
-When implemented, preserve these invariants:
+Preserve these invariants:
 
-- A provider failure cannot make activity finalization fail.
 - Already-synced workouts remain executable offline.
-- Failed outbound operations are visible and retryable.
-- Stable external identities are validated against the live API before relying
-  on retry idempotency.
 - Provider-owned workouts are not silently overwritten by local changes.
 - Credentials are disabled by default and stored through the provider-
   connection design rather than ad hoc settings.
 
-The old proposed `icu_test` / `icu_upload_activity`-only command surface and
-export-sink-only restriction are superseded. Intervals.icu should use the
-capability-specific connector and sync model in
-[`workout-platform.md`](workout-platform.md).
+The old proposed `icu_test` / `icu_upload_activity` command surface remains
+superseded. Intervals.icu uses the concrete inbound connector and sync model in
+[`workout-platform.md`](workout-platform.md); it does not justify a generic
+connector framework.

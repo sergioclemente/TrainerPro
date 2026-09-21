@@ -114,8 +114,9 @@ flowchart TD
 
 This diagram describes the current shipped architecture. The **Workouts**
 screen now leads with an execution-first **Next Up** rail above the Library,
-backed by SQLite semantic workout definitions; connected-provider sync is the
-next major step. See
+backed by SQLite semantic workout definitions. Intervals.icu is the first
+connected provider and supplies an executable local cache of scheduled
+workouts. See
 [`docs/PRODUCT.md`](docs/PRODUCT.md) and the target flow in
 [`docs/workout-platform.md`](docs/workout-platform.md).
 

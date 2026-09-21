@@ -58,6 +58,7 @@ pub fn get(conn: &Connection, id: &str) -> rusqlite::Result<Option<ScheduledWork
 /// represented by an Activity link instead of mirrored schedule state.
 pub fn list_for_next_up(
     conn: &Connection,
+    oldest_date_local: &str,
 ) -> rusqlite::Result<Vec<ScheduledWorkoutWithDefinitionRow>> {
     let mut stmt = conn.prepare(
         "SELECT sw.id, sw.workout_definition_id, sw.scheduled_date_local,
@@ -68,13 +69,14 @@ pub fn list_for_next_up(
          FROM scheduled_workouts sw
          JOIN workout_definitions wd ON wd.id = sw.workout_definition_id
          WHERE sw.removed_at_unix_ms IS NULL
+           AND sw.scheduled_date_local >= ?1
            AND NOT EXISTS (
              SELECT 1 FROM activities a WHERE a.scheduled_workout_id = sw.id
            )
          ORDER BY sw.scheduled_date_local,
                   COALESCE(sw.scheduled_time_local, '00:00:00'), sw.id",
     )?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map([oldest_date_local], |row| {
         Ok(ScheduledWorkoutWithDefinitionRow {
             schedule: ScheduledWorkoutRow {
                 id: row.get(0)?,
@@ -327,6 +329,7 @@ mod tests {
     };
 
     const TPW_JSON: &str = r#"{"format":"TPW","version":1,"title":"Endurance","prescription":{"sport":"cycling","steps":[{"type":"steady","duration_seconds":3600,"power":{"type":"percent_ftp","percent":70}}]}}"#;
+    const EARLIEST_TEST_DATE: &str = "0001-01-01";
 
     fn insert_definition(conn: &Connection, id: &str) {
         workout_definitions::insert(
@@ -365,7 +368,7 @@ mod tests {
         insert_schedule(&conn, "earlier", "definition-a", "2026-09-15");
 
         assert_eq!(
-            list_for_next_up(&conn)
+            list_for_next_up(&conn, EARLIEST_TEST_DATE)
                 .unwrap()
                 .iter()
                 .map(|row| row.schedule.id.as_str())
@@ -402,7 +405,33 @@ mod tests {
             [],
         )
         .unwrap();
-        assert!(list_for_next_up(&conn).unwrap().is_empty());
+        assert!(list_for_next_up(&conn, EARLIEST_TEST_DATE)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn next_up_includes_the_oldest_allowed_date_and_excludes_older_schedules() {
+        let conn = super::super::test_connection();
+        for (id, date) in [
+            ("too-old", "2026-09-13"),
+            ("oldest-allowed", "2026-09-14"),
+            ("today", "2026-09-21"),
+            ("future", "2026-09-22"),
+        ] {
+            insert_definition(&conn, id);
+            insert_schedule(&conn, id, id, date);
+        }
+
+        assert_eq!(
+            list_for_next_up(&conn, "2026-09-14")
+                .unwrap()
+                .iter()
+                .map(|row| row.schedule.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["oldest-allowed", "today", "future"]
+        );
+        assert!(get(&conn, "too-old").unwrap().is_some());
     }
 
     #[test]
@@ -504,7 +533,7 @@ mod tests {
         transaction.commit().unwrap();
 
         assert_eq!(
-            list_for_next_up(&conn)
+            list_for_next_up(&conn, EARLIEST_TEST_DATE)
                 .unwrap()
                 .iter()
                 .map(|row| row.schedule.id.as_str())
@@ -519,7 +548,7 @@ mod tests {
             Some(20)
         );
         assert_eq!(
-            workout_definitions::list(&conn)
+            workout_definitions::list_local(&conn)
                 .unwrap()
                 .iter()
                 .map(|row| row.id.as_str())

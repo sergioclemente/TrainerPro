@@ -73,8 +73,8 @@ the spec). ANT+ only re-enters if you later care about ANT-only power meters.
 **The practical consequence:** direct Garmin synchronization depends on
 access to Garmin's gated API, so manual FIT upload remains the shipped path
 while the project's access request is pending. An intervals.icu post-ride
-export remains planned as an additional sink, but it does not replace direct
-Garmin synchronization and is not implemented today. See
+export is not in the current product scope and would not replace direct Garmin
+synchronization if reconsidered. See
 [`provider-integrations.md`](provider-integrations.md) for current status.
 
 **What would change my mind:** approved Garmin access would bring direct sync

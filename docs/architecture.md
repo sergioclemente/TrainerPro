@@ -83,6 +83,11 @@ failure cannot erase cached data. Disconnect removes the vault credential and
 soft-removes active provider schedules/definitions in one database transaction,
 preserving Activity links and historical rows.
 
+Definitions owned by provider schedules remain executable through Next Up but
+are excluded from the local Library and its TPW deduplication boundary. An
+identical local import therefore creates an independently owned copy that is
+not retired by provider reconciliation or disconnect.
+
 ## Next Up projection and Workouts surface
 
 The Workouts screen leads with a horizontal Next Up rail and keeps the Library
@@ -101,8 +106,13 @@ flowchart LR
 ```
 
 Scheduled rows are calendar-local placements over a WorkoutDefinition. Active,
-unfulfilled rows appear first in date/time order. Recommendations follow, are
-computed rather than persisted, and exclude definitions already scheduled.
+unfulfilled rows from the preceding seven calendar days onward appear first in
+date/time order; older missed rows remain stored but leave this projection.
+Recommendations follow, are computed rather than persisted, and exclude
+definitions already scheduled in the projection.
+The backend derives the current calendar date from the active planning
+authority's stored IANA time zone, falling back to the machine-local zone when
+no planning authority is connected.
 Starting a scheduled item carries its schedule identity into the session
 journal and resulting Activity.
 

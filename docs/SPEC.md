@@ -3,7 +3,8 @@
 > **Status:** current implementation baseline. The Workouts screen leads with
 > Next Up and keeps the Library below it, and TPW/SQLite are authoritative for
 > workout definitions. The first Intervals.icu inbound connection is implemented;
-> later provider and round-trip work is sequenced in [`ROADMAP.md`](ROADMAP.md),
+> later provider work and deferred outbound options are sequenced in
+> [`ROADMAP.md`](ROADMAP.md),
 > with target software boundaries in
 > [`workout-platform.md`](workout-platform.md). Update the relevant sections of
 > this spec as those migrations land.
@@ -603,7 +604,7 @@ CREATE TABLE activities (
   average_cadence_rpm INTEGER, work_kj INTEGER,
   ftp_used_w INTEGER NOT NULL, final_intensity_multiplier REAL NOT NULL,
   fit_path TEXT NOT NULL, journal_path TEXT NOT NULL, completed_pct REAL NOT NULL,
-  icu_activity_id TEXT);  -- reserved by v5 for the planned intervals.icu integration
+  icu_activity_id TEXT);  -- currently unused; does not imply planned activity sync
 
 CREATE UNIQUE INDEX activities_workout_session_id
   ON activities(workout_session_id);
@@ -646,13 +647,20 @@ while retaining activity history, FIT/journal paths, settings, and devices.
 
 Scheduled workout placement is calendar-local: every row has an ISO local
 date, while time and time zone are either both present or both absent. Next Up
-reads active rows in calendar order and excludes a row once an Activity links
-to it. Removal is soft so an existing Activity can retain schedule traceability.
+reads active rows from the preceding seven calendar days onward in calendar
+order and excludes a row once an Activity links to it. Older missed rows remain
+stored but leave the projection. Removal is soft so an existing Activity can
+retain schedule traceability.
+The backend derives today's date using the active planning authority's stored
+IANA time zone, with the machine-local zone as the no-connection fallback; the
+frontend does not supply policy time.
 Provider-owned rows scope external event identity through a non-secret
 `provider_connections` row. A completed bounded sync updates the linked TPW and
 placement transactionally, preserves local IDs, and soft-removes only missing
 events whose previous placement was inside that fetched window. Its
-provider-owned definition is retired from Library queries at the same time but
+provider-owned definition remains outside local Library listing and
+deduplication; importing identical TPW creates a separate TrainerPro-owned
+copy. When the provider event is removed, its cached definition is retired but
 retained for traceability and restored in place if the event reappears.
 Only one Intervals.icu account is active at a time. Disconnecting marks the
 connection inactive and transactionally retires its active schedules and
@@ -702,10 +710,11 @@ from 7 days before through 42 days after the supplied athlete-local date.
 Workouts performs one background refresh per app run after showing cached Next
 Up data; Settings → Connections and the Next Up Refresh action also allow an
 explicit refresh. API/network failures retain the last-good cache and update
-observable connection health. This retrieval window does not settle the open
-Next Up display/overdue policy. OAuth, activity upload, and schedule write-back
-are not implemented. The reserved `activities.icu_activity_id` column remains
-unused. See
+observable connection health. Missed schedules remain in Next Up through seven
+calendar days after their scheduled date; the future display horizon remains
+open. OAuth is deferred until broad multi-user distribution. Activity upload
+and schedule write-back are outside the current plan, and the
+`activities.icu_activity_id` column remains unused. See
 [`provider-integrations.md`](provider-integrations.md) and
 [`workout-platform.md`](workout-platform.md).
 
@@ -774,6 +783,7 @@ Styling: dark theme only in v1. Readable at 2 m: metric tiles ≥ 96 pt numerals
 | `disk_full` / io | writes fail | block ride start; toast during ride, journal keeps trying |
 | `intervals_auth` / `intervals_account_conflict` | invalid key or a different account is already active | keep cached workouts; point to Settings → Connections |
 | `intervals_network` / `intervals_http` / `intervals_response` / `intervals_sync` | provider fetch, payload, or reconciliation failure | retain last-good cache; show toast and connection health |
+| `next_up_date` | local calendar-date derivation fails | retain the current Next Up view and offer Retry |
 | `credential_store` | OS credential manager missing or unavailable | keep connection metadata; request reconnection in Settings |
 
 Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
@@ -812,7 +822,7 @@ Logging: `tracing` with rolling file in appdata `logs/`; BLE packet-level at
 | M5 | Polish + Windows: WinRT BLE pass, installers (mac notarized DMG, Windows MSI + signing), app icon, onboarding empty-states | fresh machine (both OS) → install → pair → ride → Garmin upload with no dev tools |
 
 Phase 2 (not scheduled): Garmin Connect API auto-sync (awaiting developer
-program access), intervals.icu post-ride upload, Strava OAuth upload, Wahoo
+program access), Strava OAuth upload, Wahoo
 legacy driver if demand appears, power match, FIT-workout import. See
 [`provider-integrations.md`](provider-integrations.md) for integration status.
 

@@ -120,7 +120,7 @@ pub fn store_definition(
     let tpw_json = definition.to_json_pretty()?;
     let existing = {
         let conn = state.db.lock().unwrap();
-        definition_db::find_id_by_tpw_json(&conn, &tpw_json)?
+        definition_db::find_local_id_by_tpw_json(&conn, &tpw_json)?
     };
     if let Some(id) = existing {
         return Ok(ImportResult {
@@ -203,7 +203,7 @@ fn summary_from_definition(
 pub async fn list_workouts(state: State<'_, AppState>) -> R<Vec<WorkoutSummary>> {
     let rows = {
         let conn = state.db.lock().unwrap();
-        definition_db::list(&conn)?
+        definition_db::list_local(&conn)?
     };
     let ftp = state.settings().profile.ftp;
     rows.into_iter()
@@ -215,17 +215,21 @@ pub async fn list_workouts(state: State<'_, AppState>) -> R<Vec<WorkoutSummary>>
 /// is never touched.
 #[tauri::command]
 pub async fn delete_workout(state: State<'_, AppState>, id: String) -> R<()> {
-    let deleted = {
+    let result = {
         let conn = state.db.lock().unwrap();
         definition_db::delete(&conn, &id)?
     };
-    if !deleted {
-        return Err(AppError::new(
+    match result {
+        definition_db::DeleteResult::Deleted => Ok(()),
+        definition_db::DeleteResult::NotFound => Err(AppError::new(
             "not_found",
             format!("workout {id} not found"),
-        ));
+        )),
+        definition_db::DeleteResult::ReferencedBySchedule => Err(AppError::new(
+            "workout_scheduled",
+            "This workout is attached to a schedule and cannot be removed from the Library",
+        )),
     }
-    Ok(())
 }
 
 /// Structured segment description for the workout detail view. Percentages

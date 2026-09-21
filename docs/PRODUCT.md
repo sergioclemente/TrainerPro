@@ -77,9 +77,10 @@ Later recommenders, including an AI coach, use the same product contract. They
 may produce better selections and richer workout definitions without requiring
 a new Workouts surface or execution flow.
 
-Open UX policies include the display horizon for future scheduled workouts and
-how long an overdue workout remains prominent. Neither choice turns the rail
-into a calendar.
+A missed scheduled workout remains in Next Up through seven calendar days
+after its scheduled date. It then leaves the projection without being deleted
+from storage or losing Activity traceability. The display horizon for future
+scheduled workouts remains open. Neither policy turns the rail into a calendar.
 
 ## Definition, execution, and history
 
@@ -122,7 +123,7 @@ A provider may implement only one capability. Current candidate roles are:
 
 | Provider | Likely role |
 |---|---|
-| **Intervals.icu** | Planning authority, scheduled-workout sync, activity exchange, and strongest early candidate for two-way sync |
+| **Intervals.icu** | Inbound planning authority and scheduled-workout sync; outbound activity and calendar writes are outside the current scope |
 | **TrainingPeaks** | Planning authority and activity exchange; public integration remains subject to partner access |
 | **WorkoutPlanner** | Self-hosted workout-definition source; scheduling support depends on its future model |
 | **What’s on Zwift** | Read-only workout catalog |
@@ -225,26 +226,29 @@ The following are accepted unless new product evidence changes them:
    boundaries.
 8. External providers are expected to supply most workouts; local authoring is
    primarily clone-and-adjust.
-9. Provider capabilities and ownership are explicit; two-way sync must not
-   create silent last-writer-wins behavior.
+9. Provider capabilities and ownership are explicit; any future two-way sync
+   must not create silent last-writer-wins behavior.
 10. The AI coach builds on the same recommendation, definition, session, and
     activity contracts as non-AI providers.
+11. A missed scheduled workout remains in Next Up for seven calendar days
+    after its scheduled date, then leaves the projection without being deleted.
 
 ## Open product questions
 
 - What is the initial normalized training-focus vocabulary, and when should a
   provider-specific label be preserved rather than mapped?
-- What are the overdue and future-horizon rules for scheduled items in Next Up?
+- What is the future-horizon rule for scheduled items in Next Up?
 - Can more than one provider be an active planning authority, or does the first
   release select exactly one?
-- Which local changes are session-only, which create a clone, and which may be
-  explicitly published back?
+- Which local changes are session-only and which create a TrainerPro-owned
+  clone?
 - Which athlete context is necessary and appropriate for an AI coach, and what
   retention/privacy controls must accompany it?
 
 ## Non-goals for the connected-workout program
 
 - A full calendar editor inside TrainerPro.
+- Intervals.icu Activity upload or calendar write-back in the current scope.
 - A large locally curated workout catalog.
 - Making users manage workout files as part of their normal workflow.
 - Perfect backward compatibility with the current development database or

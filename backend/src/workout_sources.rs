@@ -47,7 +47,9 @@ async fn tag_and_load(
     origin_ref: &str,
     origin_id: Option<i64>,
 ) -> Result<PlayerState, AppError> {
-    {
+    // Deduplication may reuse a definition from another local source. Preserve
+    // that row's existing provenance instead of relabeling it as this source.
+    if !import.already_existed {
         let conn = state.db.lock().unwrap();
         definition_db::set_origin(
             &conn,

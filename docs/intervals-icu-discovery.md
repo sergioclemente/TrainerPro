@@ -3,7 +3,8 @@
 Status: read-only API discovery for the first connected-provider integration.
 This evidence now backs the implemented personal-key account validation,
 bounded calendar client, `workout_doc`-to-TPW adapter, and transactional inbound
-sync. OAuth and every outbound capability remain future work.
+sync. The current product scope is inbound-only; OAuth is deferred until broad
+multi-user distribution, and outbound capabilities are not currently planned.
 
 ## Confirmed public contract
 
@@ -95,8 +96,8 @@ sanitized event is
 It contains only synthetic identity/date/text fields and the deliberate probe's
 workout semantics; athlete-derived summaries and resolved targets are absent.
 
-Before defining sync tables or a production client, run the live probe and
-answer:
+Questions retained for any future live revalidation or provider expansion (not
+gates for the current personal-key scope):
 
 1. Is calendar-event `id` stable across ordinary edits?
 2. Does `updated` reliably change after an edit, and with what precision?
@@ -108,6 +109,7 @@ answer:
 Provider-scoped persistence preserves stable local identities, remote revision,
 last-good data, and bounded deletion semantics. The desktop connection stores
 the API key in the OS credential manager, syncs a 7-day lookback and 42-day
-lookahead window, and exposes lifecycle/health through Settings. The remaining
-manual gate is an end-to-end connect, edit, delete, offline restart, and ride
-pass against a real account before production OAuth work.
+lookahead window, and exposes lifecycle/health through Settings. A broader
+distribution effort may choose to repeat the end-to-end connect, edit, delete,
+offline restart, and ride pass before undertaking production OAuth work; it is
+not a gate for the current personal-key scope.
