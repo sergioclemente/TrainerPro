@@ -1,6 +1,6 @@
 //! Workout-session journal: JSONL line types, writer/reader over caller-supplied
 //! `io::Write`/`io::Read` (tp-core stays I/O-agnostic; the backend opens the
-//! file and fsyncs). SPEC.md §6.
+//! file and fsyncs).
 //!
 //! Line format (exactly one JSON object per line, compact type envelope and
 //! explicit payload fields):

@@ -1,4 +1,4 @@
-//! ZWO (Zwift workout XML) parser. SPEC.md §3.1. Uses `roxmltree`.
+//! ZWO (Zwift workout XML) parser using `roxmltree`.
 //!
 //! Contract highlights:
 //! - Power attributes are FTP fractions → `PowerTarget::PercentFtp`.
@@ -127,7 +127,7 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                     &["Duration", "PowerLow", "PowerHigh", "Cadence"],
                     &mut warnings,
                 );
-                // Spec §3.1: Warmup/Ramp go low→high; Cooldown goes high→low.
+                // Warmup/Ramp go low→high; Cooldown goes high→low.
                 let (start, end) = if tag == "Cooldown" {
                     (high, low)
                 } else {
@@ -256,7 +256,7 @@ fn duration_or_skip(
 }
 
 /// Required FTP-fraction attribute; values outside the sanity bounds are
-/// clamped with a warning (spec §3.1), unparseable values are errors.
+/// clamped with a warning; unparseable values are errors.
 fn required_power(
     el: Node,
     attr: &str,
@@ -327,7 +327,7 @@ fn required_repeat(el: Node) -> Result<u32, ParseError> {
     Ok(v.round() as u32)
 }
 
-/// Any attribute not in `known` is collected as a warning (spec §3 general
+/// Any attribute not in `known` is collected as a warning (general
 /// contract: unknown elements/attributes warn, never error).
 fn warn_unknown_attrs(el: Node, known: &[&str], warnings: &mut Vec<ParseWarning>) {
     for a in el.attributes() {
@@ -419,7 +419,7 @@ mod tests {
     }
 
     /// Realistic file modeled on Zwift exports: full metadata, every element
-    /// from the §3.1 table, sportType present-but-ignored.
+    /// including sportType present-but-ignored.
     const FULL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <workout_file>
     <author>TrainerPro Tests</author>

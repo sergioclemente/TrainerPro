@@ -1,4 +1,4 @@
-//! FTMS trainer driver over btleplug. SPEC.md §4.2.
+//! FTMS trainer driver over btleplug.
 
 use btleplug::api::bleuuid::uuid_from_u16;
 use btleplug::api::{
@@ -30,13 +30,13 @@ pub struct FtmsTrainerConnection {
     tasks: ConnectionTasks,
     measurements_tx: broadcast::Sender<TrainerMeasurement>,
     status_tx: watch::Sender<ConnectionStatus>,
-    /// One control-point op in flight at a time (SPEC §4.2). The mutex guards
+    /// One control-point operation in flight at a time. The mutex guards
     /// the response receiver; holding it across write+await serializes ops.
     cp_resp: Mutex<mpsc::Receiver<ControlPointResponse>>,
 }
 
 impl FtmsTrainerConnection {
-    /// Full connect sequence per SPEC §4.2: discover, capability-check,
+    /// Full connect sequence: discover, capability-check,
     /// subscribe, request control. Fails with a specific error at each step.
     pub async fn connect(adapter: Adapter, peripheral: Peripheral) -> Result<Self, BleError> {
         let result = Self::establish(adapter, peripheral.clone()).await;
@@ -210,7 +210,7 @@ impl FtmsTrainerConnection {
     }
 
     /// Write a CP op and await its response indication; retry once on
-    /// timeout (SPEC §4.2 / consts CP_TIMEOUT_MS, CP_RETRIES).
+    /// timeout (`CP_TIMEOUT_MS`, `CP_RETRIES`).
     async fn cp_op(&self, frame: Vec<u8>, op: u8) -> Result<(), BleError> {
         let mut rx = self.cp_resp.lock().await;
         for attempt in 0..=CP_RETRIES {

@@ -1,4 +1,4 @@
-//! BLE heart-rate strap driver. SPEC.md §4.3.
+//! BLE heart-rate strap driver.
 
 use btleplug::api::bleuuid::uuid_from_u16;
 use btleplug::api::{Central as _, CentralEvent, Peripheral as _};

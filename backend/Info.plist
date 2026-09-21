@@ -4,8 +4,7 @@
   Merged into the generated Info.plist for macOS bundles (Tauri reads this file
   next to tauri.conf.json). The Bluetooth usage string is REQUIRED: macOS
   CoreBluetooth denies BLE access to an app whose Info.plist lacks it, and the
-  denial is silent — scans return nothing with no error. See docs/SPEC.md §4.4
-  and the packaging notes.
+  denial is silent — scans return nothing with no error.
 -->
 <plist version="1.0">
 <dict>

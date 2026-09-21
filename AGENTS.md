@@ -1,10 +1,11 @@
 # Agent guidance
 
 Read [`README.md`](README.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md) first.
-Use [`docs/SPEC.md`](docs/SPEC.md) for intended behavior,
-[`docs/ALTERNATIVES.md`](docs/ALTERNATIVES.md) for settled decisions, and
-[`docs/architecture.md`](docs/architecture.md) for system flows. Do not
-duplicate those documents here.
+Use [`docs/PRODUCT.md`](docs/PRODUCT.md) for durable product decisions,
+[`docs/SPEC.md`](docs/SPEC.md) for current behavior, and
+[`docs/architecture.md`](docs/architecture.md) for technical ownership and
+flows. Feature-specific external contracts use the `docs/feature-*.md` prefix.
+Do not duplicate those documents here.
 
 ## Constraints
 

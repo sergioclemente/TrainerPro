@@ -1,5 +1,5 @@
 //! Power metrics: NP/IF/TSS, session totals, zones, library estimates.
-//! SPEC.md §6 (totals), §2 (estimates). Pure functions only.
+//! Session totals and workout estimates. Pure functions only.
 
 use crate::consts::NP_WINDOW_S;
 use crate::journal::{SessionEventKind, SessionRecording};

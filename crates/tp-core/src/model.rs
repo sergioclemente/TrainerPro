@@ -1,5 +1,4 @@
-//! Shared workout model. SPEC.md §2. This file is the contract every other
-//! module codes against — changes here require touching the spec first.
+//! Shared executable workout model used by the compiler, engine, and metrics.
 
 use serde::{Deserialize, Serialize};
 

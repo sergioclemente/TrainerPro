@@ -2,7 +2,7 @@
 //!
 //! Invariant: this crate has no I/O (journal.rs takes `io::Write`/`io::Read`
 //! handles supplied by the caller), no async, and no BLE/tauri dependencies.
-//! Everything here is unit-testable without hardware. See SPEC.md §1–§2.
+//! Everything here is unit-testable without hardware.
 
 pub mod build;
 pub mod consts;

@@ -1,5 +1,5 @@
 //! Cross-module integration: parse ZWO → engine ride → journal → metrics →
-//! FIT encode. SPEC.md §12. No hardware, no wall clock — ticks are scripted.
+//! FIT encode. No hardware, no wall clock — ticks are scripted.
 
 use std::io::Cursor;
 

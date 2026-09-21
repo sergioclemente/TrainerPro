@@ -1,4 +1,4 @@
-//! Player engine: pure state machine. SPEC.md §5.1.
+//! Player engine: pure state machine.
 //!
 //! Deterministic: same Input sequence ⇒ same Effect stream. No clocks — the
 //! runtime owns time and feeds `Tick`.

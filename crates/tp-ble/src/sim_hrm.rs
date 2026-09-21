@@ -1,4 +1,4 @@
-//! Simulated heart-rate monitor. SPEC.md §4.5. Implements the same trait as
+//! Simulated heart-rate monitor. Implements the same trait as
 //! the real driver and follows simulated trainer measurements.
 
 use futures::{Stream, StreamExt};

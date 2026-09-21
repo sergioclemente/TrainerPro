@@ -1,4 +1,4 @@
-//! Simulated trainer. SPEC.md §4.5. Implements the same trait as the real
+//! Simulated trainer. Implements the same trait as the real
 //! driver, with fault injection for development and CI.
 
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,7 @@ use crate::traits::{BleError, ConnectionStatus, TrainerConnection, TrainerMeasur
 
 const TICK_MS: u64 = 250;
 const MEASUREMENT_CHANNEL_CAPACITY: usize = 32;
-/// First-order power response time constant (SPEC §4.5).
+/// First-order power response time constant.
 const POWER_TAU_S: f64 = 1.5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

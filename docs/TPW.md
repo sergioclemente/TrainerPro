@@ -1,6 +1,7 @@
 # TrainerPro Workout (TPW) format
 
-Status: normative specification for **TPW/1**.
+**Purpose:** Define the normative **TPW/1** JSON format and validation rules.
+**Audience:** Producers and consumers of TrainerPro workout definitions.
 
 TrainerPro Workout, abbreviated **TPW**, is TrainerPro's semantic workout
 definition format. It describes what an athlete should do, independent of the

@@ -1,5 +1,5 @@
-//! IPC error type. SPEC.md §9/§11: every command returns Result<T, AppError>
-//! with a stable machine-readable code the UI can branch on.
+//! IPC error type: every command returns `Result<T, AppError>` with a stable
+//! machine-readable code the UI can branch on.
 
 use serde::Serialize;
 

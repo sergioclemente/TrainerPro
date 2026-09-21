@@ -2,7 +2,7 @@
 #
 # You cannot cross-build these: a macOS .dmg must be built on macOS and a
 # Windows .msi/.exe on Windows, so this is a runner matrix. Linux is
-# unsupported (SPEC §1). tauri-action runs `tauri build` per OS, which triggers
+# unsupported. tauri-action runs `tauri build` per OS, which triggers
 # the beforeBuildCommand (npm run build), then attaches the installers to a
 # GitHub release.
 #

@@ -39,7 +39,7 @@ pub struct ImportResult {
     pub already_existed: bool,
 }
 
-/// Graph polyline for thumbnails/player: (t_s, %FTP) breakpoints. SPEC §3.3.
+/// Graph polyline for thumbnails/player: `(t_s, %FTP)` breakpoints.
 pub fn graph_points(w: &ExecutableWorkout, ftp: u16) -> Vec<(u32, f64)> {
     let pct = |p: &PowerTarget| match p {
         PowerTarget::PercentFtp(f) => f * 100.0,

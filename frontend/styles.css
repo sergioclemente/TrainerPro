@@ -1,4 +1,4 @@
-/* Dark theme only in v1 (SPEC §10). Readable at 2 m: huge numerals. */
+/* Dark theme with player metrics readable from the bike. */
 
 :root {
   --bg: #0d1117;

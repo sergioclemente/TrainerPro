@@ -1,4 +1,4 @@
-//! Managed application state + profile/settings access. SPEC.md §8.
+//! Managed application state plus profile and settings access.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

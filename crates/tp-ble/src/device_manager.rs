@@ -1,4 +1,4 @@
-//! BLE central coordination, discovery, and connection setup. SPEC.md §4.4.
+//! BLE central coordination, discovery, and connection setup.
 //! Public and targeted scans are serialized; startup can initialize a resolved
 //! peripheral while its shared saved-device scan continues. Resolved GATT
 //! setups may proceed concurrently.

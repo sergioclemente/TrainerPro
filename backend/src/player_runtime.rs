@@ -1,6 +1,6 @@
 //! Player runtime: the async task that drives Engine effects into the trainer,
 //! records the workout session, and finalizes it as an Activity plus FIT file.
-//! SPEC.md §5.2, §6, §7. The engine stays pure; all time and I/O live here.
+//! The engine stays pure; all time and I/O live here.
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -64,7 +64,7 @@ pub struct PlayerState {
     pub target_power_w: Option<u16>,
     pub target_cadence_rpm: Option<u16>,
     pub average_power_w: Option<u16>,
-    /// Live session totals, mirroring the post-ride numbers (SPEC §6).
+    /// Live session totals, mirroring the post-ride numbers.
     /// `None` until there is data to compute them from.
     pub normalized_power_w: Option<u16>,
     pub training_stress_score: Option<f64>,
@@ -560,7 +560,7 @@ impl Runtime {
     }
 
     /// Trainer command failed mid-ride: auto-pause and tell the user
-    /// (SPEC §5.4). The trainer owner reconnects in the background.
+    /// The trainer owner reconnects in the background.
     async fn trainer_error(&mut self, msg: &str) {
         warn!("trainer error: {msg}");
         if self.engine.phase() == Phase::Riding {
@@ -645,7 +645,7 @@ impl Runtime {
             Some((i, into)) => (Some(i), workout.segments[i].duration_s() - into),
             None => (None, 0),
         };
-        // Live totals, computed exactly as §6 computes them post-ride: NP over
+        // Live totals use the same definitions as post-ride: NP over
         // the 1 Hz series, TSS off moving time, kJ = Σ power × 1 s. NP is only
         // meaningful once some power has arrived.
         let ftp_w = self.ftp_w;
@@ -694,7 +694,7 @@ impl Runtime {
     }
 
     /// Session finalization: close journal → replay → laps/totals → FIT →
-    /// Activity row → summary. SPEC §6–§7. The journal survives any failure.
+    /// Activity row → summary. The journal survives any failure.
     async fn finalize(&mut self) -> Result<ActivitySummary, AppError> {
         self.write_event(SessionEventKind::End, None);
         if let Some(j) = self.journal.take() {
@@ -720,8 +720,8 @@ impl Runtime {
         let fit_path = state.activities_dir().join(format!("{activity_id}.fit"));
         std::fs::write(&fit_path, &fit_bytes)?;
 
-        // Optional user export folder: copy with a friendly name (SPEC §8
-        // export_dir setting). Failure is non-fatal — the canonical copy in
+        // Optional user export folder: copy with a friendly name. Failure is
+        // non-fatal — the canonical copy in
         // the app data dir is already safe.
         if let Some(dir) = settings.export_dir.as_deref() {
             let safe_name: String = data

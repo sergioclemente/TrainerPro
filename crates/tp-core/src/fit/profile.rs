@@ -1,10 +1,8 @@
 //! FIT profile subset: global message numbers, field numbers, base types,
-//! scales, and enum values for the 7 message types we write (SPEC.md §7.2
-//! table). Values implemented per the spec table (which matches the FIT SDK
-//! Profile for these messages); Garmin's online docs are JS-rendered and not
-//! machine-verifiable from here — the FitCSVTool CI gate (§7.3) is the
-//! authoritative check. Keep this file data-only (consts and small enums);
-//! encoding logic lives in encode.rs.
+//! scales, and enum values for the seven message types we write. Values match
+//! the FIT SDK profile for these messages; FitCSVTool validation is the
+//! authoritative compatibility check. Keep this file data-only (consts and
+//! small enums); encoding logic lives in `encode.rs`.
 
 // ---------------------------------------------------------------------------
 // Container / header
@@ -57,7 +55,7 @@ pub const MSG_DEVICE_INFO: u16 = 23;
 pub const MSG_ACTIVITY: u16 = 34;
 
 // ---------------------------------------------------------------------------
-// Local message types (one per global, SPEC.md §7.1)
+// Local message types (one per global message type).
 // ---------------------------------------------------------------------------
 
 pub const LOCAL_FILE_ID: u8 = 0;
