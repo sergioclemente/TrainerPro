@@ -8,6 +8,7 @@ use crate::app_state::{now_unix_ms, AppState};
 use crate::database::{provider_connections, scheduled_workouts};
 use crate::intervals_icu::{IntervalsApiError, IntervalsIcuClient, PROVIDER_ID};
 use crate::intervals_icu_sync::{self, IntervalsSyncError};
+use crate::local_date;
 
 const SYNC_LOOKBACK_DAYS: i64 = 7;
 const SYNC_LOOKAHEAD_DAYS: i64 = 42;
@@ -294,65 +295,16 @@ fn sync_error(error: IntervalsSyncError) -> AppError {
 }
 
 fn sync_window(today_date_local: &str) -> Result<(String, String), AppError> {
-    let today = parse_date(today_date_local).ok_or_else(|| {
+    let invalid_date = || {
         AppError::new(
             "intervals_date_range",
             format!("Invalid athlete-local date {today_date_local:?}"),
         )
-    })?;
-    let today_days = days_from_civil(today.0, today.1, today.2);
+    };
     Ok((
-        civil_from_days(today_days - SYNC_LOOKBACK_DAYS),
-        civil_from_days(today_days + SYNC_LOOKAHEAD_DAYS),
+        local_date::shift(today_date_local, -SYNC_LOOKBACK_DAYS).ok_or_else(invalid_date)?,
+        local_date::shift(today_date_local, SYNC_LOOKAHEAD_DAYS).ok_or_else(invalid_date)?,
     ))
-}
-
-fn parse_date(value: &str) -> Option<(i32, u32, u32)> {
-    if value.len() != 10 || &value[4..5] != "-" || &value[7..8] != "-" {
-        return None;
-    }
-    let year = value[0..4].parse::<i32>().ok()?;
-    let month = value[5..7].parse::<u32>().ok()?;
-    let day = value[8..10].parse::<u32>().ok()?;
-    let max_day = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
-        2 => 28,
-        _ => return None,
-    };
-    (year >= 1 && day >= 1 && day <= max_day).then_some((year, month, day))
-}
-
-fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
-    let year = i64::from(year) - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let shifted_month = i64::from(month) + if month > 2 { -3 } else { 9 };
-    let day_of_year = (153 * shifted_month + 2) / 5 + i64::from(day) - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
-fn civil_from_days(days: i64) -> String {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = if month_prime < 10 {
-        month_prime + 3
-    } else {
-        month_prime - 9
-    };
-    if month <= 2 {
-        year += 1;
-    }
-    format!("{year:04}-{month:02}-{day:02}")
 }
 
 #[cfg(test)]

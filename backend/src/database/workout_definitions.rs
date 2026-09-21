@@ -32,6 +32,13 @@ pub struct ProviderWorkoutDefinition<'a> {
     pub synced_at_unix_ms: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteResult {
+    Deleted,
+    NotFound,
+    ReferencedBySchedule,
+}
+
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkoutDefinitionRow> {
     Ok(WorkoutDefinitionRow {
         id: row.get(0)?,
@@ -40,10 +47,21 @@ fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkoutDefinitionRow> {
     })
 }
 
-pub fn find_id_by_tpw_json(conn: &Connection, tpw_json: &str) -> rusqlite::Result<Option<String>> {
+/// Find a reusable definition in TrainerPro's local-library lifecycle.
+/// Provider-scheduled definitions are executable cache entries, not local
+/// copies, even when their canonical TPW happens to be identical.
+pub fn find_local_id_by_tpw_json(
+    conn: &Connection,
+    tpw_json: &str,
+) -> rusqlite::Result<Option<String>> {
     conn.query_row(
         "SELECT id FROM workout_definitions
          WHERE tpw_json = ?1 AND retired_at_unix_ms IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM scheduled_workouts sw
+             WHERE sw.workout_definition_id = workout_definitions.id
+               AND sw.provider_connection_id IS NOT NULL
+           )
          ORDER BY created_at DESC LIMIT 1",
         [tpw_json],
         |row| row.get(0),
@@ -109,10 +127,18 @@ pub fn get(conn: &Connection, id: &str) -> rusqlite::Result<Option<WorkoutDefini
     .optional()
 }
 
-pub fn list(conn: &Connection) -> rusqlite::Result<Vec<WorkoutDefinitionRow>> {
+/// List definitions that belong to the local Library. Provider-scheduled
+/// definitions remain addressable by Next Up but are not Library entries.
+pub fn list_local(conn: &Connection) -> rusqlite::Result<Vec<WorkoutDefinitionRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, tpw_json, origin FROM workout_definitions
-         WHERE retired_at_unix_ms IS NULL ORDER BY created_at DESC",
+         WHERE retired_at_unix_ms IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM scheduled_workouts sw
+             WHERE sw.workout_definition_id = workout_definitions.id
+               AND sw.provider_connection_id IS NOT NULL
+           )
+         ORDER BY created_at DESC",
     )?;
     let rows = stmt.query_map([], read_row)?;
     rows.collect()
@@ -137,8 +163,30 @@ pub fn list_by_activity_frequency_since(
     rows.collect()
 }
 
-pub fn delete(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
-    Ok(conn.execute("DELETE FROM workout_definitions WHERE id = ?1", [id])? > 0)
+pub fn delete(conn: &Connection, id: &str) -> rusqlite::Result<DeleteResult> {
+    let deleted = conn.execute(
+        "DELETE FROM workout_definitions
+         WHERE id = ?1
+           AND NOT EXISTS (
+             SELECT 1 FROM scheduled_workouts sw
+             WHERE sw.workout_definition_id = workout_definitions.id
+           )",
+        [id],
+    )? > 0;
+    if deleted {
+        return Ok(DeleteResult::Deleted);
+    }
+
+    let exists = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM workout_definitions WHERE id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?;
+    Ok(if exists {
+        DeleteResult::ReferencedBySchedule
+    } else {
+        DeleteResult::NotFound
+    })
 }
 
 pub fn set_origin(
@@ -184,11 +232,13 @@ mod tests {
 
         let older_json = TPW_JSON.replace("Endurance", "older");
         assert_eq!(
-            find_id_by_tpw_json(&conn, &older_json).unwrap().as_deref(),
+            find_local_id_by_tpw_json(&conn, &older_json)
+                .unwrap()
+                .as_deref(),
             Some("older")
         );
         assert_eq!(
-            list(&conn)
+            list_local(&conn)
                 .unwrap()
                 .iter()
                 .map(|row| row.id.as_str())
@@ -201,9 +251,80 @@ mod tests {
         assert_eq!(row.tpw_json, older_json);
         assert_eq!(row.origin.as_deref(), Some("planner"));
 
-        assert!(delete(&conn, "older").unwrap());
+        assert_eq!(delete(&conn, "older").unwrap(), DeleteResult::Deleted);
         assert_eq!(get(&conn, "older").unwrap(), None);
-        assert!(!delete(&conn, "missing").unwrap());
+        assert_eq!(delete(&conn, "missing").unwrap(), DeleteResult::NotFound);
+    }
+
+    #[test]
+    fn provider_scheduled_definitions_are_not_local_library_duplicates() {
+        let conn = super::super::test_connection();
+        let provider_json = TPW_JSON.replace("Endurance", "shared");
+        insert_provider_copy(
+            &conn,
+            &ProviderWorkoutDefinition {
+                id: "provider-definition",
+                tpw_json: &provider_json,
+                origin: "intervals_icu",
+                origin_id: Some(42),
+                origin_ref: "42",
+                synced_at_unix_ms: 20,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO provider_connections (
+               id, provider, external_account_id, time_zone,
+               created_at_unix_ms, updated_at_unix_ms)
+             VALUES ('connection','intervals_icu','athlete','Europe/Zurich',10,10)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO scheduled_workouts (
+               id, workout_definition_id, scheduled_date_local,
+               created_at_unix_ms, updated_at_unix_ms,
+               provider_connection_id, external_event_id)
+             VALUES ('provider-schedule','provider-definition','2030-01-01',
+                     20,20,'connection','42')",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_local_id_by_tpw_json(&conn, &provider_json).unwrap(),
+            None
+        );
+        assert!(list_local(&conn).unwrap().is_empty());
+        assert_eq!(
+            delete(&conn, "provider-definition").unwrap(),
+            DeleteResult::ReferencedBySchedule
+        );
+        assert!(get(&conn, "provider-definition").unwrap().is_some());
+
+        insert(
+            &conn,
+            &NewWorkoutDefinition {
+                id: "local-copy",
+                tpw_json: &provider_json,
+                created_at_ms: 30,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            find_local_id_by_tpw_json(&conn, &provider_json)
+                .unwrap()
+                .as_deref(),
+            Some("local-copy")
+        );
+        assert_eq!(
+            list_local(&conn)
+                .unwrap()
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local-copy"]
+        );
     }
 
     #[test]

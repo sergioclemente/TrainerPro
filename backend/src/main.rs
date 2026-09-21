@@ -12,6 +12,7 @@ mod device_owner;
 mod heart_rate_monitor;
 mod intervals_icu;
 mod intervals_icu_sync;
+mod local_date;
 mod next_up;
 mod player_runtime;
 mod trainer;

@@ -263,8 +263,9 @@ from schema/product changes.
    sync state, typed errors, and connection UI using stub connectors.
 9. **Intervals.icu inbound sync** — authenticate, fetch a bounded schedule,
    normalize definitions, refresh idempotently, and prove offline execution.
-10. **Intervals.icu outbound sync** — publish supported TrainerPro-owned
-    changes and activities with retry, idempotency, and conflict tests.
+10. **Optional future Intervals.icu outbound sync** — currently deferred; if
+    reconsidered, publish only explicitly supported TrainerPro-owned changes
+    with retry, idempotency, ownership, and conflict tests.
 11. **Additional connectors** — adapt WorkoutPlanner/What’s on Zwift and add
     gated TrainingPeaks, Garmin, or Strava capabilities as access and evidence
     permit.
@@ -296,10 +297,11 @@ and repository status as required by [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 ## Decisions intentionally deferred
 
 - the normalized training-focus taxonomy and provider-label mapping;
-- scheduled overdue/horizon policy and precise Next Up grouping;
+- future scheduled-workout horizon and precise Next Up grouping;
 - single versus multiple active planning authorities;
 - storage of final activity sample streams after crash recovery;
-- credential custody for desktop-only versus hosted provider connections; and
+- OAuth credential custody if TrainerPro expands beyond personal/local provider
+  connections; and
 - AI coach hosting, privacy, account linking, and distribution.
 
 Each belongs in the PR that has enough provider or UI evidence to decide it.

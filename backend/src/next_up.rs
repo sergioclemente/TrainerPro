@@ -2,18 +2,22 @@
 
 use std::collections::HashSet;
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri::State;
 
 use crate::app_error::AppError;
-use crate::app_state::{now_unix_ms, AppState};
+use crate::app_state::AppState;
 use crate::commands::workout::{self, WorkoutSummary};
-use crate::database::{scheduled_workouts, workout_definitions};
+use crate::database::{provider_connections, scheduled_workouts, workout_definitions};
+use crate::intervals_icu::PROVIDER_ID;
+use crate::local_date;
 
 const LOCAL_FAVORITES_RECOMMENDER: &str = "local_favorites";
 const LOCAL_FAVORITES_LOOKBACK_DAYS: i64 = 180;
 const MILLISECONDS_PER_DAY: i64 = 86_400_000;
 const RECOMMENDATION_LIMIT: usize = 3;
+const SCHEDULE_OVERDUE_RETENTION_DAYS: i64 = 7;
 const STRUCTURED_RIDE_TRAINING_FOCUS: &str = "Structured Ride";
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,14 +42,35 @@ pub enum NextUpItem {
     },
 }
 
+fn oldest_scheduled_date_local(today_date_local: &str) -> Result<String, AppError> {
+    local_date::shift(today_date_local, -SCHEDULE_OVERDUE_RETENTION_DAYS).ok_or_else(|| {
+        AppError::new(
+            "next_up_date",
+            format!("Invalid local date {today_date_local:?}"),
+        )
+    })
+}
+
 pub fn list(state: &State<'_, AppState>) -> Result<Vec<NextUpItem>, AppError> {
+    list_at(state, Utc::now())
+}
+
+fn list_at(
+    state: &State<'_, AppState>,
+    now_utc: DateTime<Utc>,
+) -> Result<Vec<NextUpItem>, AppError> {
     let ftp_w = state.settings().profile.ftp;
-    let favorite_cutoff_unix_ms =
-        (now_unix_ms() as i64).saturating_sub(LOCAL_FAVORITES_LOOKBACK_DAYS * MILLISECONDS_PER_DAY);
+    let favorite_cutoff_unix_ms = now_utc
+        .timestamp_millis()
+        .saturating_sub(LOCAL_FAVORITES_LOOKBACK_DAYS * MILLISECONDS_PER_DAY);
     let (scheduled, favorites) = {
         let conn = state.db.lock().unwrap();
+        let planning_time_zone = provider_connections::get_active_by_provider(&conn, PROVIDER_ID)?
+            .map(|connection| connection.time_zone);
+        let today_date_local = local_date::today_at(now_utc, planning_time_zone.as_deref());
+        let oldest_scheduled_date_local = oldest_scheduled_date_local(&today_date_local)?;
         (
-            scheduled_workouts::list_for_next_up(&conn)?,
+            scheduled_workouts::list_for_next_up(&conn, &oldest_scheduled_date_local)?,
             workout_definitions::list_by_activity_frequency_since(&conn, favorite_cutoff_unix_ms)?,
         )
     };
@@ -159,5 +184,21 @@ mod tests {
             }
             other => panic!("expected recommendation, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn overdue_window_keeps_seven_calendar_days() {
+        assert_eq!(
+            oldest_scheduled_date_local("2026-09-21").unwrap(),
+            "2026-09-14"
+        );
+        assert_eq!(
+            oldest_scheduled_date_local("2026-01-03").unwrap(),
+            "2025-12-27"
+        );
+        assert_eq!(
+            oldest_scheduled_date_local("2026-02-29").unwrap_err().code,
+            "next_up_date"
+        );
     }
 }

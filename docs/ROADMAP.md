@@ -47,7 +47,8 @@ Outcome: the Workouts screen leads with execution-first choices while keeping
 the full workout library available below them.
 
 Status: scheduled-workout persistence, the initial read model, and the Next Up
-rail on Workouts are implemented. Provider-fed schedules remain outstanding.
+rail on Workouts are implemented. Intervals.icu provider-fed schedules arrived
+in Phase 3.
 
 - Add scheduled-workout persistence and queries.
 - Add the Next Up read model.
@@ -56,6 +57,8 @@ rail on Workouts are implemented. Provider-fed schedules remain outstanding.
 - Show training-focus tags such as Recovery Ride or Endurance Base; do not show
   ranking explanations as the tag.
 - Build the ordered horizontal Next Up rail at the top of Workouts.
+- Keep a missed scheduled workout in Next Up through seven calendar days after
+  its scheduled date, without deleting the stored schedule afterward.
 - Keep catalog/library browsing as the secondary section below it.
 - Use Activity consistently for completed recordings in product copy and API
   names as those surfaces are touched.
@@ -75,8 +78,9 @@ a personal API key, stores it in the OS credential manager, exposes connection
 and sync health in Settings, and refreshes a bounded provider-local schedule
 window into provider-scoped transactional persistence. Cached workouts render
 before the startup refresh and remain executable when the provider is
-unavailable. Production OAuth and a manual end-to-end app/hardware pass remain
-outstanding.
+unavailable. The personal-key path is the current local/personal product scope;
+OAuth is deferred until broad multi-user distribution requires an approved,
+scoped authorization flow.
 
 - Add provider connections, capability declarations, provider links, external
   revisions, sync cursors, and observable sync status.
@@ -88,24 +92,21 @@ outstanding.
 - Surface provider ownership and sync health without making the user manage
   cache records.
 
-Acceptance: connect, initial sync, incremental refresh, restart offline, and
-ride a scheduled Intervals.icu workout successfully. A repeated sync creates no
-duplicates.
+Acceptance: connect, initial sync, incremental refresh, offline cache loading,
+and scheduled-workout execution are covered by the implemented path. Repeated
+sync creates no duplicates, and disconnect persistence behavior is automated-
+test covered.
 
-## Phase 4 — Intervals.icu round trip
+## Phase 4 — Intervals.icu outbound sync (deferred)
 
-Outcome: TrainerPro closes the planned-versus-performed loop without silent
-conflicts.
+TrainerPro remains inbound-only for Intervals.icu in the current direction.
+Completed-Activity upload, publishing TrainerPro-owned definitions, changing
+Intervals-owned schedules, conflict resolution, webhooks, and an outbound retry
+queue are not planned for the current phase.
 
-- Upload completed activities where authorized.
-- Support explicit publishing of TrainerPro-owned workout definitions or
-  schedule changes where the provider contract permits it.
-- Detect divergent provider revisions and surface conflicts; do not silently
-  merge structured workouts or use last-writer-wins.
-- Define retry and idempotency behavior for every outbound operation.
-
-Acceptance: outbound retries are safe, provider-owned definitions remain
-provider-owned, and conflicting edits require an explicit user decision.
+If outbound capabilities are reconsidered, they require a fresh provider-
+contract review plus explicit retry, idempotency, ownership, and conflict
+semantics; they must not be inferred from the inbound implementation.
 
 ## Phase 5 — Additional providers
 

@@ -179,9 +179,13 @@ export default function WorkoutDetail() {
       )
     )
       return;
-    await ipc.deleteWorkout(d.id!);
-    await useStore.getState().refreshWorkouts();
-    go("library");
+    try {
+      await ipc.deleteWorkout(d.id!);
+      await useStore.getState().refreshWorkouts();
+      go("library");
+    } catch (e) {
+      pushToast("error", (e as AppError).message ?? String(e));
+    }
   }
 
   const ftp = settings?.profile.ftp ?? 200;

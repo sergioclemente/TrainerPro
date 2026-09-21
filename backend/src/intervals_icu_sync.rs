@@ -418,7 +418,7 @@ mod tests {
             synced_row(&conn, "connection").schedule.removed_at_unix_ms,
             Some(20)
         );
-        assert!(crate::database::workout_definitions::list(&conn)
+        assert!(crate::database::workout_definitions::list_local(&conn)
             .unwrap()
             .is_empty());
 
@@ -437,10 +437,10 @@ mod tests {
         assert_eq!(current.definition.id, original.definition.id);
         assert_eq!(current.schedule.removed_at_unix_ms, None);
         assert_eq!(
-            crate::database::workout_definitions::list(&conn)
+            crate::database::workout_definitions::list_local(&conn)
                 .unwrap()
                 .len(),
-            1
+            0
         );
     }
 

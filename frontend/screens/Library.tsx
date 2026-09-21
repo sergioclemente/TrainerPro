@@ -64,8 +64,12 @@ export default function Library() {
 
   async function del(id: string, name: string) {
     if (!confirm(`Delete workout “${name}”?`)) return;
-    await ipc.deleteWorkout(id);
-    await refreshWorkouts();
+    try {
+      await ipc.deleteWorkout(id);
+      await refreshWorkouts();
+    } catch (e) {
+      pushToast("error", (e as AppError).message ?? String(e));
+    }
   }
 
   return (
