@@ -53,7 +53,7 @@ AudioWorklet transfers mono PCM to Moonshine's STT worker; a
 `ScriptProcessorNode` is the compatibility fallback. Moonshine owns resampling,
 VAD, streaming state, and completed transcript lines.
 
-Moonshine uses the short keyterm list `pause,resume,skip,intensity,ERG,listening`
+Moonshine uses the workout keyterm list defined in `workerMicTranscriber.ts`
 with a boost of `4.0` to favor workout vocabulary during decoding. Capture
 requests browser noise suppression; echo cancellation and automatic gain control
 remain off for WKWebView/Camo compatibility. After capture starts,
@@ -124,6 +124,8 @@ inference, or other external network request. After TrainerPro is installed,
 voice commands work without an internet connection. This claim covers the
 voice path, not opt-in remote workout sources.
 
+Voice is disabled by default; enable it explicitly in Settings. A saved choice
+is preserved, and microphone permission alone does not enable voice.
 The first time an enabled voice surface becomes active and the app has focus,
 TrainerPro requests microphone permission if needed, loads both bundled models
 in parallel, prepares the active command catalog, starts capture, and plays the

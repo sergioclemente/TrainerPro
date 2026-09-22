@@ -4,8 +4,8 @@ Status: Player-only MVP and workout timeline implemented; release readiness rema
 Last updated: 2026-09-22
 
 This is the active task list for local voice commands. Durable architecture
-lives in [`architecture.md`](architecture.md), and settled alternatives live in
-[`ALTERNATIVES.md`](ALTERNATIVES.md). Moonshine package provenance and rebuild
+lives in [`architecture.md`](architecture.md), and current behavior lives in
+[`SPEC.md`](SPEC.md). Moonshine package provenance and rebuild
 instructions live in [`vendor/moonshine-wasm/README.md`](../vendor/moonshine-wasm/README.md).
 
 ## Product scope
@@ -27,7 +27,7 @@ V1 includes:
 - A workout rail with compact device state, a ride/command timeline, an
   adaptive voice composer, and short nonverbal cues.
 - A persistent Settings enable/disable toggle; microphone permission alone
-  must not enable voice. This release-policy change is pending implementation.
+  must not enable voice. Existing saved preferences are preserved.
 
 Deferred until real Player usage justifies expansion:
 
@@ -68,7 +68,7 @@ Deferred until real Player usage justifies expansion:
   Echo cancellation and automatic gain control remain disabled because
   packaged WKWebView testing made Camo effectively silent with echo
   cancellation enabled. There is no automatic raw-capture fallback.
-- Moonshine receives `pause,resume,skip,intensity,ERG,listening` as keyterms
+- Moonshine receives the workout keyterms defined in `workerMicTranscriber.ts`
   with boost `4.0`. Small Streaming, VAD defaults, and semantic threshold `0.70`
   are unchanged. The user reports improved noise handling and term recognition
   in manual testing, with no observed harm at boost `4.0`; retain that value.
@@ -206,11 +206,11 @@ external to the application.
 
 ### ASAP release sequence
 
-- [ ] Rebase the feature branch onto the latest upstream main HEAD, preserving
+- [x] Rebase the feature branch onto the latest upstream main HEAD, preserving
   local work and resolving any integration conflicts before final verification.
-- [ ] Ship Voice disabled by default; update the setting default, focused tests,
+- [x] Ship Voice disabled by default; update the setting default, focused tests,
   and durable documentation. Verify permission alone does not activate Voice.
-- [ ] Correct the stale conformance label expectation (End ride versus Pause
+- [x] Correct the stale conformance label expectation (End ride versus Pause
   workout) and rerun focused verification.
 - [ ] Complete targeted final QA, review and commit the feature, then obtain
   the user's final personal QA approval before opening the PR.

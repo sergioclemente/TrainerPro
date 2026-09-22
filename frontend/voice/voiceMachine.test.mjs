@@ -26,7 +26,15 @@ function reduce(state, event) {
   return reduceVoiceMachine(state, event);
 }
 
-test("default-enabled voice waits for permission until a surface is active", () => {
+test("microphone permission alone does not enable voice", () => {
+  let state = createVoiceMachine({ enabled: false, surfaceKey: "player" });
+  state = reduce(state, { type: "permission-changed", permission: "granted" });
+  assert.equal(state.phase, "off");
+  state = reduce(state, { type: "enabled-changed", enabled: true });
+  assert.equal(state.phase, "preparing");
+});
+
+test("enabled voice waits for permission until a surface is active", () => {
   let state = createVoiceMachine({ enabled: true });
   assert.equal(state.phase, "suspended");
 

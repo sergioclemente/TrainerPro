@@ -139,8 +139,7 @@ fn load_sources(saved_sources: Option<&str>, legacy_planner: Option<&str>) -> Ha
 pub struct Settings {
     pub profile: Profile,
     pub record_distance: bool,
-    /// Voice is a normal default-enabled capability. The user may deliberately
-    /// disable it without changing operating-system microphone permission.
+    /// Voice requires explicit enablement independently of microphone permission.
     #[serde(default = "default_voice_enabled")]
     pub voice_enabled: bool,
     pub intensity_default: f64,
@@ -155,7 +154,7 @@ pub struct Settings {
 }
 
 const fn default_voice_enabled() -> bool {
-    true
+    false
 }
 
 impl Settings {
@@ -265,9 +264,9 @@ mod tests {
     }
 
     #[test]
-    fn existing_install_without_voice_key_defaults_enabled() {
+    fn existing_install_without_voice_key_defaults_disabled() {
         let conn = settings_connection();
-        assert!(load_settings(&conn).voice_enabled);
+        assert!(!load_settings(&conn).voice_enabled);
     }
 
     #[test]
