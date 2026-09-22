@@ -177,9 +177,16 @@ phrases, availability, bounded arguments, and live-state validation. Shared
 Player actions give pointer and voice commands consistent timeline representation
 and use the existing IPC; workers cannot execute application actions.
 
+The full registered catalog is matched before availability is checked, so an
+unavailable command is not reinterpreted as another available action. Numeric
+arguments are parsed deterministically, and prepared commands re-read live state.
+Capture and semantic requests are serialized without an utterance queue.
+
 Capture and routing generations invalidate stale results after focus, permission,
 or device changes. Only completed transcripts are routed. Local models are
 bundled for offline use; microphone tracks and models are released on hard disable.
+Leaving the Player stops capture while retaining warm models. Pipeline tracing
+records lifecycle and dispatch boundaries, never audio or transcript content.
 See [the voice implementation guide](../frontend/voice/README.md) for details.
 
 The pure workout engine consumes EngineEvent values, including runtime-supplied

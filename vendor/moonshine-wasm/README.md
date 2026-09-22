@@ -37,3 +37,17 @@ single-thread ONNX Runtime archive, and run:
 
 Then run `npm pack` from `language-bindings/wasm` and verify the archive hash
 before replacing TrainerPro's vendored package.
+
+## Upstream follow-ups
+
+Keep source changes and regression tests in the fork. These do not block a
+TrainerPro release:
+
+- Upstream the minifier-safe generated AudioWorklet fix with a production-bundle
+  regression test, and propagate `processorerror` rather than silently losing audio.
+- Upstream best-effort Cache Storage for non-HTTP application URLs, explicit
+  worker/exact WASM asset URLs for bundlers, and worker RPC error stacks.
+- Request a maintained single-thread WASM package for WebViews without
+  `SharedArrayBuffer`.
+- Adopt a suitable upstream release after packaged TrainerPro QA validation,
+  then remove the vendored tarball.

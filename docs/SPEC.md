@@ -166,8 +166,9 @@ the affected subsystem changes.
 ## Workout voice and timeline
 
 Voice is disabled by default and requires both explicit Settings enablement and
-microphone permission. Capture runs only while the workout Player is visible
-and the application is active. Processing stays on-device; audio and transcripts
+microphone permission. Voice uses bundled models without downloads or cloud
+inference. Capture runs only while the workout Player is visible and the
+application is active. Processing stays on-device; audio and transcripts
 are not stored or sent. Start, pause, resume, skip, intensity, and ERG commands
 use the same actions as UI controls. End-like voice commands pause; ending the
 ride remains manual. Skip also advances the interval while paused without
@@ -176,6 +177,8 @@ restarting the trainer.
 “Stop listening” suspends workout commands while keeping recognition active for
 “Resume listening”. Settings disable releases the voice runtimes. Voice errors
 must not prevent pointer or keyboard control.
+Repeated capture or model failures expose Retry and the Settings disable path;
+missing bundled models report a source-specific error without blocking the Player.
 
 The workout rail retains device indicators and a session-only timeline. UI and
 voice actions share user-aligned command labels; ride events align opposite.
