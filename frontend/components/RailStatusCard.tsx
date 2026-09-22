@@ -4,41 +4,27 @@ export type RailStatusTone = "neutral" | "ok" | "active" | "warn" | "danger";
 
 interface RailStatusCardProps {
   icon: ReactNode;
-  label: string;
-  state: string;
+  primary: string;
   tone: RailStatusTone;
-  detail?: ReactNode;
-  action?: ReactNode;
+  ariaLabel: string;
   className?: string;
-  announce?: boolean;
 }
 
 export default function RailStatusCard({
   icon,
-  label,
-  state,
+  primary,
   tone,
-  detail,
-  action,
+  ariaLabel,
   className = "",
-  announce = false,
 }: RailStatusCardProps) {
   return (
     <div
       className={`rail-status-card rail-status-${tone} ${className}`.trim()}
-      role={announce ? "status" : undefined}
-      aria-live={announce ? "polite" : undefined}
-      aria-atomic={announce ? "true" : undefined}
+      aria-label={ariaLabel}
+      title={ariaLabel}
     >
-      <div className="rail-status-card-main">
-        <span className="rail-status-card-icon" aria-hidden="true">{icon}</span>
-        <span className="rail-status-card-copy">
-          <span className="rail-status-card-label">{label}</span>
-          <span className="rail-status-card-state">{state}</span>
-        </span>
-      </div>
-      {detail && <span className="rail-status-card-detail">{detail}</span>}
-      {action && <span className="rail-status-card-action">{action}</span>}
+      <span className="rail-status-card-icon" aria-hidden="true">{icon}</span>
+      <span className="rail-status-card-primary">{primary}</span>
     </div>
   );
 }

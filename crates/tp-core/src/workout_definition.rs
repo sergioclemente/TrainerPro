@@ -838,10 +838,10 @@ mod tests {
         let mut engine = crate::engine::Engine::new(workout.compile().unwrap(), 200, 1.0);
 
         assert_eq!(
-            engine.handle(crate::engine::Input::Start),
+            engine.step(crate::engine::EngineEvent::Start),
             vec![
-                crate::engine::Effect::TrainerStart,
-                crate::engine::Effect::SetTarget(140),
+                crate::engine::EngineAction::StartTrainer,
+                crate::engine::EngineAction::SetTargetPower { watts: 140 },
             ]
         );
     }

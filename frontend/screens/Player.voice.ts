@@ -8,15 +8,9 @@ import {
   normalizeVoiceTranscript,
   type VoiceSurface,
 } from "../voice/voiceSurface";
+import type { PlayerActionCommands } from "./Player.actions";
 
-export interface PlayerVoiceCommands {
-  startRide: () => Promise<void>;
-  pauseRide: () => Promise<void>;
-  resumeRide: () => Promise<void>;
-  skipSegment: () => Promise<void>;
-  setIntensity: (intensity: number) => Promise<void>;
-  setErg: (enabled: boolean) => Promise<void>;
-}
+export type PlayerVoiceCommands = PlayerActionCommands;
 
 export interface PlayerVoiceEnvironment {
   getPlayer: () => PlayerState | null;
@@ -116,7 +110,8 @@ const PLAYER_COMMANDS = definePlayerCommands({
     prepare: ({ transcript }) => {
       const endLike = END_RIDE_WORDS.test(normalizeVoiceTranscript(transcript));
       return {
-        label: endLike ? "End ride" : "Pause workout",
+        label: "Pause workout",
+        successNotice: endLike ? "Finish the ride manually when ready" : undefined,
         execute: async ({ player, commands }) => {
           if (player.phase === "paused") {
             return endLike ? "Workout paused — finish manually" : "Workout already paused";

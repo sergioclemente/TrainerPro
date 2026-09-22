@@ -1,4 +1,4 @@
-//! Player runtime: the async task that drives Engine effects into the trainer,
+//! Player runtime: the async task that drives Engine actions into the trainer,
 //! records the workout session, and finalizes it as an Activity plus FIT file.
 //! The engine stays pure; all time and I/O live here.
 
@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{error, warn};
 
 use tp_core::consts::{ENGINE_TICK_MS, ERG_KEEPALIVE_S, SAMPLE_HZ, SMOOTH_WINDOW_S};
-use tp_core::engine::{Effect, Engine, Input, Phase};
+use tp_core::engine::{Engine, EngineAction, EngineEvent, Phase, SegmentEndReason};
 use tp_core::journal::{
     compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
 };
@@ -27,12 +27,15 @@ use crate::heart_rate_monitor::HeartRateMonitor;
 use crate::trainer::Trainer;
 
 const PLAYER_COMMAND_CAPACITY: usize = 16;
+const MILLIS_PER_SECOND: u64 = 1_000;
 
-pub enum Cmd {
+/// A message accepted by the async player runtime. The runtime translates
+/// workout events into `EngineEvent`s and owns I/O-only controls such as ERG.
+pub enum PlayerCommand {
     Start,
     Pause,
     Resume,
-    Skip,
+    SkipSegment,
     SetIntensity(f64),
     /// Toggle ERG mode. Off = trainer switches to simulation grade 0 (free
     /// resistance); workout targets keep advancing but aren't sent.
@@ -41,7 +44,7 @@ pub enum Cmd {
 }
 
 pub struct PlayerHandle {
-    pub cmd_tx: mpsc::Sender<Cmd>,
+    pub command_tx: mpsc::Sender<PlayerCommand>,
     pub state_rx: watch::Receiver<PlayerState>,
 }
 
@@ -80,6 +83,64 @@ pub struct PlayerMeasurement {
     pub cadence_rpm: Option<u16>,
     pub heart_rate_bpm: Option<u16>,
     pub power_smoothed_3s_w: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SegmentResult {
+    pub workout_session_id: String,
+    pub segment_index: usize,
+    pub planned_duration_s: u32,
+    pub ridden_duration_s: u32,
+    pub average_power_w: Option<u16>,
+    pub average_cadence_rpm: Option<u16>,
+    pub skipped: bool,
+}
+
+#[derive(Default)]
+struct SegmentAccumulator {
+    ridden_ms: u64,
+    power_sum: u64,
+    power_n: u32,
+    cadence_sum: u64,
+    cadence_n: u32,
+}
+
+impl SegmentAccumulator {
+    fn note_tick(&mut self, elapsed_ms: u64) {
+        self.ridden_ms = self.ridden_ms.saturating_add(elapsed_ms);
+    }
+
+    fn note_sample(&mut self, power_w: Option<u16>, cadence_rpm: Option<u16>) {
+        if let Some(power_w) = power_w {
+            self.power_sum += u64::from(power_w);
+            self.power_n += 1;
+        }
+        if let Some(cadence_rpm) = cadence_rpm {
+            self.cadence_sum += u64::from(cadence_rpm);
+            self.cadence_n += 1;
+        }
+    }
+
+    fn take_result(
+        &mut self,
+        workout_session_id: &str,
+        segment_index: usize,
+        planned_duration_s: u32,
+        skipped: bool,
+    ) -> SegmentResult {
+        let completed = std::mem::take(self);
+        SegmentResult {
+            workout_session_id: workout_session_id.to_owned(),
+            segment_index,
+            planned_duration_s,
+            ridden_duration_s: (completed.ridden_ms / MILLIS_PER_SECOND) as u32,
+            average_power_w: (completed.power_n > 0)
+                .then(|| (completed.power_sum / u64::from(completed.power_n)) as u16),
+            average_cadence_rpm: (completed.cadence_n > 0)
+                .then(|| (completed.cadence_sum / u64::from(completed.cadence_n)) as u16),
+            skipped,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,7 +228,7 @@ pub async fn spawn(
         settings.profile.ftp,
         settings.intensity_default,
     );
-    let (cmd_tx, cmd_rx) = mpsc::channel(PLAYER_COMMAND_CAPACITY);
+    let (command_tx, command_rx) = mpsc::channel(PLAYER_COMMAND_CAPACITY);
     let initial = PlayerState {
         phase: "ready".into(),
         workout_session_id: workout_session_id.clone(),
@@ -220,10 +281,14 @@ pub async fn spawn(
         live_power: Vec::new(),
         hr_sum: 0,
         hr_n: 0,
+        segment_accumulator: SegmentAccumulator::default(),
         ftp_w: settings.profile.ftp,
     };
-    tokio::spawn(rt.run(cmd_rx));
-    Ok(PlayerHandle { cmd_tx, state_rx })
+    tokio::spawn(rt.run(command_rx));
+    Ok(PlayerHandle {
+        command_tx,
+        state_rx,
+    })
 }
 
 struct Runtime {
@@ -262,12 +327,14 @@ struct Runtime {
     /// Running HR average over 1 Hz samples, for EF.
     hr_sum: u64,
     hr_n: u32,
+    /// Ride time and 1 Hz measurements for the current workout segment.
+    segment_accumulator: SegmentAccumulator,
     /// Rider FTP at load time — TSS and IF are relative to it.
     ftp_w: u16,
 }
 
 impl Runtime {
-    async fn run(mut self, mut cmd_rx: mpsc::Receiver<Cmd>) {
+    async fn run(mut self, mut command_rx: mpsc::Receiver<PlayerCommand>) {
         let mut engine_tick = tokio::time::interval(Duration::from_millis(ENGINE_TICK_MS));
         engine_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sample_tick =
@@ -282,31 +349,31 @@ impl Runtime {
 
         loop {
             tokio::select! {
-                cmd = cmd_rx.recv() => {
-                    let Some(cmd) = cmd else { break };
-                    match cmd {
-                        Cmd::Start => {
+                command = command_rx.recv() => {
+                    let Some(command) = command else { break };
+                    match command {
+                        PlayerCommand::Start => {
                             self.handle_start().await;
                         }
-                        Cmd::Pause => {
+                        PlayerCommand::Pause => {
                             self.write_event(SessionEventKind::Pause, None);
-                            let fx = self.engine.handle(Input::Pause);
-                            self.apply(fx).await;
+                            let actions = self.engine.step(EngineEvent::Pause);
+                            self.apply_engine_actions(actions).await;
                         }
-                        Cmd::Resume => {
+                        PlayerCommand::Resume => {
                             self.write_event(SessionEventKind::Resume, None);
-                            let fx = self.engine.handle(Input::Resume);
-                            self.apply(fx).await;
+                            let actions = self.engine.step(EngineEvent::Resume);
+                            self.apply_engine_actions(actions).await;
                         }
-                        Cmd::Skip => {
-                            let fx = self.engine.handle(Input::SkipSegment);
-                            self.apply(fx).await;
+                        PlayerCommand::SkipSegment => {
+                            let actions = self.engine.step(EngineEvent::SkipSegment);
+                            self.apply_engine_actions(actions).await;
                         }
-                        Cmd::SetIntensity(i) => {
-                            let fx = self.engine.handle(Input::SetIntensity(i));
-                            self.apply(fx).await;
+                        PlayerCommand::SetIntensity(i) => {
+                            let actions = self.engine.step(EngineEvent::SetIntensity(i));
+                            self.apply_engine_actions(actions).await;
                         }
-                        Cmd::SetErg(on) => {
+                        PlayerCommand::SetErg(on) => {
                             self.erg_enabled = on;
                             let r = if on {
                                 match self.last_target_power_w {
@@ -322,9 +389,9 @@ impl Runtime {
                                 self.trainer_error(&e.to_string()).await;
                             }
                         }
-                        Cmd::End(reply) => {
-                            let fx = self.engine.handle(Input::End);
-                            self.apply_effects_no_finalize(&fx).await;
+                        PlayerCommand::End(reply) => {
+                            let actions = self.engine.step(EngineEvent::End);
+                            self.execute_engine_actions(&actions).await;
                             let _ = reply.send(self.finalize().await);
                             break;
                         }
@@ -333,8 +400,9 @@ impl Runtime {
                 }
                 _ = engine_tick.tick() => {
                     if self.engine.phase() == Phase::Riding {
-                        let fx = self.engine.handle(Input::Tick { dt_ms: ENGINE_TICK_MS });
-                        let finished = self.apply(fx).await;
+                        let actions = self.engine.step(EngineEvent::Tick { dt_ms: ENGINE_TICK_MS });
+                        self.segment_accumulator.note_tick(ENGINE_TICK_MS);
+                        let finished = self.apply_engine_actions(actions).await;
                         if finished { break; }
                     }
                 }
@@ -471,8 +539,8 @@ impl Runtime {
 
         self.ride_started_at = Some(Instant::now());
         self.write_event(SessionEventKind::Start, None);
-        let fx = self.engine.handle(Input::Start);
-        self.apply(fx).await;
+        let actions = self.engine.step(EngineEvent::Start);
+        self.apply_engine_actions(actions).await;
     }
 
     fn emit_player_measurement(&self) {
@@ -487,11 +555,13 @@ impl Runtime {
         );
     }
 
-    /// Apply engine effects. Returns true when the ride finalized (workout
+    /// Apply engine actions. Returns true when the ride finalized (workout
     /// completed naturally) and the task should exit.
-    async fn apply(&mut self, fx: Vec<Effect>) -> bool {
-        let complete = fx.iter().any(|e| matches!(e, Effect::WorkoutComplete));
-        self.apply_effects_no_finalize(&fx).await;
+    async fn apply_engine_actions(&mut self, actions: Vec<EngineAction>) -> bool {
+        let complete = actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::CompleteWorkout));
+        self.execute_engine_actions(&actions).await;
         if complete {
             match self.finalize().await {
                 Ok(summary) => {
@@ -516,32 +586,44 @@ impl Runtime {
         false
     }
 
-    async fn apply_effects_no_finalize(&mut self, fx: &[Effect]) {
-        for eff in fx {
-            let r: Result<(), tp_ble::BleError> = match eff {
-                Effect::SetTarget(w) => {
-                    self.last_target_power_w = Some(*w);
+    async fn execute_engine_actions(&mut self, actions: &[EngineAction]) {
+        for action in actions {
+            let r: Result<(), tp_ble::BleError> = match action {
+                EngineAction::SetTargetPower { watts } => {
+                    self.last_target_power_w = Some(*watts);
                     self.in_free_ride = false;
                     if self.erg_enabled {
-                        self.trainer.set_target_power(*w).await
+                        self.trainer.set_target_power(*watts).await
                     } else {
                         Ok(()) // ERG off: track the target, don't drive it
                     }
                 }
-                Effect::EnterFreeRide => {
+                EngineAction::EnterFreeRide => {
                     self.in_free_ride = true;
                     self.last_target_power_w = None;
                     self.write_event(SessionEventKind::FreerideEnter, None);
                     self.trainer.set_flat_road_simulation().await
                 }
-                Effect::TrainerStart => self.trainer.start_or_resume_training().await,
-                Effect::TrainerStop => self.trainer.pause_training().await,
-                Effect::TrainerReset => self.trainer.reset_trainer().await,
-                Effect::LapBoundary { seg_idx } => {
-                    self.write_event(SessionEventKind::Lap, Some(*seg_idx));
+                EngineAction::StartTrainer => self.trainer.start_or_resume_training().await,
+                EngineAction::StopTrainer => self.trainer.pause_training().await,
+                EngineAction::ResetTrainer => self.trainer.reset_trainer().await,
+                EngineAction::FinalizeSegment {
+                    segment_index,
+                    reason,
+                } => {
+                    let planned_duration_s =
+                        self.engine.workout().segments[*segment_index].duration_s();
+                    let result = self.segment_accumulator.take_result(
+                        &self.workout_session_id,
+                        *segment_index,
+                        planned_duration_s,
+                        *reason == SegmentEndReason::Skipped,
+                    );
+                    let _ = self.app.emit("segment_result", &result);
+                    self.write_event(SessionEventKind::Lap, Some(*segment_index));
                     Ok(())
                 }
-                Effect::ShowText(t) => {
+                EngineAction::ShowText(t) => {
                     let _ = self.app.emit(
                         "text_event",
                         serde_json::json!({
@@ -550,7 +632,7 @@ impl Runtime {
                     );
                     Ok(())
                 }
-                Effect::WorkoutComplete => Ok(()),
+                EngineAction::CompleteWorkout => Ok(()),
             };
             if let Err(e) = r {
                 self.trainer_error(&e.to_string()).await;
@@ -565,11 +647,11 @@ impl Runtime {
         warn!("trainer error: {msg}");
         if self.engine.phase() == Phase::Riding {
             self.write_event(SessionEventKind::Pause, None);
-            let fx = self.engine.handle(Input::Pause);
-            // Effects here are trainer stop ops that will likely also fail —
+            let actions = self.engine.step(EngineEvent::Pause);
+            // Actions here are trainer stop ops that will likely also fail —
             // apply best-effort without recursing into trainer_error.
-            for eff in fx {
-                if let Effect::TrainerStop = eff {
+            for action in actions {
+                if let EngineAction::StopTrainer = action {
                     let _ = self.trainer.pause_training().await;
                 }
             }
@@ -604,6 +686,8 @@ impl Runtime {
     }
 
     fn write_sample(&mut self) {
+        self.segment_accumulator
+            .note_sample(self.latest_power_w, self.latest_cadence_rpm);
         if let Some(p) = self.latest_power_w {
             self.power_sum += u64::from(p);
             self.power_n += 1;
@@ -836,4 +920,42 @@ fn ymd_utc(unix_s: u64) -> (u32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y as u32, m as u32, d as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SegmentAccumulator;
+
+    #[test]
+    fn segment_result_uses_ridden_time_and_independent_sample_averages() {
+        let mut accumulator = SegmentAccumulator::default();
+        accumulator.note_tick(2_250);
+        accumulator.note_sample(Some(200), Some(88));
+        accumulator.note_sample(Some(220), None);
+
+        let result = accumulator.take_result("session", 3, 300, true);
+
+        assert_eq!(result.workout_session_id, "session");
+        assert_eq!(result.segment_index, 3);
+        assert_eq!(result.planned_duration_s, 300);
+        assert_eq!(result.ridden_duration_s, 2);
+        assert_eq!(result.average_power_w, Some(210));
+        assert_eq!(result.average_cadence_rpm, Some(88));
+        assert!(result.skipped);
+    }
+
+    #[test]
+    fn taking_a_segment_result_resets_the_accumulator() {
+        let mut accumulator = SegmentAccumulator::default();
+        accumulator.note_tick(1_000);
+        accumulator.note_sample(Some(250), Some(90));
+        let _ = accumulator.take_result("session", 0, 60, false);
+
+        let result = accumulator.take_result("session", 1, 30, false);
+
+        assert_eq!(result.ridden_duration_s, 0);
+        assert_eq!(result.average_power_w, None);
+        assert_eq!(result.average_cadence_rpm, None);
+        assert!(!result.skipped);
+    }
 }

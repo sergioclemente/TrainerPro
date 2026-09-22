@@ -153,7 +153,8 @@ test("all end-like language prepares the pause command", async () => {
   const harness = surfaceHarness(player("riding"));
   const prepared = prepare(harness.surface, "pause", "End the ride");
   assert.equal(prepared.kind, "command");
-  assert.equal(prepared.label, "End ride");
+  assert.equal(prepared.label, "Pause workout");
+  assert.equal(prepared.successNotice, "Finish the ride manually when ready");
   assert.equal(await prepared.execute(), "Workout paused — finish manually");
   assert.deepEqual(harness.calls, [["pauseRide"]]);
 

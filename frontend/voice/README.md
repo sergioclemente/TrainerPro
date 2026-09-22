@@ -12,7 +12,8 @@ voice_enabled + voice surface active + app focused + microphone permission
                     WorkerMicTranscriber
  system-default mic -> AudioWorklet -> Moonshine STT worker
                               |
-                    completed transcript only
+              partial transcript -> voice composer only
+                    completed transcript
                               |
                               v
                     semanticRouter.worker
@@ -28,7 +29,9 @@ voice_enabled + voice surface active + app focused + microphone permission
 production caller of `reduceVoiceMachine`, automatically requests permission,
 loads and retains both local models, starts and suspends capture based on the
 active voice surface and application activity, admits one completed utterance,
-and serializes routing, execution, feedback, and stream reset. `voiceMachine.ts`
+and serializes routing, execution, composer feedback, and stream reset. Partial
+and finalized transcripts remain in React memory only and are cleared when the
+controller returns to listening. `voiceMachine.ts`
 remains the pure lifecycle reducer and invalidates asynchronous work when the
 setting, permission, active surface identity, or application focus changes.
 Where the WebView exposes the microphone Permissions API, the controller also
@@ -49,6 +52,15 @@ only stops capture so the models remain warm.
 AudioWorklet transfers mono PCM to Moonshine's STT worker; a
 `ScriptProcessorNode` is the compatibility fallback. Moonshine owns resampling,
 VAD, streaming state, and completed transcript lines.
+
+Moonshine uses the short keyterm list `pause,resume,skip,intensity,ERG,listening`
+with a boost of `4.0` to favor workout vocabulary during decoding. Capture
+requests browser noise suppression; echo cancellation and automatic gain control
+remain off for WKWebView/Camo compatibility. After capture starts,
+`voice_capture_started` logs requested noise suppression and the track's effective
+noise suppression, echo cancellation, and gain-control settings. Unreported
+settings are `unknown`; a successful request alone does not prove suppression
+is active. No audio, transcript, or device identity is logged.
 
 `semanticRouter.worker.ts` loads the bundled EmbeddingGemma model, caches phrase
 embeddings by text, and selects the closest command key from the catalog
@@ -81,15 +93,20 @@ conformance testing. The persistent Settings toggle remains the hard disable.
 known transcription recovery, phase availability, live-state validation, and a
 narrowed set of injected IPC capabilities. It has no `endRide`; end-like
 language can only prepare the `pause` command and visible “finish manually”
-feedback.
+guidance in the transient composer.
 `Player.tsx` registers that stable surface while an unfinished workout is
 active. Future screens add adjacent `.voice.ts` modules rather than extending
-the semantic worker with application behavior. `RideEventRail.tsx` renders
-ephemeral results and the shared connection and voice status at the left of the
-Player without covering workout content. Voice remains Player-only; normal
-screens show connection status without an inactive Voice card. Voice, trainer,
-and HRM share the presentation-only `RailStatusCard` while retaining their
-separate state owners.
+the semantic worker with application behavior. `rideTimeline.ts` is the pure,
+memory-only ordering owner for canonical user actions and ride events.
+`screens/Player.actions.ts` is used by voice, buttons, and keyboard shortcuts,
+so equivalent actions create the same entry and phase correlation without
+coupling command policy to the view. Recognition text and rejected attempts
+remain transient in the composer rather than entering the timeline.
+`RideEventRail.tsx` renders that chat-like timeline between compact connection
+cards and the adaptive `VoiceComposer`. The backend emits one `segment_result`
+at each segment boundary from the same ridden-time ticks and 1 Hz measurements used
+by the ride recorder. Voice remains Player-only; normal screens show connection
+status without an inactive Voice composer.
 
 `voice-models.manifest.json` pins both local model sets. `modelAssets.ts`
 resolves their packaged Tauri resource URLs. A missing or invalid speech or
@@ -110,7 +127,7 @@ voice path, not opt-in remote workout sources.
 The first time an enabled voice surface becomes active and the app has focus,
 TrainerPro requests microphone permission if needed, loads both bundled models
 in parallel, prepares the active command catalog, starts capture, and plays the
-ready cue. The Voice card shows `Preparing…` and the model source currently
+ready cue. The voice composer shows preparation and the model source currently
 loading. The latest Node reference measurement on the development machine was
 411 ms to load EmbeddingGemma and 7.315 s to prepare the first full command
 catalog; this is diagnostic evidence, not a startup-time guarantee for every
@@ -121,7 +138,7 @@ releases the runtimes; the next activation is cold again.
 
 Transient microphone or semantic-worker failures each receive one clean
 automatic restart. A repeated failure becomes a persistent Voice error and
-stops command execution. `Retry` on the Player's Voice card disposes stale
+stops command execution. `Retry` in the Player's voice composer disposes stale
 state and starts a fresh permission/model/capture cycle. The persistent
 `Enable voice commands` setting under Settings > Basic info is the hard-disable
 path; disabling it releases both runtimes and microphone capture while the

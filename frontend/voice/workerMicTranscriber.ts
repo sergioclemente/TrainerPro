@@ -6,19 +6,25 @@ import {
 import voiceModelManifest from "./voice-models.manifest.json";
 import moonshineSttWorkerUrl from "@moonshine-ai/moonshine-wasm/stt-worker?worker&url";
 import moonshineWasmUrl from "@moonshine-ai/moonshine-wasm/moonshine.wasm?url";
+import { traceEvent } from "../trace";
 
 const TRANSCRIBER_ID = "trainerpro-voice";
 const STREAM_ID = "trainerpro-voice-stream";
 const SCRIPT_PROCESSOR_BUFFER_SIZE = 4096;
+const AUDIO_LEVEL_UPDATE_INTERVAL_MS = 80;
+const AUDIO_LEVEL_GAIN = 8;
+// Short workout vocabulary biases decoding without a model retrain.
+const MOONSHINE_KEYTERMS = "pause,resume,skip,intensity,ERG,decrease,increase,harder,easier,interval,segment,effort,ride,workout";
+const MOONSHINE_KEYTERM_BOOST = 4.0;
 
-export const VOICE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+export const VOICE_AUDIO_CONSTRAINTS = {
   // WKWebView echo cancellation suppresses the Camo virtual microphone to
-  // near-silence. V1 uses the measured working unprocessed path and evaluates
-  // speaker echo separately.
+  // near-silence. Request fan-noise suppression independently; keep echo
+  // cancellation and automatic gain control disabled.
   echoCancellation: false,
-  noiseSuppression: false,
+  noiseSuppression: true,
   autoGainControl: false,
-};
+} satisfies MediaTrackConstraints;
 
 export interface WorkerMicProgress {
   loaded: number;
@@ -38,8 +44,7 @@ export interface WorkerMicCallbacks {
   onError: (error: Error) => void;
   onCaptureDiscontinuity: (reason: CaptureDiscontinuityReason) => void;
   onProgress: (progress: WorkerMicProgress) => void;
-  /** Diagnostic observation only; the worker remains the audio consumer. */
-  onAudio?: (audio: Float32Array) => void;
+  onAudioLevel?: (level: number) => void;
 }
 
 function downmixToMono(channels: readonly Float32Array[]): Float32Array {
@@ -97,6 +102,7 @@ export class WorkerMicTranscriber {
   private reportedDiscontinuityGeneration = -1;
   private deviceChangeListener?: () => void;
   private audioContextStateListener?: () => void;
+  private lastAudioLevelAt = 0;
   private closed = false;
 
   constructor(modelBaseUrl: string, callbacks: WorkerMicCallbacks) {
@@ -126,6 +132,10 @@ export class WorkerMicTranscriber {
     await this.host.loadTranscriber({
       transcriberId: TRANSCRIBER_ID,
       modelArch: ModelArch.SmallStreaming,
+      options: {
+        keyterms: MOONSHINE_KEYTERMS,
+        keyterm_boost: String(MOONSHINE_KEYTERM_BOOST),
+      },
       source: { kind: "urls", files },
     });
     if (this.closed) throw new Error("The microphone transcriber closed while loading");
@@ -160,7 +170,7 @@ export class WorkerMicTranscriber {
 
       const onAudio = (audio: Float32Array) => {
         if (!this.running || this.muted || !this.audioContext) return;
-        this.callbacks.onAudio?.(audio);
+        this.reportAudioLevel(audio);
         this.host.addAudio(STREAM_ID, audio, this.audioContext.sampleRate);
       };
       if (this.audioContext.audioWorklet) {
@@ -169,6 +179,13 @@ export class WorkerMicTranscriber {
         this.setupScriptProcessor(onAudio);
       }
       this.installContinuityListeners(captureGeneration);
+      const settings = this.mediaStream.getAudioTracks()[0]?.getSettings();
+      traceEvent("voice_capture_started", {
+        noise_suppression_requested: VOICE_AUDIO_CONSTRAINTS.noiseSuppression,
+        noise_suppression: settings?.noiseSuppression ?? "unknown",
+        echo_cancellation: settings?.echoCancellation ?? "unknown",
+        auto_gain_control: settings?.autoGainControl ?? "unknown",
+      });
     } catch (error) {
       this.running = false;
       await this.releaseCapture();
@@ -184,12 +201,14 @@ export class WorkerMicTranscriber {
 
   mute(muted = true): void {
     this.muted = muted;
+    if (muted) this.callbacks.onAudioLevel?.(0);
   }
 
   /** Immediately invalidate audio and any reset that could otherwise unmute it. */
   invalidateCapture(): void {
     this.muted = true;
     this.captureGeneration += 1;
+    this.callbacks.onAudioLevel?.(0);
   }
 
   /** Discard streaming/VAD context without reacquiring the microphone. */
@@ -242,6 +261,17 @@ export class WorkerMicTranscriber {
         if (this.running && generation === this.streamGeneration) this.callbacks.onError(error);
       },
     });
+  }
+
+  private reportAudioLevel(audio: Float32Array): void {
+    if (!this.callbacks.onAudioLevel) return;
+    const now = performance.now();
+    if (now - this.lastAudioLevelAt < AUDIO_LEVEL_UPDATE_INTERVAL_MS) return;
+    this.lastAudioLevelAt = now;
+    let sumOfSquares = 0;
+    for (const sample of audio) sumOfSquares += sample * sample;
+    const rms = audio.length > 0 ? Math.sqrt(sumOfSquares / audio.length) : 0;
+    this.callbacks.onAudioLevel(Math.min(1, rms * AUDIO_LEVEL_GAIN));
   }
 
   private installContinuityListeners(captureGeneration: number): void {
@@ -305,6 +335,7 @@ export class WorkerMicTranscriber {
   }
 
   private async releaseCapture(): Promise<void> {
+    this.callbacks.onAudioLevel?.(0);
     if (this.deviceChangeListener) {
       navigator.mediaDevices.removeEventListener("devicechange", this.deviceChangeListener);
       this.deviceChangeListener = undefined;

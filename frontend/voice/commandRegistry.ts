@@ -7,6 +7,7 @@ import {
 
 export interface PreparedVoiceCommand<Context> {
   label: string;
+  successNotice?: string;
   execute: (context: Context) => Promise<string>;
 }
 
@@ -97,6 +98,7 @@ export function createCommandVoiceSurface<
       return {
         kind: "command",
         label: prepared.label,
+        successNotice: prepared.successNotice,
         execute: async () => {
           const liveContext = options.getContext();
           if (!liveContext) throw new Error(options.contextUnavailableMessage);

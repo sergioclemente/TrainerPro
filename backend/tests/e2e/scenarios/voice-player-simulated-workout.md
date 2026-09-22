@@ -94,3 +94,21 @@ PASS voice-player-simulated-workout: all Player voice actions reached the simula
 Otherwise report `FAIL voice-player-simulated-workout`, the first failed step,
 the exact phrase spoken, and the visible state that contradicted the
 expectation. Retain a screenshot only when it helps diagnose the failure.
+
+## Fan-noise follow-up
+
+Use the same QA identity and simulator with Camo as the system-default input.
+First verify non-silent capture and one pause/resume cycle in quiet conditions.
+Then turn on the workout fan and perform five pause/resume cycles, one skip,
+and one intensity command. Count first attempts only; restore the appropriate
+phase using the UI after a missed command so the next attempt is valid.
+Require at least four of five first-attempt successes for each of pause and
+resume, and successful skip/intensity actions. Leave only the fan running for
+two minutes while riding and confirm that no command executes.
+
+Inspect `voice_capture_started` in the QA log for effective noise suppression.
+`unknown` means the WebView did not report the setting, not that suppression is
+active. Record that distinction with the spoken results. Camo silence or a
+capture-continuity regression fails this check; revert the noise-suppression
+constraint if it causes either. If accuracy misses the target, investigate
+with separately consented audio before further tuning.

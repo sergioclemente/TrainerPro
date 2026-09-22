@@ -91,6 +91,16 @@ export interface PlayerMeasurement {
   power_smoothed_3s_w: number | null;
 }
 
+export interface SegmentResult {
+  workout_session_id: string;
+  segment_index: number;
+  planned_duration_s: number;
+  ridden_duration_s: number;
+  average_power_w: number | null;
+  average_cadence_rpm: number | null;
+  skipped: boolean;
+}
+
 export interface LapRow {
   start_s: number;
   duration_s: number;

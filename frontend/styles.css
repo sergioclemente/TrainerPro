@@ -34,7 +34,8 @@ body {
 
 /* --- nav rail --- */
 .rail {
-  width: 200px;
+  width: 220px;
+  flex: 0 0 220px;
   background: var(--bg2);
   border-right: 1px solid var(--border);
   display: flex;
@@ -80,11 +81,11 @@ body {
 .rail-status-card {
   --rail-status-tone: var(--muted);
   display: flex;
-  flex-direction: column;
-  gap: 7px;
+  align-items: center;
+  gap: 9px;
   width: 100%;
   min-width: 0;
-  padding: 11px 12px;
+  padding: 9px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-left: 3px solid var(--rail-status-tone);
@@ -105,11 +106,14 @@ body {
 .rail-status-danger {
   --rail-status-tone: var(--danger);
 }
-.rail-status-card-main {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 9px;
+.connection-status .rail-status-active .rail-status-card-icon,
+.connection-status .rail-status-warn .rail-status-card-icon {
+  animation: connection-pulse 1.8s ease-in-out infinite;
+}
+@keyframes connection-pulse {
+  50% {
+    opacity: 0.45;
+  }
 }
 .rail-status-card-icon {
   display: flex;
@@ -117,35 +121,16 @@ body {
   justify-content: center;
   color: var(--rail-status-tone);
 }
-.rail-status-card-copy {
-  display: flex;
+.rail-status-card-primary {
+  flex: 1;
   min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-.rail-status-card-label {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-.rail-status-card-state {
   color: var(--fg);
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-.rail-status-card-detail {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-.rail-status-card-action {
-  display: flex;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .content {
@@ -473,57 +458,217 @@ button.big {
 
 /* --- player --- */
 .ride-event-rail {
-  width: 200px;
-  flex: 0 0 200px;
+  width: 280px;
+  flex: 0 0 280px;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   padding: 14px 12px;
   background: var(--bg2);
   border-right: 1px solid var(--border);
 }
 .ride-event-feed {
-  flex: 1;
-  display: flex;
-  align-items: flex-end;
-}
-.ride-status-cluster {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 4px 2px;
 }
-.ride-status-cluster .connection-status {
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+.ride-event-feed-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.ride-event-feed-spacer {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ride-connections {
+  flex: none;
+}
+.timeline-row {
+  display: flex;
+  width: 100%;
+}
+.timeline-row-app {
+  justify-content: flex-start;
+}
+.timeline-row-user {
+  justify-content: flex-end;
+}
+.timeline-bubble {
+  max-width: 90%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.timeline-action {
+  display: flex;
+  flex-direction: column;
+  color: var(--fg);
+  background: #1b3557;
+  border-color: #27558d;
+  border-bottom-right-radius: 4px;
+}
+.timeline-action-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.timeline-message {
+  background: var(--bg);
+  border-bottom-left-radius: 4px;
+}
+.timeline-message.warn {
+  border-left: 3px solid var(--warn);
+}
+.timeline-message.danger {
+  border-left: 3px solid var(--danger);
+}
+.timeline-segment {
+  position: relative;
+  width: 92%;
+  overflow: hidden;
+  background: var(--bg);
+  border-left: 3px solid var(--timeline-zone-start);
+  border-bottom-left-radius: 4px;
+}
+.timeline-segment::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    110deg,
+    var(--timeline-zone-start),
+    var(--timeline-zone-end)
+  );
+  opacity: 0.18;
+}
+.timeline-segment > * {
+  position: relative;
+}
+.timeline-segment.skipped {
+  color: #b1b8c0;
+  filter: saturate(0.45);
+}
+.timeline-segment-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.timeline-segment-skipped {
+  font-weight: 650;
+}
+.timeline-segment-result {
+  margin-top: 3px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-segment-cadence {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-latest {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+}
+.voice-composer {
+  --voice-composer-tone: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 48px;
+  padding: 9px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--voice-composer-tone);
+  border-radius: 11px;
+  color: var(--fg);
 }
 .voice-retry {
   padding: 5px 10px;
   font-size: 12px;
 }
-.voice-feedback {
-  width: 100%;
+.voice-composer-listening {
+  --voice-composer-tone: var(--ok);
+}
+.voice-composer-speech,
+.voice-composer-interpreting,
+.voice-composer-executing,
+.voice-composer-preparing {
+  --voice-composer-tone: var(--accent);
+}
+.voice-composer-error,
+.voice-composer-unavailable {
+  --voice-composer-tone: var(--danger);
+}
+.voice-composer-info {
+  --voice-composer-tone: var(--accent);
+}
+.voice-composer-icon {
+  display: flex;
+  flex: none;
+  color: var(--voice-composer-tone);
+}
+.voice-composer-content {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--ok);
-  border-radius: 8px;
-  background: var(--bg);
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.3;
   overflow-wrap: anywhere;
 }
-.voice-feedback.error {
-  border-left-color: var(--danger);
+.voice-composer-transcript {
+  user-select: text;
+  -webkit-user-select: text;
 }
-.voice-feedback-command {
+.voice-composer-notice {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
-.voice-feedback-result {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
+.voice-composer-notice.error {
+  color: var(--danger);
+}
+.voice-waveform {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.voice-waveform-bar {
+  width: 3px;
+  height: 20px;
+  transform-origin: center;
+  border-radius: 999px;
+  background: var(--ok);
+  transition: transform 80ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .connection-status .rail-status-card-icon {
+    animation: none;
+  }
+  .voice-waveform-bar {
+    transition: none;
+  }
 }
 .player {
   display: flex;
@@ -540,20 +685,6 @@ button.big {
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
-}
-.textevent {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(13, 17, 23, 0.9);
-  border: 1px solid var(--accent);
-  padding: 10px 22px;
-  border-radius: 999px;
-  font-size: 18px;
-  font-weight: 600;
-  /* Sits over the graph — must not block its segment hover. */
-  pointer-events: none;
 }
 .player-metrics {
   flex: 1;

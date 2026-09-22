@@ -1,7 +1,7 @@
 # Voice commands plan
 
-Status: Player-only MVP implemented; release readiness remains
-Last updated: 2026-09-20
+Status: Player-only MVP and workout timeline implemented; release readiness remains
+Last updated: 2026-09-22
 
 This is the active task list for local voice commands. Durable architecture
 lives in [`architecture.md`](architecture.md), and settled alternatives live in
@@ -10,7 +10,7 @@ instructions live in [`vendor/moonshine-wasm/README.md`](../vendor/moonshine-was
 
 ## Product scope
 
-V1 provides default-on, permission-gated, hands-free control of an active
+V1 will ship disabled by default, with permission-gated, hands-free control of an active
 workout. Audio, transcription, intent matching, and argument parsing remain on
 the device. Raw audio and transcripts are not persisted or sent anywhere.
 
@@ -24,9 +24,10 @@ V1 includes:
 - Start, pause, resume, skip, absolute/relative intensity, and explicit ERG
   control through the existing typed Player IPC.
 - Session-scoped “stop listening” / “resume listening” voice controls.
-- Visible status, transient command results, and short nonverbal cues.
-- A persistent Settings opt-out; microphone permission otherwise enables voice
-  automatically.
+- A workout rail with compact device state, a ride/command timeline, an
+  adaptive voice composer, and short nonverbal cues.
+- A persistent Settings enable/disable toggle; microphone permission alone
+  must not enable voice. This release-policy change is pending implementation.
 
 Deferred until real Player usage justifies expansion:
 
@@ -63,11 +64,17 @@ Deferred until real Player usage justifies expansion:
 ### Capture and lifecycle
 
 - Capture uses the system-default mono input through `getUserMedia`.
-- Echo cancellation, noise suppression, and automatic gain control are
-  disabled because packaged WKWebView testing made the Camo input effectively
-  silent with echo cancellation enabled.
-- Only completed Moonshine lines enter semantic routing. Partial text is not
-  displayed or persisted.
+- Browser noise suppression is requested by default to address fan noise.
+  Echo cancellation and automatic gain control remain disabled because
+  packaged WKWebView testing made Camo effectively silent with echo
+  cancellation enabled. There is no automatic raw-capture fallback.
+- Moonshine receives `pause,resume,skip,intensity,ERG,listening` as keyterms
+  with boost `4.0`. Small Streaming, VAD defaults, and semantic threshold `0.70`
+  are unchanged. The user reports improved noise handling and term recognition
+  in manual testing, with no observed harm at boost `4.0`; retain that value.
+  This is field feedback, not a controlled accuracy benchmark.
+- Only completed Moonshine lines enter semantic routing. Partial text appears
+  transiently in the voice composer but is not persisted or traced.
 - Utterances are bounded to 15 seconds. Reaching the bound rejects the line and
   resets the Moonshine stream.
 - Leaving the Player or losing application focus stops capture and discards
@@ -120,21 +127,36 @@ Safety invariants:
 
 ### Status UI
 
-- Voice status appears only in the Player's 200 px `RideEventRail`.
-- The normal 200 px navigation rail shows trainer and heart-rate connections,
-  but not an inactive Voice status.
-- Voice, trainer, and HRM use one presentation-only status-card pattern with
-  code-native icons, explicit state text, accessible labels, and semantic tone.
-- The Player rail keeps transient command feedback above the bottom status
-  cluster. Feedback remains ephemeral and does not become a toast history.
+- The normal 220 px navigation rail shows compact trainer and heart-rate cards.
+  Device names are visible; role and connection state remain in accessible
+  labels and semantic color rather than repeated text.
+- The Player uses a 280 px `RideEventRail`: connections at the top, a
+  bottom-anchored ride timeline in the middle, and the voice composer at the
+  bottom. Scrolling up pins history and exposes a return-to-latest control.
+- User actions from voice, buttons, and keyboard shortcuts appear on the right
+  with the same canonical label. Raw voice transcripts remain transient in the
+  composer and rejected attempts never enter history. Ride phases, coach text,
+  interval results, trainer loss or recovery, and persistent voice failures
+  appear on the left. A user-driven start/pause/resume suppresses the matching
+  phase acknowledgement.
+- Interval results are memory-only for the current ride and use the runtime's
+  authoritative ridden time and 1 Hz power/cadence samples. Cards show actual
+  averages, prescribed zone shading (including ramp gradients), and explicit
+  skipped progress.
+- The composer shows actual microphone level while listening, Moonshine's
+  partial/final text while processing, and transient rejection plus persistent
+  permission/model/retry states. On rejection it holds the recognized text and
+  “No matching command” together before returning to the waveform. It has no
+  redundant Voice label.
 - Connection cards continue to read the existing device status streams; the UI
   does not mirror connectivity state.
 
 ## Current evidence
 
-- Fast frontend suite: 32 tests covering the state machine, surface registry,
+- Fast frontend suite: 36 tests covering the state machine, surface registry,
   shared controls, semantic client timeout/discard behavior, matcher contract,
-  number parsing, phase validation, and Player command dispatch.
+  number parsing, phase validation, Player command dispatch, and timeline
+  ordering/reset/suppression behavior.
 - Model-backed conformance: 71/71 cases (35 registry-derived canonical and 36
   curated) at the provisional 0.70 threshold.
 - Latest Node measurement: 411 ms model load, 7.315 s catalog warmup, 206 ms
@@ -154,6 +176,13 @@ Safety invariants:
   plus keyboard start control with Voice disabled. Voice was re-enabled after
   the smoke test. The matching production bundle was also rebuilt without the
   simulator feature.
+- A production ride on September 21, 2026 kept one Voice generation healthy
+  for 84 minutes against a physical trainer. Start, pause, resume, and skip
+  dispatched successfully with no router errors, timeouts, or stale results;
+  one input-device change recovered automatically. Post-transcription routing
+  averaged 215 ms (198-252 ms). A loud fan coincided with repeated unmatched
+  utterances, so noise robustness remains a separate follow-up rather than a
+  runtime-lifecycle failure.
 - The repeatable human-microphone scenario is
   [`backend/tests/e2e/scenarios/voice-player-simulated-workout.md`](../backend/tests/e2e/scenarios/voice-player-simulated-workout.md).
   Its full run is intentionally deferred to final QA rather than blocking
@@ -165,12 +194,29 @@ Each app launch writes the normal Rust and frontend tracing stream to
 `trainerpro.log` in that app identity's standard log directory. Voice adds only
 the pipeline boundaries needed to diagnose a dropped command:
 `voice_line_finalized`, `voice_route`, `voice_dispatch`, and `player_phase`,
-plus exceptional `voice_restart` / `voice_error` lines. Events use logfmt fields
+plus exceptional `voice_restart` / `voice_error` lines. `voice_capture_started`
+records requested noise suppression and the track's effective noise suppression,
+echo cancellation, and automatic gain control (or `unknown` when unreported).
+Events use logfmt fields
 and never include audio, transcripts, matched phrases, workout data, ride
 measurements, device identity, or paths. CPU and memory investigation remains
 external to the application.
 
 ## Active release backlog
+
+### ASAP release sequence
+
+- [ ] Rebase the feature branch onto the latest upstream main HEAD, preserving
+  local work and resolving any integration conflicts before final verification.
+- [ ] Ship Voice disabled by default; update the setting default, focused tests,
+  and durable documentation. Verify permission alone does not activate Voice.
+- [ ] Correct the stale conformance label expectation (End ride versus Pause
+  workout) and rerun focused verification.
+- [ ] Complete targeted final QA, review and commit the feature, then obtain
+  the user's final personal QA approval before opening the PR.
+
+Performance measurements are explicitly deferred until after release and are
+not a gate for this disabled-by-default MVP.
 
 ### Product and legal
 
@@ -205,9 +251,6 @@ external to the application.
   usable.
 - [x] Validate missing speech and embedding resources by tampering with the
   packaged QA application, and verify the surrounding Player remains usable.
-- [ ] Measure long-session memory, CPU, main-thread delay, player-event
-  responsiveness, and trainer control with both models loaded.
-- [ ] Measure end-of-speech-to-action latency on the intended hardware floor.
 
 ### Final validation
 
@@ -221,10 +264,16 @@ external to the application.
 - [x] Build the release TrainerPro QA `.app`, verify its exact QA bundle
   identity, and validate packaged permission plus application-local model
   loading.
-- [ ] Manually validate ride-affecting commands with a physical trainer;
-  simulator success is not the hardware gate.
+- [x] Manually validate representative ride-affecting commands with a physical
+  trainer; simulator success is not the hardware gate.
 - [ ] Record Windows voice validation as deferred unless Windows joins the
   release target.
+
+## Deferred performance measurements
+
+- [ ] Measure long-session memory, CPU, main-thread delay, player-event
+  responsiveness, and trainer control with both models loaded.
+- [ ] Measure end-of-speech-to-action latency on the intended hardware floor.
 
 ## Deferred evaluation program
 

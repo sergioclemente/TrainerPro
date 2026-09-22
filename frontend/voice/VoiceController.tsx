@@ -41,10 +41,11 @@ import {
 } from "./workerMicTranscriber";
 
 const VOICE_MAX_UTTERANCE_MS = 15_000;
-const VOICE_RESULT_DISPLAY_MS = 4_000;
+const VOICE_NOTICE_DISPLAY_MS = 4_000;
+const VOICE_TRANSCRIPT_DISPLAY_MS = 4_000;
 const CAPTURE_MAX_AUTOMATIC_RESTARTS = 1;
 const SEMANTIC_ROUTER_MAX_AUTOMATIC_RESTARTS = 1;
-const COMMAND_REJECTED = "Command not recognized";
+const COMMAND_REJECTED = "No matching command";
 const ROUTER_RESTARTED = "Voice restarted — repeat the command";
 const CAPTURE_DISCONTINUITY_MESSAGES: Record<CaptureDiscontinuityReason, string> = {
   "audio-interrupted": "Audio capture was interrupted",
@@ -53,10 +54,9 @@ const CAPTURE_DISCONTINUITY_MESSAGES: Record<CaptureDiscontinuityReason, string>
   "input-muted": "The microphone input was interrupted",
 };
 
-export interface VoiceFeedback {
-  command: string;
-  result: string;
-  kind: "success" | "error";
+export interface VoiceNotice {
+  message: string;
+  kind: "info" | "error";
 }
 
 export interface VoicePreparationProgress {
@@ -69,12 +69,17 @@ export interface VoicePreparationProgress {
 interface VoiceContextValue {
   state: VoiceMachineState;
   progress: VoicePreparationProgress | null;
-  feedback: VoiceFeedback | null;
+  notice: VoiceNotice | null;
+  partialTranscript: string;
+  finalTranscript: string;
+  inputLevel: number;
   retry: () => void;
-  registerSurface: (surface: VoiceSurface) => () => void;
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
+const VoiceRegistrationContext = createContext<
+  ((surface: VoiceSurface) => () => void) | null
+>(null);
 
 function errorMessage(error: unknown): string {
   return (error as AppError)?.message ?? (error instanceof Error ? error.message : String(error));
@@ -115,7 +120,6 @@ async function queryMicrophonePermission(): Promise<PermissionStatus | null> {
 
 export function VoiceProvider({ children }: { children: ReactNode }) {
   const settings = useStore((state) => state.settings);
-  const pushToast = useStore((state) => state.pushToast);
   const enabled = settings?.voice_enabled ?? false;
 
   const [state, dispatch] = useReducer(
@@ -124,7 +128,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     () => createVoiceMachine({ enabled: false, appActive: appIsActive() }),
   );
   const [progress, setProgress] = useState<VoicePreparationProgress | null>(null);
-  const [feedback, setFeedback] = useState<VoiceFeedback | null>(null);
+  const [notice, setNotice] = useState<VoiceNotice | null>(null);
+  const [partialTranscript, setPartialTranscript] = useState("");
+  const [finalTranscript, setFinalTranscript] = useState("");
+  const [inputLevel, setInputLevel] = useState(0);
   const [surfaceKey, setSurfaceKey] = useState<string | null>(null);
 
   const stateRef = useRef(state);
@@ -139,13 +146,18 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const captureQueueRef = useRef<Promise<void>>(Promise.resolve());
   const captureGenerationRef = useRef(-1);
   const speechTimerRef = useRef<number | null>(null);
-  const feedbackTimerRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const transcriptTimerRef = useRef<number | null>(null);
   const surfaceRef = useRef<VoiceSurface | null>(null);
   const utteranceSequenceRef = useRef(0);
+  const voiceOutageRef = useRef(false);
   const controlSurfaceRef = useRef<VoiceSurface | null>(null);
   controlSurfaceRef.current ??= createVoiceControlSurface({
     getCommandsSuspended: () => stateRef.current.commandsSuspended,
     setCommandsSuspended: (suspended) => {
+      useStore.getState().recordUserAction(
+        suspended ? "Pause voice commands" : "Resume voice commands",
+      );
       dispatch({ type: "command-suspension-changed", suspended });
     },
   });
@@ -155,17 +167,38 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     speechTimerRef.current = null;
   }, []);
 
-  const clearFeedback = useCallback(() => {
-    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
-    feedbackTimerRef.current = null;
-    setFeedback(null);
+  const clearNotice = useCallback(() => {
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = null;
+    setNotice(null);
+  }, []);
+
+  const clearTranscripts = useCallback(() => {
+    if (transcriptTimerRef.current !== null) {
+      window.clearTimeout(transcriptTimerRef.current);
+    }
+    transcriptTimerRef.current = null;
+    setPartialTranscript("");
+    setFinalTranscript("");
+  }, []);
+
+  const scheduleTranscriptClear = useCallback(() => {
+    if (transcriptTimerRef.current !== null) {
+      window.clearTimeout(transcriptTimerRef.current);
+    }
+    transcriptTimerRef.current = window.setTimeout(() => {
+      transcriptTimerRef.current = null;
+      setFinalTranscript("");
+    }, VOICE_TRANSCRIPT_DISPLAY_MS);
   }, []);
 
   const invalidateCapture = useCallback(() => {
     transcriberRef.current?.invalidateCapture();
     captureGenerationRef.current = -1;
     clearSpeechTimer();
-  }, [clearSpeechTimer]);
+    clearTranscripts();
+    setInputLevel(0);
+  }, [clearSpeechTimer, clearTranscripts]);
 
   const registerSurface = useCallback((surface: VoiceSurface): (() => void) => {
     const current = surfaceRef.current;
@@ -174,26 +207,32 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }
     surfaceRef.current = surface;
     invalidateCapture();
-    clearFeedback();
+    clearNotice();
     stopVoiceFeedback();
     setSurfaceKey(surface.key);
     return () => {
       if (surfaceRef.current !== surface) return;
       surfaceRef.current = null;
       invalidateCapture();
-      clearFeedback();
+      clearNotice();
       stopVoiceFeedback();
       setSurfaceKey(null);
     };
-  }, [clearFeedback, invalidateCapture]);
+  }, [clearNotice, invalidateCapture]);
 
-  const showFeedback = useCallback((next: VoiceFeedback) => {
-    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
-    setFeedback(next);
-    feedbackTimerRef.current = window.setTimeout(() => {
-      feedbackTimerRef.current = null;
-      setFeedback(null);
-    }, VOICE_RESULT_DISPLAY_MS);
+  const showNotice = useCallback((next: VoiceNotice) => {
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    if (transcriptTimerRef.current !== null) {
+      window.clearTimeout(transcriptTimerRef.current);
+      transcriptTimerRef.current = null;
+    }
+    setNotice(next);
+    noticeTimerRef.current = window.setTimeout(() => {
+      noticeTimerRef.current = null;
+      setNotice(null);
+      setPartialTranscript("");
+      setFinalTranscript("");
+    }, VOICE_NOTICE_DISPLAY_MS);
   }, []);
 
   const enqueueCapture = useCallback((operation: () => Promise<void>): Promise<void> => {
@@ -247,14 +286,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       component: "semantic_router",
       attempt: routerRestartAttemptsRef.current,
     });
-    showFeedback({
-      command: "Voice command",
-      result: ROUTER_RESTARTED,
-      kind: "error",
-    });
+    showNotice({ message: ROUTER_RESTARTED, kind: "error" });
     void playVoiceErrorCue();
     dispatch({ type: "semantic-router-restart-requested", generation });
-  }, [failCurrent, invalidateCapture, isCurrentCapture, showFeedback]);
+  }, [failCurrent, invalidateCapture, isCurrentCapture, showNotice]);
 
   const resetStream = useCallback(async (generation: number): Promise<boolean> => {
     try {
@@ -274,13 +309,15 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     visible: boolean,
   ) => {
     if (visible) {
-      showFeedback({ command: "Voice command", result: COMMAND_REJECTED, kind: "error" });
+      showNotice({ message: COMMAND_REJECTED, kind: "error" });
       await playVoiceErrorCue();
+    } else {
+      clearTranscripts();
     }
     if (await resetStream(generation)) {
       dispatch({ type: "interpretation-rejected", generation });
     }
-  }, [resetStream, showFeedback]);
+  }, [clearTranscripts, resetStream, showNotice]);
 
   const routeCompletedLine = useCallback(async (
     transcript: string,
@@ -345,7 +382,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           score: result.score,
           duration_ms: Math.round(result.totalDurationMs),
         });
-        await rejectUtterance(generation, false);
+        await rejectUtterance(generation, true);
         return;
       }
 
@@ -378,7 +415,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "model-result", generation });
       const dispatchStartedAt = performance.now();
       try {
-        const outcome = await commandPreparation.execute();
+        await commandPreparation.execute();
         const current = isCurrentCapture(generation) && surfaceRef.current === surface;
         traceEvent("voice_dispatch", {
           utterance_id: utteranceId,
@@ -389,7 +426,11 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           line_to_action_ms: Math.round(performance.now() - finalizedAt),
         });
         if (!current) return;
-        showFeedback({ command: commandPreparation.label, result: outcome, kind: "success" });
+        if (commandPreparation.successNotice) {
+          showNotice({ message: commandPreparation.successNotice, kind: "info" });
+        } else {
+          scheduleTranscriptClear();
+        }
         await playVoiceSuccessCue();
       } catch (error) {
         if (!isCurrentCapture(generation) || surfaceRef.current !== surface) return;
@@ -402,13 +443,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
           duration_ms: Math.round(performance.now() - dispatchStartedAt),
           line_to_action_ms: Math.round(performance.now() - finalizedAt),
         });
-        const message = errorMessage(error);
-        pushToast("error", message);
-        showFeedback({
-          command: commandPreparation.label,
-          result: "Command failed",
-          kind: "error",
-        });
+        showNotice({ message: "Command failed", kind: "error" });
         await playVoiceErrorCue();
       }
 
@@ -421,39 +456,48 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   }, [
     failCurrent,
     isCurrentCapture,
-    pushToast,
     recoverSemanticRouter,
     rejectUtterance,
     resetStream,
-    showFeedback,
+    scheduleTranscriptClear,
+    showNotice,
   ]);
 
   const finishLongUtterance = useCallback(async (generation: number) => {
     if (!isCurrentCapture(generation) || stateRef.current.phase !== "speech") return;
     transcriberRef.current?.mute(true);
-    showFeedback({ command: "Voice command", result: COMMAND_REJECTED, kind: "error" });
+    showNotice({ message: COMMAND_REJECTED, kind: "error" });
     await playVoiceErrorCue();
     if (await resetStream(generation)) dispatch({ type: "utterance-ignored" });
-  }, [isCurrentCapture, resetStream, showFeedback]);
+  }, [isCurrentCapture, resetStream, showNotice]);
 
   const noteSpeech = useCallback(() => {
     const current = stateRef.current;
     if (captureGenerationRef.current !== current.generation || !surfaceRef.current) return;
     if (current.phase !== "listening" && current.phase !== "speech") return;
-    if (current.phase === "listening") dispatch({ type: "speech-started" });
+    if (current.phase === "listening") {
+      clearNotice();
+      if (transcriptTimerRef.current !== null) {
+        window.clearTimeout(transcriptTimerRef.current);
+        transcriptTimerRef.current = null;
+      }
+      setFinalTranscript("");
+      dispatch({ type: "speech-started" });
+    }
     if (speechTimerRef.current !== null) return;
     const generation = current.generation;
     speechTimerRef.current = window.setTimeout(() => {
       speechTimerRef.current = null;
       void finishLongUtterance(generation);
     }, VOICE_MAX_UTTERANCE_MS);
-  }, [finishLongUtterance]);
+  }, [clearNotice, finishLongUtterance]);
 
   const acceptLine = useCallback((text: string) => {
     const current = stateRef.current;
     if (captureGenerationRef.current !== current.generation || !surfaceRef.current) return;
     if (current.phase !== "listening" && current.phase !== "speech") return;
     clearSpeechTimer();
+    clearNotice();
     transcriberRef.current?.mute(true);
     dispatch({ type: "speech-started" });
     const transcript = text.trim();
@@ -463,6 +507,8 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
+    setPartialTranscript("");
+    setFinalTranscript(transcript);
     dispatch({ type: "utterance-accepted" });
     const utteranceId = ++utteranceSequenceRef.current;
     const finalizedAt = performance.now();
@@ -471,7 +517,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       generation: current.generation,
     });
     void routeCompletedLine(transcript, current.generation, utteranceId, finalizedAt);
-  }, [clearSpeechTimer, resetStream, routeCompletedLine]);
+  }, [clearNotice, clearSpeechTimer, resetStream, routeCompletedLine]);
 
   const recoverCapture = useCallback((
     generation: number,
@@ -529,8 +575,12 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     transcriberRef.current ??= new WorkerMicTranscriber(urls.moonshine, {
       onText: (text) => {
         if (text.trim()) noteSpeech();
+        if (mountedRef.current) setPartialTranscript(text.trim());
       },
       onLine: (line) => acceptLine(line.text),
+      onAudioLevel: (level) => {
+        if (mountedRef.current) setInputLevel(level);
+      },
       onError: (error) => failCurrent(captureGenerationRef.current, error),
       onCaptureDiscontinuity: (reason) => {
         recoverCapture(captureGenerationRef.current, reason);
@@ -609,6 +659,26 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     dispatch({ type: "surface-changed", key: surfaceKey });
   }, [surfaceKey]);
+
+  useEffect(() => {
+    if (!state.surfaceKey) {
+      voiceOutageRef.current = false;
+      return;
+    }
+    if (state.phase === "error" || state.phase === "unavailable") {
+      if (voiceOutageRef.current) return;
+      voiceOutageRef.current = true;
+      useStore.getState().appendRideMessage(
+        state.error ?? "Voice commands unavailable",
+        "danger",
+      );
+      return;
+    }
+    if (state.phase === "listening" && voiceOutageRef.current) {
+      voiceOutageRef.current = false;
+      useStore.getState().appendRideMessage("Voice commands restored");
+    }
+  }, [state.error, state.phase, state.surfaceKey]);
 
   useEffect(() => {
     const update = () => {
@@ -730,7 +800,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         state.phase !== "permission-required" &&
         state.phase !== "unavailable" && state.phase !== "error") return;
     clearSpeechTimer();
-    clearFeedback();
+    clearNotice();
     stopVoiceFeedback();
     const transcriber = transcriberRef.current;
     captureGenerationRef.current = -1;
@@ -739,12 +809,13 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     } else {
       disposeRuntimes();
     }
-  }, [clearFeedback, clearSpeechTimer, disposeRuntimes, enqueueCapture, state.phase]);
+  }, [clearNotice, clearSpeechTimer, disposeRuntimes, enqueueCapture, state.phase]);
 
   useEffect(() => () => {
     mountedRef.current = false;
     clearSpeechTimer();
-    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    if (transcriptTimerRef.current !== null) window.clearTimeout(transcriptTimerRef.current);
     routerRef.current?.close();
     const transcriber = transcriberRef.current;
     transcriberRef.current = null;
@@ -767,9 +838,19 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <VoiceContext.Provider value={{ state, progress, feedback, retry, registerSurface }}>
-      {children}
-    </VoiceContext.Provider>
+    <VoiceRegistrationContext.Provider value={registerSurface}>
+      <VoiceContext.Provider value={{
+        state,
+        progress,
+        notice,
+        partialTranscript,
+        finalTranscript,
+        inputLevel,
+        retry,
+      }}>
+        {children}
+      </VoiceContext.Provider>
+    </VoiceRegistrationContext.Provider>
   );
 }
 
@@ -781,9 +862,8 @@ export function useVoice(): VoiceContextValue {
 
 /** Activates one screen-owned voice surface for the lifetime of that screen. */
 export function useVoiceSurface(surface: VoiceSurface | null): void {
-  const context = useContext(VoiceContext);
-  if (!context) throw new Error("useVoiceSurface must be used inside VoiceProvider");
-  const { registerSurface } = context;
+  const registerSurface = useContext(VoiceRegistrationContext);
+  if (!registerSurface) throw new Error("useVoiceSurface must be used inside VoiceProvider");
   useEffect(() => {
     if (!surface) return;
     return registerSurface(surface);

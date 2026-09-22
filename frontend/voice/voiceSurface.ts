@@ -18,6 +18,7 @@ export type VoiceCommandPreparation =
   | {
       kind: "command";
       label: string;
+      successNotice?: string;
       execute: () => Promise<string>;
     }
   | { kind: "rejected"; visible: boolean };

@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { ipc } from "./ipc";
+import { useEffect, useState } from "react";
+import { ipc, type SegmentRow } from "./ipc";
 import { useStore } from "./state";
 import Library from "./screens/Library";
 import Devices from "./screens/Devices";
@@ -58,7 +58,9 @@ function AppShell() {
     refreshDevices,
     refreshActivities,
     refreshSettings,
+    loadPlayer,
   } = useStore();
+  const [segments, setSegments] = useState<SegmentRow[]>([]);
 
   useEffect(() => {
     void refreshWorkouts();
@@ -68,10 +70,27 @@ function AppShell() {
     // Rehydrate a ride the backend still has loaded (e.g. after a UI
     // reload), so the sidebar shows it and the Player screen can resume.
     void ipc.getPlayerState().then((ps) => {
-      if (ps) useStore.setState({ player: ps });
+      if (ps) loadPlayer(ps);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const workoutId = player?.workout_definition_id;
+  useEffect(() => {
+    if (!workoutId) {
+      setSegments([]);
+      return;
+    }
+    let live = true;
+    void ipc.getWorkoutDetail(workoutId).then((detail) => {
+      if (live) setSegments(detail.segments);
+    }).catch(() => {
+      if (live) setSegments([]);
+    });
+    return () => {
+      live = false;
+    };
+  }, [workoutId]);
 
   const riding = player !== null && screen === "player";
 
@@ -97,11 +116,11 @@ function AppShell() {
           <ConnectionStatus className="rail-status" />
         </nav>
       )}
-      {riding && <RideEventRail />}
+      {riding && <RideEventRail segments={segments} />}
       <main className="content">
         {screen === "library" && <Library />}
         {screen === "devices" && <Devices />}
-        {screen === "player" && <Player />}
+        {screen === "player" && <Player segments={segments} />}
         {screen === "summary" && <Summary />}
         {screen === "activities" && <Activities />}
         {screen === "settings" && <SettingsScreen />}
