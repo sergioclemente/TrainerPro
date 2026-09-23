@@ -91,3 +91,8 @@ that cannot be served by an existing document. Name it `docs/feature-<name>.md`.
 A `v*` tag triggers `.github/workflows/release.yml`, which builds unsigned
 macOS and Windows packages and attaches them to a draft GitHub release. Signing
 and notarization credentials remain maintainer responsibilities.
+
+All Tauri builds, including QA and release CI, fetch the pinned voice models
+through the shared pre-build hook before compiling the frontend. Downloads need
+network access on a clean checkout; verified local assets are reused offline.
+Size or SHA-256 verification failure stops the build before bundling.

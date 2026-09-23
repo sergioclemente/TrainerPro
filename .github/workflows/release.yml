@@ -3,7 +3,8 @@
 # You cannot cross-build these: a macOS .dmg must be built on macOS and a
 # Windows .msi/.exe on Windows, so this is a runner matrix. Linux is
 # unsupported. tauri-action runs `tauri build` per OS, which triggers
-# the beforeBuildCommand (npm run build), then attaches the installers to a
+# the beforeBuildCommand (verified voice-model fetch, then frontend build),
+# then attaches the installers to a
 # GitHub release.
 #
 # Trigger: push a tag like `v0.1.0`, or run manually from the Actions tab.
