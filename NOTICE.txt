@@ -1,0 +1,81 @@
+TrainerPro third-party notices
+================================
+
+TrainerPro includes third-party software and model artifacts. This notice is
+also available in Settings > About.
+
+EmbeddingGemma
+--------------
+
+The bundled embedding model is a quantized ORT conversion of Google's
+EmbeddingGemma 300M model. TrainerPro redistributes the pinned converted model
+and tokenizer bytes from Moonshine AI's model catalog without further
+modification.
+
+Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+
+TrainerPro includes a copy of the applicable Gemma agreement, the incorporated
+Prohibited Use Policy, and model-specific downstream restrictions in:
+
+- legal/GEMMA_TERMS_2026-04-01.txt
+- legal/GEMMA_PROHIBITED_USE_POLICY_2024-02-21.txt
+- BINARY_DISTRIBUTION_TERMS.md
+
+Use and distribution of the bundled EmbeddingGemma model are subject to the
+restrictions in those documents.
+
+The Gemma Prohibited Use Policy is incorporated into those terms:
+ai.google.dev/gemma/prohibited_use_policy
+
+Model information:
+huggingface.co/google/embeddinggemma-300m
+
+Moonshine Voice
+---------------
+
+TrainerPro uses a modified single-thread WebAssembly build of Moonshine Voice
+0.1.5. The runtime modifications provide WKWebView and bundler compatibility;
+the bundled English Small Streaming speech model is not modified by
+TrainerPro. Moonshine Voice software and the English streaming model are
+provided under the MIT License.
+
+Copyright (c) 2025 Useful Sensors, Inc. (dba Moonshine AI)
+
+Upstream source: github.com/moonshine-ai/moonshine
+TrainerPro fork: github.com/simoeswolf/moonshine
+Pinned source commit: 663c475a86e5d738041646c7a522160db6870839
+
+Bundled Moonshine runtime dependencies
+--------------------------------------
+
+The WebAssembly runtime was built with these third-party components. Their
+license texts and source are available from the pinned Moonshine source tree
+and the upstream locations listed below.
+
+- ONNX Runtime 1.23.2 — MIT — Copyright Microsoft Corporation
+  github.com/microsoft/onnxruntime
+- cpp-annote — MIT — Copyright Useful Sensors, Inc.
+  github.com/moonshine-ai/moonshine/tree/main/core/cpp-annote
+- kaldi-native-fbank — Apache-2.0
+  github.com/csukuangfj/kaldi-native-fbank
+- KISS FFT — BSD-3-Clause — Copyright Mark Borgerding
+  github.com/mborgerding/kissfft
+- Eigen, MPL2-only subset — MPL-2.0
+  gitlab.com/libeigen/eigen
+- utf8cpp — Boost-1.0
+  github.com/nemtrif/utfcpp
+- utf8proc and its Unicode data — MIT and the Unicode data license
+  github.com/JuliaStrings/utf8proc
+- JSON for Modern C++ — MIT — Copyright Niels Lohmann
+  github.com/nlohmann/json
+- Emscripten 4.0.8 generated runtime — MIT or University of Illinois/NCSA
+  github.com/emscripten-core/emscripten
+
+Tokenizer artifacts
+-------------------
+
+Moonshine's binary-tokenizer runtime is part of Moonshine Voice and uses its
+MIT license. The English streaming tokenizer is part of the MIT-licensed
+Moonshine model. The EmbeddingGemma tokenizer is part of the EmbeddingGemma
+distribution and is subject to the Gemma Terms of Use above. TrainerPro does
+not ship the SentencePiece software library.

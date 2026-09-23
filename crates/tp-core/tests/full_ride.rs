@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 
-use tp_core::engine::{Effect, Engine, Input, Phase};
+use tp_core::engine::{Engine, EngineAction, EngineEvent, Phase};
 use tp_core::fit::{encode_activity, FitActivity};
 use tp_core::journal::{
     compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
@@ -36,7 +36,8 @@ fn zwo_to_fit_end_to_end() {
     assert_eq!(workout.segments.len(), 6);
     assert_eq!(workout.duration_s(), 120);
 
-    // Ride it: 250 ms ticks, journal samples at 1 Hz, lap events from effects.
+    // Ride it: 250 ms ticks, journal samples at 1 Hz, and FIT lap events from
+    // segment-end actions.
     let header = JournalHeader {
         workout_session_id: "session-itest-1".into(),
         workout_definition_id: "definition-itest-1".into(),
@@ -63,25 +64,25 @@ fn zwo_to_fit_end_to_end() {
             segment_index: None,
         })
         .unwrap();
-    for eff in engine.handle(Input::Start) {
-        if let Effect::SetTarget(w) = eff {
-            current_target = Some(w);
+    for action in engine.step(EngineEvent::Start) {
+        if let EngineAction::SetTargetPower { watts } = action {
+            current_target = Some(watts);
         }
     }
 
     while engine.phase() == Phase::Riding {
         t_ms += 250;
-        for eff in engine.handle(Input::Tick { dt_ms: 250 }) {
-            match eff {
-                Effect::SetTarget(w) => current_target = Some(w),
-                Effect::LapBoundary { seg_idx } => journal
+        for action in engine.step(EngineEvent::Tick { dt_ms: 250 }) {
+            match action {
+                EngineAction::SetTargetPower { watts } => current_target = Some(watts),
+                EngineAction::FinalizeSegment { segment_index, .. } => journal
                     .write_event(&SessionEvent {
                         t_ms,
                         kind: SessionEventKind::Lap,
-                        segment_index: Some(seg_idx),
+                        segment_index: Some(segment_index),
                     })
                     .unwrap(),
-                Effect::ShowText(_) => texts_shown += 1,
+                EngineAction::ShowText(_) => texts_shown += 1,
                 _ => {}
             }
         }
@@ -113,7 +114,7 @@ fn zwo_to_fit_end_to_end() {
     let bytes = journal.into_inner();
     let data = replay(Cursor::new(bytes)).expect("journal replays");
     let laps = compute_laps(&data);
-    // 6 segments; the final LapBoundary lands at ride end, so no extra
+    // 6 segments; the final FinalizeSegment action lands at ride end, so no extra
     // partial lap beyond it.
     assert_eq!(laps.len(), 6, "one lap per segment, laps: {laps:?}");
     let totals = session_totals(&data, FTP);

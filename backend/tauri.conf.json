@@ -7,7 +7,7 @@
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run voice:models && npm run build"
   },
   "app": {
     "windows": [
@@ -20,11 +20,23 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$RESOURCE/voice-models/**"]
+      }
     }
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "../BINARY_DISTRIBUTION_TERMS.md": "BINARY_DISTRIBUTION_TERMS.md",
+      "../NOTICE.txt": "NOTICE.txt",
+      "../legal/GEMMA_PROHIBITED_USE_POLICY_2024-02-21.txt": "legal/GEMMA_PROHIBITED_USE_POLICY_2024-02-21.txt",
+      "../legal/GEMMA_TERMS_2026-04-01.txt": "legal/GEMMA_TERMS_2026-04-01.txt",
+      "../voice-models/moonshine-small-streaming-en/": "voice-models/moonshine-small-streaming-en/",
+      "../voice-models/embeddinggemma-300m/": "voice-models/embeddinggemma-300m/"
+    },
     "targets": ["dmg", "app", "nsis", "msi"],
     "category": "HealthcareFitness",
     "shortDescription": "Indoor cycling workout player",
@@ -38,7 +50,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "11.0"
     },
     "windows": {
       "webviewInstallMode": {

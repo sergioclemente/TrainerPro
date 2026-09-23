@@ -6,7 +6,7 @@ use crate::app_error::AppError;
 use crate::app_state::AppState;
 use crate::commands::workout::load_workout_definition;
 use crate::database::scheduled_workouts as scheduled_db;
-use crate::player_runtime::{self as runtime, ActivitySummary, Cmd, PlayerState};
+use crate::player_runtime::{self as runtime, ActivitySummary, PlayerCommand, PlayerState};
 
 type R<T> = Result<T, AppError>;
 
@@ -58,7 +58,7 @@ pub async fn load_workout_into_player(
         if phase == "ready" || phase == "finished" {
             // Never-started (or already-finalized) ride: nothing worth
             // keeping — drop it and load the new workout. Dropping the
-            // handle closes the cmd channel and the runtime task exits.
+            // handle closes the command channel and the runtime task exits.
             *player = None;
         } else {
             return Err(AppError::new(
@@ -79,46 +79,48 @@ pub async fn load_workout_into_player(
     Ok(ps)
 }
 
-async fn send_cmd(state: &State<'_, AppState>, cmd: Cmd) -> R<()> {
+async fn send_player_command(state: &State<'_, AppState>, command: PlayerCommand) -> R<()> {
     let player = state.player.lock().await;
-    let handle = player.as_ref().ok_or_else(|| AppError::new("no_ride", "no ride loaded"))?;
+    let handle = player
+        .as_ref()
+        .ok_or_else(|| AppError::new("no_ride", "no ride loaded"))?;
     handle
-        .cmd_tx
-        .send(cmd)
+        .command_tx
+        .send(command)
         .await
         .map_err(|_| AppError::new("no_ride", "player is gone"))
 }
 
 #[tauri::command]
 pub async fn start_ride(state: State<'_, AppState>) -> R<()> {
-    send_cmd(&state, Cmd::Start).await
+    send_player_command(&state, PlayerCommand::Start).await
 }
 #[tauri::command]
 pub async fn pause_ride(state: State<'_, AppState>) -> R<()> {
-    send_cmd(&state, Cmd::Pause).await
+    send_player_command(&state, PlayerCommand::Pause).await
 }
 #[tauri::command]
 pub async fn resume_ride(state: State<'_, AppState>) -> R<()> {
-    send_cmd(&state, Cmd::Resume).await
+    send_player_command(&state, PlayerCommand::Resume).await
 }
 #[tauri::command]
 pub async fn skip_segment(state: State<'_, AppState>) -> R<()> {
-    send_cmd(&state, Cmd::Skip).await
+    send_player_command(&state, PlayerCommand::SkipSegment).await
 }
 #[tauri::command]
 pub async fn set_intensity(state: State<'_, AppState>, pct: f64) -> R<()> {
-    send_cmd(&state, Cmd::SetIntensity(pct)).await
+    send_player_command(&state, PlayerCommand::SetIntensity(pct)).await
 }
 
 #[tauri::command]
 pub async fn set_erg(state: State<'_, AppState>, enabled: bool) -> R<()> {
-    send_cmd(&state, Cmd::SetErg(enabled)).await
+    send_player_command(&state, PlayerCommand::SetErg(enabled)).await
 }
 
 #[tauri::command]
 pub async fn end_ride(state: State<'_, AppState>) -> R<ActivitySummary> {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    send_cmd(&state, Cmd::End(tx)).await?;
+    send_player_command(&state, PlayerCommand::End(tx)).await?;
     let summary = rx
         .await
         .map_err(|_| AppError::new("no_ride", "player exited before summary"))??;

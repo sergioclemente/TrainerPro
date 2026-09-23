@@ -1,0 +1,261 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "unseen start paraphrase",
+      "phase": "ready",
+      "transcript": "let's get this workout started",
+      "expectedIntent": "start",
+      "expectedLabel": "Start ride"
+    },
+    {
+      "name": "unseen begin paraphrase",
+      "phase": "ready",
+      "transcript": "begin my training session",
+      "expectedIntent": "start",
+      "expectedLabel": "Start ride"
+    },
+    {
+      "name": "short start request",
+      "phase": "ready",
+      "transcript": "start the ride",
+      "expectedIntent": "start",
+      "expectedLabel": "Start ride"
+    },
+    {
+      "name": "unseen stop paraphrase",
+      "phase": "riding",
+      "transcript": "can we stop for a moment",
+      "expectedIntent": "pause",
+      "expectedLabel": "Pause workout"
+    },
+    {
+      "name": "single-word break request",
+      "phase": "riding",
+      "transcript": "break",
+      "expectedIntent": "pause",
+      "expectedLabel": "Pause workout"
+    },
+    {
+      "name": "unseen break paraphrase",
+      "phase": "riding",
+      "transcript": "I need a rest",
+      "expectedIntent": "pause",
+      "expectedLabel": "Pause workout"
+    },
+    {
+      "name": "unseen hold paraphrase",
+      "phase": "riding",
+      "transcript": "hold on for a second",
+      "expectedIntent": "pause",
+      "expectedLabel": "Pause workout"
+    },
+    {
+      "name": "unseen resume paraphrase",
+      "phase": "paused",
+      "transcript": "let's carry on",
+      "expectedIntent": "resume",
+      "expectedLabel": "Resume workout"
+    },
+    {
+      "name": "unseen continue paraphrase",
+      "phase": "paused",
+      "transcript": "continue with the workout",
+      "expectedIntent": "resume",
+      "expectedLabel": "Resume workout"
+    },
+    {
+      "name": "unseen skip paraphrase",
+      "phase": "riding",
+      "transcript": "move on to the next effort",
+      "expectedIntent": "skip",
+      "expectedLabel": "Skip interval"
+    },
+    {
+      "name": "short skip paraphrase",
+      "phase": "riding",
+      "transcript": "skip ahead",
+      "expectedIntent": "skip",
+      "expectedLabel": "Skip interval"
+    },
+    {
+      "name": "absolute intensity digits",
+      "phase": "riding",
+      "transcript": "make the intensity 95 percent",
+      "expectedIntent": "setIntensity",
+      "expectedLabel": "Set intensity to 95%"
+    },
+    {
+      "name": "absolute intensity compact hundreds",
+      "phase": "riding",
+      "transcript": "intensity one twenty percent",
+      "expectedIntent": "setIntensity",
+      "expectedLabel": "Set intensity to 120%"
+    },
+    {
+      "name": "relative intensity harder",
+      "phase": "riding",
+      "transcript": "make it five percent harder",
+      "expectedIntent": "adjustIntensity",
+      "expectedLabel": "Increase intensity by 5%"
+    },
+    {
+      "name": "relative intensity easier",
+      "phase": "riding",
+      "transcript": "make it five percent easier",
+      "expectedIntent": "adjustIntensity",
+      "expectedLabel": "Decrease intensity by 5%"
+    },
+    {
+      "name": "unseen ERG on paraphrase",
+      "phase": "riding",
+      "transcript": "switch erg mode on",
+      "expectedIntent": "ergOn",
+      "expectedLabel": "Enable ERG"
+    },
+    {
+      "name": "unseen ERG off paraphrase",
+      "phase": "riding",
+      "transcript": "switch erg mode off",
+      "expectedIntent": "ergOff",
+      "expectedLabel": "Disable ERG"
+    },
+    {
+      "name": "end remains pause",
+      "phase": "riding",
+      "transcript": "I want to finish the ride",
+      "expectedIntent": "pause",
+      "expectedLabel": "Pause workout"
+    },
+    {
+      "name": "incomplete absolute intensity",
+      "phase": "riding",
+      "transcript": "set the intensity",
+      "expectedIntent": "setIntensity",
+      "expectedCommand": false
+    },
+    {
+      "name": "incomplete relative intensity before capture boundary",
+      "phase": "ready",
+      "transcript": "increase intensity",
+      "expectedIntent": "adjustIntensity",
+      "expectedCommand": false
+    },
+    {
+      "name": "numeric fragment after capture boundary",
+      "phase": "ready",
+      "transcript": "by five percent",
+      "expectedIntent": "adjustIntensity",
+      "expectedCommand": false
+    },
+    {
+      "name": "out-of-range absolute intensity",
+      "phase": "riding",
+      "transcript": "set intensity to two hundred percent",
+      "expectedIntent": "setIntensity",
+      "expectedCommand": false
+    },
+    {
+      "name": "start is invalid while riding",
+      "phase": "riding",
+      "transcript": "start the workout",
+      "expectedIntent": "start",
+      "expectedCommand": false
+    },
+    {
+      "name": "pause is invalid before start",
+      "phase": "ready",
+      "transcript": "pause",
+      "expectedIntent": "pause",
+      "expectedCommand": false
+    },
+    {
+      "name": "resume is invalid while riding",
+      "phase": "riding",
+      "transcript": "resume the workout",
+      "expectedIntent": "resume",
+      "expectedCommand": false
+    },
+    {
+      "name": "unrelated speech sanity check",
+      "phase": "riding",
+      "transcript": "the weather is nice today",
+      "expectedIntent": null
+    },
+    {
+      "name": "stop means pause workout",
+      "phase": "riding",
+      "transcript": "stop",
+      "expectedIntent": "pause",
+      "expectedLabel": "Pause workout"
+    },
+    {
+      "name": "stop listening suspends commands",
+      "phase": "riding",
+      "transcript": "stop listening",
+      "expectedIntent": "suspendVoiceCommands",
+      "expectedLabel": "Pause voice commands"
+    },
+    {
+      "name": "stop talking suspends commands",
+      "phase": "riding",
+      "transcript": "stop talking",
+      "expectedIntent": "suspendVoiceCommands",
+      "expectedLabel": "Pause voice commands"
+    },
+    {
+      "name": "resume means resume workout",
+      "phase": "paused",
+      "transcript": "resume",
+      "expectedIntent": "resume",
+      "expectedLabel": "Resume workout"
+    },
+    {
+      "name": "resume listening reactivates commands",
+      "phase": "paused",
+      "commandsSuspended": true,
+      "transcript": "resume listening",
+      "expectedIntent": "resumeVoiceCommands",
+      "expectedLabel": "Resume voice commands"
+    },
+    {
+      "name": "start listening reactivates commands",
+      "phase": "riding",
+      "commandsSuspended": true,
+      "transcript": "start listening",
+      "expectedIntent": "resumeVoiceCommands",
+      "expectedLabel": "Resume voice commands"
+    },
+    {
+      "name": "workout pause is blocked while commands are suspended",
+      "phase": "riding",
+      "commandsSuspended": true,
+      "transcript": "pause",
+      "expectedIntent": "pause",
+      "expectedCommand": false
+    },
+    {
+      "name": "workout resume cannot reactivate voice commands",
+      "phase": "paused",
+      "commandsSuspended": true,
+      "transcript": "resume the workout",
+      "expectedIntent": "resume",
+      "expectedCommand": false
+    },
+    {
+      "name": "stop listening is already satisfied while suspended",
+      "phase": "riding",
+      "commandsSuspended": true,
+      "transcript": "stop listening",
+      "expectedIntent": "suspendVoiceCommands",
+      "expectedCommand": false
+    },
+    {
+      "name": "resume listening is unavailable while active",
+      "phase": "riding",
+      "transcript": "resume listening",
+      "expectedIntent": "resumeVoiceCommands",
+      "expectedCommand": false
+    }
+  ]
+}

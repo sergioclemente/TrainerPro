@@ -91,6 +91,16 @@ export interface PlayerMeasurement {
   power_smoothed_3s_w: number | null;
 }
 
+export interface SegmentResult {
+  workout_session_id: string;
+  segment_index: number;
+  planned_duration_s: number;
+  ridden_duration_s: number;
+  average_power_w: number | null;
+  average_cadence_rpm: number | null;
+  skipped: boolean;
+}
+
 export interface LapRow {
   start_s: number;
   duration_s: number;
@@ -148,6 +158,7 @@ export interface SourceConfig {
 export interface Settings {
   profile: Profile;
   record_distance: boolean;
+  voice_enabled: boolean;
   intensity_default: number;
   export_dir: string | null;
   /** Workout-library providers keyed by id (planner, woz, …). */
@@ -326,6 +337,8 @@ export const ipc = {
     invoke<IntervalsSyncReport>("refresh_intervals_icu", { todayDateLocal }),
   disconnectIntervalsIcu: () =>
     invoke<IntervalsConnectionStatus>("disconnect_intervals_icu"),
+
+  traceFrontend: (message: string) => invoke<void>("trace_frontend", { message }),
 };
 
 export function fmtDuration(totalS: number): string {

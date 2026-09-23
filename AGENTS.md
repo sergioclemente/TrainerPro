@@ -70,9 +70,18 @@ Do not duplicate those documents here.
 - Check repository-wide formatting before applying it. If the baseline fails
   outside the diff, do not create unrelated churn; report it and validate the
   changed scope.
-- For a local macOS `.app`, run
-  `npm run tauri build -- --bundles app`. Read `CFBundleExecutable` from
-  `Contents/Info.plist` instead of guessing the executable name.
+- Automated macOS UI testing uses the isolated TrainerPro QA identity only.
+  Use `npm run tauri:qa` (debug) for routine iteration. Use
+  `npm run tauri:qa:build -- --bundles app` (release) for packaging-sensitive
+  checks and before declaring a UI feature complete.
+- The regular TrainerPro identity, in either debug or release, is reserved for
+  real user-in-the-loop testing. Automation must not launch, quit, or interact
+  with it.
+- For packaged UI tests, resolve `TrainerPro QA.app` by its exact absolute path,
+  not by display name, and verify that `CFBundleIdentifier` is
+  `com.trainerpro.desktop.qa` before interacting with it. Read
+  `CFBundleExecutable` from `Contents/Info.plist` instead of guessing the
+  executable name.
 - Before committing, inspect `git diff --check`, the changed-file list, and
   `git status`. Do not include `dist/`, `target/`, credentials, or generated
   application bundles.

@@ -8,11 +8,23 @@ import {
   isMuted,
   playCountdown,
   playEnd,
+  primeVoiceFeedback,
   primeSounds,
   setMuted,
 } from "../sounds";
+import { useVoiceSurface } from "../voice/VoiceController";
+import { playerActions } from "./Player.actions";
+import { createPlayerVoiceSurface } from "./Player.voice";
 
 const STATS_KEY = "trainerpro.player.stats";
+const PLAYER_VOICE_SURFACE = createPlayerVoiceSurface({
+  getPlayer: () => useStore.getState().player,
+  commands: playerActions,
+});
+
+function settlePlayerAction(action: Promise<void>): void {
+  void action.catch(() => undefined);
+}
 
 /** One cell of the stats strip. A metric with no data yet reads as a dash. */
 function Stat({
@@ -37,8 +49,19 @@ function Stat({
   );
 }
 
-export default function Player() {
-  const { player, measurement, textEvent, workouts, settings, go, pushToast } = useStore();
+export default function Player({ segments }: { segments: SegmentRow[] }) {
+  const {
+    player,
+    measurement,
+    workouts,
+    settings,
+    go,
+    pushToast,
+    clearRideTimeline,
+  } = useStore();
+  useVoiceSurface(
+    player !== null && player.phase !== "finished" ? PLAYER_VOICE_SURFACE : null,
+  );
   /** Both clocks show elapsed by default; clicking one toggles it to remaining. */
   const [showRemaining, setShowRemaining] = useState(false);
   const [showIntervalRemaining, setShowIntervalRemaining] = useState(false);
@@ -47,9 +70,6 @@ export default function Player() {
   const [showStats, setShowStats] = useState(
     () => localStorage.getItem(STATS_KEY) === "1",
   );
-  /** Segment rows power the graph tooltip and the interval clock's elapsed side. */
-  const [segments, setSegments] = useState<SegmentRow[]>([]);
-
   const toggleStats = useCallback(() => {
     setShowStats((v) => {
       localStorage.setItem(STATS_KEY, v ? "0" : "1");
@@ -57,42 +77,31 @@ export default function Player() {
     });
   }, []);
 
-  const workoutId = player?.workout_definition_id;
-  useEffect(() => {
-    if (!workoutId) return;
-    let live = true;
-    ipc
-      .getWorkoutDetail(workoutId)
-      .then((d) => live && setSegments(d.segments))
-      .catch(() => live && setSegments([])); // graph and clocks degrade gracefully
-    return () => {
-      live = false;
-    };
-  }, [workoutId]);
-
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!player) return;
       if (e.code === "Space") {
         e.preventDefault();
-        if (player.phase === "riding") void ipc.pauseRide();
+        if (player.phase === "riding") settlePlayerAction(playerActions.pauseRide());
         else if (player.phase === "paused") {
           primeSounds(); // inside the keydown gesture — see sounds.ts
-          void ipc.resumeRide();
+          primeVoiceFeedback();
+          settlePlayerAction(playerActions.resumeRide());
         } else if (player.phase === "ready") {
           primeSounds();
-          void ipc.startRide();
+          primeVoiceFeedback();
+          settlePlayerAction(playerActions.startRide());
         }
       } else if (e.key === "s") {
-        void ipc.skipSegment();
+        settlePlayerAction(playerActions.skipSegment());
       } else if (e.key === "e") {
-        void ipc.setErg(!player.erg_enabled);
+        settlePlayerAction(playerActions.setErg(!player.erg_enabled));
       } else if (e.key === "d") {
         toggleStats();
       } else if (e.key === "ArrowUp") {
-        void ipc.setIntensity(player.intensity + 0.01);
+        settlePlayerAction(playerActions.setIntensity(player.intensity + 0.01));
       } else if (e.key === "ArrowDown") {
-        void ipc.setIntensity(player.intensity - 0.01);
+        settlePlayerAction(playerActions.setIntensity(player.intensity - 0.01));
       }
     }
     window.addEventListener("keydown", onKey);
@@ -192,18 +201,15 @@ export default function Player() {
     try {
       const summary = await ipc.endRide();
       useStore.setState({ summary, screen: "summary", player: null, measurement: null });
+      clearRideTimeline();
       void useStore.getState().refreshActivities();
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
     }
   }
 
-  async function toggleErg() {
-    try {
-      await ipc.setErg(!player!.erg_enabled);
-    } catch (e) {
-      pushToast("error", (e as AppError).message ?? String(e));
-    }
+  function toggleErg() {
+    settlePlayerAction(playerActions.setErg(!player!.erg_enabled));
   }
 
   return (
@@ -222,7 +228,6 @@ export default function Player() {
             activeIndex={player.seg_idx}
           />
         )}
-        {textEvent && <div className="textevent">{textEvent.message}</div>}
       </div>
 
       <div className="player-metrics">
@@ -308,14 +313,15 @@ export default function Player() {
             className="go big"
             onClick={() => {
               primeSounds(); // inside the click gesture — see sounds.ts
-              void ipc.startRide();
+              primeVoiceFeedback();
+              settlePlayerAction(playerActions.startRide());
             }}
           >
             ▶ Start
           </button>
         )}
         {player.phase === "riding" && (
-          <button className="big" onClick={() => ipc.pauseRide()}>
+          <button className="big" onClick={() => settlePlayerAction(playerActions.pauseRide())}>
             ❚❚ Pause
           </button>
         )}
@@ -324,17 +330,29 @@ export default function Player() {
             className="go big"
             onClick={() => {
               primeSounds();
-              void ipc.resumeRide();
+              primeVoiceFeedback();
+              settlePlayerAction(playerActions.resumeRide());
             }}
           >
             ▶ Resume
           </button>
         )}
-        <button onClick={() => ipc.skipSegment()} disabled={player.phase === "ready"}>
+        <button
+          onClick={() => settlePlayerAction(playerActions.skipSegment())}
+          disabled={player.phase === "ready"}
+        >
           Skip ⏭
         </button>
-        <button onClick={() => ipc.setIntensity(player.intensity - 0.01)}>−1%</button>
-        <button onClick={() => ipc.setIntensity(player.intensity + 0.01)}>+1%</button>
+        <button
+          onClick={() => settlePlayerAction(playerActions.setIntensity(player.intensity - 0.01))}
+        >
+          −1%
+        </button>
+        <button
+          onClick={() => settlePlayerAction(playerActions.setIntensity(player.intensity + 0.01))}
+        >
+          +1%
+        </button>
         <button
           className="stats-toggle"
           onClick={toggleStats}

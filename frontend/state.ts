@@ -14,11 +14,24 @@ import {
   PlayerState,
   Role,
   ScanResult,
+  SegmentResult,
   Settings,
   PlayerMeasurement,
   WorkoutSummary,
   ipc,
 } from "./ipc";
+import {
+  appendAppMessage,
+  appendSegmentResult,
+  clearExpectedUserPhase,
+  createRideTimelineState,
+  observePlayerState,
+  observeTrainerStatus,
+  recordUserAction,
+  type RideTimelineState,
+  type RideTimelineTone,
+} from "./rideTimeline";
+import { traceEvent } from "./trace";
 
 export type Screen =
   | "library"
@@ -75,7 +88,7 @@ interface Store {
   deviceMeasurement: Record<Role, DeviceMeasurement | null>;
   player: PlayerState | null;
   measurement: PlayerMeasurement | null;
-  textEvent: { message: string; duration_s: number } | null;
+  rideTimeline: RideTimelineState;
   summary: ActivitySummary | null;
   detail: WorkoutDetailView | null;
   activities: ActivityRow[];
@@ -103,11 +116,20 @@ interface Store {
   refreshDevices: () => Promise<void>;
   refreshActivities: () => Promise<void>;
   refreshSettings: () => Promise<void>;
+  loadPlayer: (player: PlayerState) => void;
+  recordUserAction: (
+    label: string,
+    expectedPhase?: PlayerState["phase"] | null,
+  ) => void;
+  recordUserActionFailure: (message: string) => void;
+  appendRideMessage: (message: string, tone?: RideTimelineTone) => void;
+  clearRideTimeline: () => void;
   pushToast: (level: Toast["level"], message: string) => void;
   dismissToast: (id: number) => void;
 }
 
 let toastSeq = 0;
+let lastTracedPlayerPhase: PlayerState["phase"] | null = null;
 
 export const useStore = create<Store>((set, get) => ({
   screen: "library",
@@ -123,7 +145,7 @@ export const useStore = create<Store>((set, get) => ({
   deviceMeasurement: { trainer: null, hrm: null },
   player: null,
   measurement: null,
-  textEvent: null,
+  rideTimeline: createRideTimelineState(),
   summary: null,
   detail: null,
   activities: [],
@@ -191,6 +213,39 @@ export const useStore = create<Store>((set, get) => ({
   refreshDevices: async () => set({ devices: await ipc.getDeviceState() }),
   refreshActivities: async () => set({ activities: await ipc.listActivities() }),
   refreshSettings: async () => set({ settings: await ipc.getSettings() }),
+  loadPlayer: (player) => set((state) => ({
+    player,
+    rideTimeline: {
+      ...createRideTimelineState(player),
+      lastTrainerStatus: state.deviceStatus.trainer?.status ??
+        state.rideTimeline.lastTrainerStatus,
+    },
+  })),
+  recordUserAction: (label, expectedPhase = null) => set((state) => ({
+    rideTimeline: recordUserAction(
+      state.rideTimeline,
+      state.player,
+      label,
+      expectedPhase,
+    ),
+  })),
+  recordUserActionFailure: (message) => set((state) => ({
+    rideTimeline: appendAppMessage(
+      clearExpectedUserPhase(state.rideTimeline),
+      state.player,
+      message,
+      "danger",
+    ),
+  })),
+  appendRideMessage: (message, tone = "neutral") => set((state) => ({
+    rideTimeline: appendAppMessage(state.rideTimeline, state.player, message, tone),
+  })),
+  clearRideTimeline: () => set((state) => ({
+    rideTimeline: {
+      ...createRideTimelineState(),
+      lastTrainerStatus: state.deviceStatus.trainer?.status ?? null,
+    },
+  })),
   pushToast: (level, message) => {
     const id = ++toastSeq;
     set({ toasts: [...get().toasts, { id, level, message }] });
@@ -247,7 +302,16 @@ export async function wireEvents(): Promise<void> {
     s.setState({ measurement: e.payload }),
   );
 
-  await listen<PlayerState>("player_state", (e) => s.setState({ player: e.payload }));
+  await listen<PlayerState>("player_state", (e) => {
+    if (e.payload.phase !== lastTracedPlayerPhase) {
+      lastTracedPlayerPhase = e.payload.phase;
+      traceEvent("player_phase", { phase: e.payload.phase });
+    }
+    s.setState((state) => ({
+      player: e.payload,
+      rideTimeline: observePlayerState(state.rideTimeline, e.payload),
+    }));
+  });
 
   await listen<ScanResult>("scan_result", (e) => {
     const cur = s.getState().scanResults;
@@ -259,9 +323,12 @@ export async function wireEvents(): Promise<void> {
   await listen("scan_done", () => s.setState({ scanning: false }));
 
   await listen<DeviceStatusEvent>("device_status", (e) => {
-    s.setState({
-      deviceStatus: { ...s.getState().deviceStatus, [e.payload.role]: e.payload },
-    });
+    s.setState((state) => ({
+      deviceStatus: { ...state.deviceStatus, [e.payload.role]: e.payload },
+      rideTimeline: e.payload.role === "trainer"
+        ? observeTrainerStatus(state.rideTimeline, state.player, e.payload.status)
+        : state.rideTimeline,
+    }));
     void s.getState().refreshDevices();
   });
 
@@ -275,15 +342,32 @@ export async function wireEvents(): Promise<void> {
   });
 
   await listen<{ message: string; duration_s: number }>("text_event", (e) => {
-    s.setState({ textEvent: e.payload });
-    setTimeout(() => {
-      if (s.getState().textEvent === e.payload) s.setState({ textEvent: null });
-    }, e.payload.duration_s * 1000);
+    s.setState((state) => ({
+      rideTimeline: appendAppMessage(
+        state.rideTimeline,
+        state.player,
+        e.payload.message,
+      ),
+    }));
+  });
+
+  await listen<SegmentResult>("segment_result", (e) => {
+    s.setState((state) => ({
+      rideTimeline: appendSegmentResult(state.rideTimeline, e.payload),
+    }));
   });
 
   await listen<ActivitySummary>("activity_recorded", (e) => {
     void ipc.clearRide();
-    s.setState({ summary: e.payload, screen: "summary", player: null });
+    s.setState((state) => ({
+      summary: e.payload,
+      screen: "summary",
+      player: null,
+      rideTimeline: {
+        ...createRideTimelineState(),
+        lastTrainerStatus: state.deviceStatus.trainer?.status ?? null,
+      },
+    }));
     void s.getState().refreshActivities();
     void s.getState().refreshNextUp();
   });

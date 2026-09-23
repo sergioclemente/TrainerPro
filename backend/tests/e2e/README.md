@@ -1,8 +1,9 @@
-# Packaged-app end-to-end tests
+# QA application end-to-end tests
 
-These tests exercise the bundled TrainerPro QA application as a user would.
-They cover the complete application boundary: the frontend, Tauri IPC, the
-Rust backend, simulator connections, persistence, and macOS packaging.
+These tests exercise TrainerPro QA as a user would. They cover the complete
+application boundary: the frontend, Tauri IPC, the Rust backend, simulator
+connections, and persistence. Packaging-sensitive runs additionally cover the
+macOS application bundle.
 
 The scenarios are structured natural-language instructions for a Computer Use
 agent. They are not `cargo test` targets and are not backend-only integration
@@ -10,19 +11,33 @@ tests.
 
 ## Running a scenario
 
-From the repository root, build the isolated QA application:
+Use the isolated debug QA application for routine iteration:
+
+```bash
+npm run tauri:qa
+```
+
+Use a packaged release QA application for packaging-sensitive checks and before
+declaring a UI feature complete:
 
 ```bash
 npm run tauri:qa:build -- --bundles app
 ```
 
-Use the generated `TrainerPro QA.app`. Read `CFBundleExecutable` from its
-`Contents/Info.plist` when the executable itself is needed; do not infer its
-name from the bundle name.
+Never run these scenarios against the regular TrainerPro identity. For a
+packaged run, resolve the generated `TrainerPro QA.app` by its exact path and
+verify that `CFBundleIdentifier` is `com.trainerpro.desktop.qa`. Read
+`CFBundleExecutable` from `Contents/Info.plist` when the executable itself is
+needed; do not infer its name from the bundle name.
 
 Give the Computer Use agent one file from [`scenarios`](scenarios) and ask it
-to execute the scenario against the packaged application. Environment
+to execute the scenario against the selected QA application. Environment
 preconditions are runner responsibilities rather than test steps.
+
+Scenarios marked with `input: human-microphone` require a person to speak the
+quoted phrases into the selected system input. A Computer Use agent may operate
+and observe the UI, but synthetic text entry is not a substitute for the real
+microphone, Moonshine, and endpointing path.
 
 For a scenario that requires unpaired devices, prepare the QA profile through
 the application itself: open **Devices**, use **Forget** for any saved trainer

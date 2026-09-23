@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { ipc } from "./ipc";
+import { useEffect, useState } from "react";
+import { ipc, type SegmentRow } from "./ipc";
 import { useStore } from "./state";
 import Library from "./screens/Library";
 import Devices from "./screens/Devices";
@@ -9,6 +9,9 @@ import Activities from "./screens/Activities";
 import SettingsScreen from "./screens/SettingsScreen";
 import WorkoutDetail from "./screens/WorkoutDetail";
 import Builder from "./screens/Builder";
+import ConnectionStatus from "./components/ConnectionStatus";
+import RideEventRail from "./components/RideEventRail";
+import { VoiceProvider } from "./voice/VoiceController";
 
 function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
@@ -38,17 +41,26 @@ const NAV = [
 ] as const;
 
 export default function App() {
+  return (
+    <VoiceProvider>
+      <AppShell />
+    </VoiceProvider>
+  );
+}
+
+function AppShell() {
   const {
     screen,
     go,
     player,
     toasts,
-    deviceStatus,
     refreshWorkouts,
     refreshDevices,
     refreshActivities,
     refreshSettings,
+    loadPlayer,
   } = useStore();
+  const [segments, setSegments] = useState<SegmentRow[]>([]);
 
   useEffect(() => {
     void refreshWorkouts();
@@ -58,10 +70,27 @@ export default function App() {
     // Rehydrate a ride the backend still has loaded (e.g. after a UI
     // reload), so the sidebar shows it and the Player screen can resume.
     void ipc.getPlayerState().then((ps) => {
-      if (ps) useStore.setState({ player: ps });
+      if (ps) loadPlayer(ps);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const workoutId = player?.workout_definition_id;
+  useEffect(() => {
+    if (!workoutId) {
+      setSegments([]);
+      return;
+    }
+    let live = true;
+    void ipc.getWorkoutDetail(workoutId).then((detail) => {
+      if (live) setSegments(detail.segments);
+    }).catch(() => {
+      if (live) setSegments([]);
+    });
+    return () => {
+      live = false;
+    };
+  }, [workoutId]);
 
   const riding = player !== null && screen === "player";
 
@@ -84,24 +113,14 @@ export default function App() {
               ● Ride in progress
             </button>
           )}
-          <div className="rail-status">
-            {(["trainer", "hrm"] as const).map((r) => {
-              const s = deviceStatus[r]?.status;
-              const cls =
-                s === "connected" ? "ok" : s === "reconnecting" ? "warn" : "muted";
-              return (
-                <span key={r} className={`status ${cls}`}>
-                  {r === "trainer" ? "🚴" : "❤"} {s ?? "—"}
-                </span>
-              );
-            })}
-          </div>
+          <ConnectionStatus className="rail-status" />
         </nav>
       )}
+      {riding && <RideEventRail segments={segments} />}
       <main className="content">
         {screen === "library" && <Library />}
         {screen === "devices" && <Devices />}
-        {screen === "player" && <Player />}
+        {screen === "player" && <Player segments={segments} />}
         {screen === "summary" && <Summary />}
         {screen === "activities" && <Activities />}
         {screen === "settings" && <SettingsScreen />}

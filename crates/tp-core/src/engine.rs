@@ -1,19 +1,19 @@
 //! Player engine: pure state machine.
 //!
-//! Deterministic: same Input sequence ⇒ same Effect stream. No clocks — the
-//! runtime owns time and feeds `Tick`.
+//! Deterministic: same EngineEvent sequence ⇒ same EngineAction stream. No
+//! clocks — the runtime owns time and feeds `Tick`.
 //!
 //! Rules (see spec for full text):
 //! - Tick advances only in Riding.
-//! - Segment rollover: LapBoundary + first target of new segment (or
-//!   EnterFreeRide). Workout end: WorkoutComplete + TrainerReset, phase →
+//! - Segment rollover: FinalizeSegment + first target of new segment (or
+//!   EnterFreeRide). Workout end: CompleteWorkout + ResetTrainer, phase →
 //!   Finished.
-//! - Ramp targets recompute each Tick; SetTarget emitted only when the
+//! - Ramp targets recompute each Tick; SetTargetPower emitted only when the
 //!   rounded watt value changed (dedup lives HERE, not in BLE).
-//! - Start: Ready→Riding, emits TrainerStart + initial target/freeride.
-//! - Pause: TrainerStop. Resume: TrainerStart + re-emit current target.
-//! - SkipSegment: jump to next boundary (LapBoundary); skip on last segment
-//!   behaves like End.
+//! - Start: Ready→Riding, emits StartTrainer + initial target/freeride.
+//! - Pause: StopTrainer. Resume: StartTrainer + re-emit current target.
+//! - SkipSegment: jump to next boundary (FinalizeSegment) while riding or
+//!   paused; skip on last segment behaves like End.
 //! - SetIntensity clamps to INTENSITY_MIN..=MAX, re-emits target if changed.
 //! - Text events fire when active time crosses offset_s (paused excluded);
 //!   each fires exactly once.
@@ -29,8 +29,9 @@ pub enum Phase {
     Finished,
 }
 
+/// An event consumed by the pure workout state machine.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Input {
+pub enum EngineEvent {
     Start,
     Pause,
     Resume,
@@ -40,23 +41,34 @@ pub enum Input {
     End,
 }
 
+/// Why the engine left a segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentEndReason {
+    Completed,
+    Skipped,
+}
+
+/// A directive for the player runtime to execute outside the pure engine.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Effect {
-    SetTarget(u16),
+pub enum EngineAction {
+    SetTargetPower {
+        watts: u16,
+    },
     EnterFreeRide,
-    TrainerStart,
-    TrainerStop,
-    TrainerReset,
-    /// Emitted when leaving a segment (rollover, skip). `seg_idx` = the
-    /// segment just finished.
-    LapBoundary { seg_idx: usize },
+    StartTrainer,
+    StopTrainer,
+    ResetTrainer,
+    FinalizeSegment {
+        segment_index: usize,
+        reason: SegmentEndReason,
+    },
     ShowText(TextEvent),
-    WorkoutComplete,
+    CompleteWorkout,
 }
 
 #[derive(Debug)]
 pub struct Engine {
-    // Implementation-private fields; public surface is new()/handle()/getters.
+    // Implementation-private fields; public surface is new()/step()/getters.
     workout: ExecutableWorkout,
     ftp: u16,
     intensity: f64,
@@ -119,42 +131,45 @@ impl Engine {
         self.workout.segment_at((self.active_ms / 1000) as u32).map(|(i, _)| i)
     }
 
-    pub fn handle(&mut self, input: Input) -> Vec<Effect> {
-        let mut fx = Vec::new();
-        match input {
-            Input::Start => {
+    pub fn step(&mut self, event: EngineEvent) -> Vec<EngineAction> {
+        let mut actions = Vec::new();
+        match event {
+            EngineEvent::Start => {
                 if self.phase != Phase::Ready {
-                    return fx;
+                    return actions;
                 }
                 self.phase = Phase::Riding;
-                fx.push(Effect::TrainerStart);
+                actions.push(EngineAction::StartTrainer);
                 if self.workout.segments.is_empty() {
-                    self.finish(&mut fx);
-                    return fx;
+                    self.finish(&mut actions);
+                    return actions;
                 }
-                self.retarget(&mut fx, true);
-                self.fire_texts(&mut fx);
+                self.retarget(&mut actions, true);
+                self.fire_texts(&mut actions);
             }
-            Input::Pause => {
+            EngineEvent::Pause => {
                 if self.phase != Phase::Riding {
-                    return fx;
+                    return actions;
                 }
                 self.phase = Phase::Paused;
-                fx.push(Effect::TrainerStop);
+                actions.push(EngineAction::StopTrainer);
             }
-            Input::Resume => {
+            EngineEvent::Resume => {
                 if self.phase != Phase::Paused {
-                    return fx;
+                    return actions;
                 }
                 self.phase = Phase::Riding;
-                fx.push(Effect::TrainerStart);
-                self.retarget(&mut fx, true);
+                actions.push(EngineAction::StartTrainer);
+                self.retarget(&mut actions, true);
             }
-            Input::SkipSegment => {
-                if self.phase != Phase::Riding {
-                    return fx;
+            EngineEvent::SkipSegment => {
+                if !matches!(self.phase, Phase::Riding | Phase::Paused) {
+                    return actions;
                 }
-                fx.push(Effect::LapBoundary { seg_idx: self.seg_idx });
+                actions.push(EngineAction::FinalizeSegment {
+                    segment_index: self.seg_idx,
+                    reason: SegmentEndReason::Skipped,
+                });
                 // Jump active time to the boundary of the current segment.
                 let boundary = self.active_ms - self.seg_elapsed_ms + self.seg_dur_ms(self.seg_idx);
                 self.active_ms = boundary;
@@ -162,8 +177,8 @@ impl Engine {
                 self.seg_idx += 1;
                 if self.seg_idx >= self.workout.segments.len() {
                     // Skip on the last segment behaves like End.
-                    self.finish(&mut fx);
-                    return fx;
+                    self.finish(&mut actions);
+                    return actions;
                 }
                 // Text events inside the skipped span are dropped, not fired;
                 // an event landing exactly on the boundary still fires below.
@@ -172,75 +187,82 @@ impl Engine {
                 {
                     self.next_text += 1;
                 }
-                self.retarget(&mut fx, true);
-                self.fire_texts(&mut fx);
+                // While paused, keep the trainer stopped. Resume force-emits
+                // the new segment's target before riding continues.
+                if self.phase == Phase::Riding {
+                    self.retarget(&mut actions, true);
+                }
+                self.fire_texts(&mut actions);
             }
-            Input::SetIntensity(v) => {
+            EngineEvent::SetIntensity(v) => {
                 if self.phase == Phase::Finished {
-                    return fx;
+                    return actions;
                 }
                 self.intensity = v.clamp(INTENSITY_MIN, INTENSITY_MAX);
                 if self.phase == Phase::Riding {
                     // Dedup: emits only if the resolved watt value changed.
-                    self.retarget(&mut fx, false);
+                    self.retarget(&mut actions, false);
                 }
             }
-            Input::Tick { dt_ms } => {
+            EngineEvent::Tick { dt_ms } => {
                 if self.phase != Phase::Riding {
-                    return fx;
+                    return actions;
                 }
                 self.active_ms += dt_ms;
                 self.ridden_ms += dt_ms;
                 self.seg_elapsed_ms += dt_ms;
-                self.fire_texts(&mut fx);
+                self.fire_texts(&mut actions);
                 let mut crossed = false;
                 while self.seg_elapsed_ms >= self.seg_dur_ms(self.seg_idx) {
                     self.seg_elapsed_ms -= self.seg_dur_ms(self.seg_idx);
-                    fx.push(Effect::LapBoundary { seg_idx: self.seg_idx });
+                    actions.push(EngineAction::FinalizeSegment {
+                        segment_index: self.seg_idx,
+                        reason: SegmentEndReason::Completed,
+                    });
                     self.seg_idx += 1;
                     crossed = true;
                     if self.seg_idx >= self.workout.segments.len() {
                         // Clamp overshoot so active time never exceeds the
                         // workout length on natural completion.
                         self.active_ms = self.total_ms();
-                        self.finish(&mut fx);
-                        return fx;
+                        self.finish(&mut actions);
+                        return actions;
                     }
                 }
-                self.retarget(&mut fx, crossed);
+                self.retarget(&mut actions, crossed);
             }
-            Input::End => {
+            EngineEvent::End => {
                 if !matches!(self.phase, Phase::Riding | Phase::Paused) {
-                    return fx;
+                    return actions;
                 }
-                self.finish(&mut fx);
+                self.finish(&mut actions);
             }
         }
-        fx
+        actions
     }
 
-    /// Transition to Finished, emitting the completion effects.
-    fn finish(&mut self, fx: &mut Vec<Effect>) {
+    /// Transition to Finished, emitting the completion actions.
+    fn finish(&mut self, actions: &mut Vec<EngineAction>) {
         self.phase = Phase::Finished;
-        fx.push(Effect::WorkoutComplete);
-        fx.push(Effect::TrainerReset);
+        actions.push(EngineAction::CompleteWorkout);
+        actions.push(EngineAction::ResetTrainer);
     }
 
-    /// Emit the effect that brings the trainer in line with the current
-    /// position: `SetTarget` (deduped against the last sent value unless
+    /// Emit the action that brings the trainer in line with the current
+    /// position: `SetTargetPower` (deduped against the last sent value unless
     /// `force`) or `EnterFreeRide` (once per entry unless `force`).
-    fn retarget(&mut self, fx: &mut Vec<Effect>, force: bool) {
+    fn retarget(&mut self, actions: &mut Vec<EngineAction>, force: bool) {
         match self.current_target() {
             None => {
                 if force || !self.in_free_ride {
-                    fx.push(Effect::EnterFreeRide);
+                    actions.push(EngineAction::EnterFreeRide);
                 }
                 self.in_free_ride = true;
                 self.last_target = None;
             }
             Some(w) => {
                 if force || self.in_free_ride || self.last_target != Some(w) {
-                    fx.push(Effect::SetTarget(w));
+                    actions.push(EngineAction::SetTargetPower { watts: w });
                 }
                 self.in_free_ride = false;
                 self.last_target = Some(w);
@@ -276,14 +298,14 @@ impl Engine {
     }
 
     /// Fire every not-yet-fired text event whose offset has been reached.
-    fn fire_texts(&mut self, fx: &mut Vec<Effect>) {
+    fn fire_texts(&mut self, actions: &mut Vec<EngineAction>) {
         let cap = self.active_ms.min(self.total_ms());
         while self.next_text < self.workout.text_events.len() {
             let ev = &self.workout.text_events[self.next_text];
             if text_offset_ms(ev) > cap {
                 break;
             }
-            fx.push(Effect::ShowText(ev.clone()));
+            actions.push(EngineAction::ShowText(ev.clone()));
             self.next_text += 1;
         }
     }
@@ -359,8 +381,8 @@ mod tests {
         }
     }
 
-    fn tick(e: &mut Engine) -> Vec<Effect> {
-        e.handle(Input::Tick { dt_ms: 250 })
+    fn tick(e: &mut Engine) -> Vec<EngineAction> {
+        e.step(EngineEvent::Tick { dt_ms: 250 })
     }
 
     // ---- Start ----
@@ -369,8 +391,14 @@ mod tests {
     fn start_emits_trainer_start_and_initial_target() {
         let mut e = Engine::new(wk(vec![steady(60, 150)]), 250, 1.0);
         assert_eq!(e.phase(), Phase::Ready);
-        let fx = e.handle(Input::Start);
-        assert_eq!(fx, vec![Effect::TrainerStart, Effect::SetTarget(150)]);
+        let actions = e.step(EngineEvent::Start);
+        assert_eq!(
+            actions,
+            vec![
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 150 }
+            ]
+        );
         assert_eq!(e.phase(), Phase::Riding);
         assert_eq!(e.segment_index(), Some(0));
     }
@@ -378,21 +406,24 @@ mod tests {
     #[test]
     fn start_into_freeride_emits_enter_freeride() {
         let mut e = Engine::new(wk(vec![free(60)]), 250, 1.0);
-        let fx = e.handle(Input::Start);
-        assert_eq!(fx, vec![Effect::TrainerStart, Effect::EnterFreeRide]);
+        let actions = e.step(EngineEvent::Start);
+        assert_eq!(
+            actions,
+            vec![EngineAction::StartTrainer, EngineAction::EnterFreeRide]
+        );
     }
 
     #[test]
     fn start_fires_offset_zero_text_event() {
         let ev = text(0, "hello");
         let mut e = Engine::new(wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]), 250, 1.0);
-        let fx = e.handle(Input::Start);
+        let actions = e.step(EngineEvent::Start);
         assert_eq!(
-            fx,
+            actions,
             vec![
-                Effect::TrainerStart,
-                Effect::SetTarget(100),
-                Effect::ShowText(ev)
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 100 },
+                EngineAction::ShowText(ev)
             ]
         );
         // Does not fire again.
@@ -402,13 +433,13 @@ mod tests {
     #[test]
     fn start_on_empty_workout_completes_immediately() {
         let mut e = Engine::new(wk(vec![]), 250, 1.0);
-        let fx = e.handle(Input::Start);
+        let actions = e.step(EngineEvent::Start);
         assert_eq!(
-            fx,
+            actions,
             vec![
-                Effect::TrainerStart,
-                Effect::WorkoutComplete,
-                Effect::TrainerReset
+                EngineAction::StartTrainer,
+                EngineAction::CompleteWorkout,
+                EngineAction::ResetTrainer
             ]
         );
         assert_eq!(e.phase(), Phase::Finished);
@@ -421,12 +452,24 @@ mod tests {
         // 100 -> 108 W over 2 s => +4 W/s => +1 W per 250 ms tick.
         let mut e = Engine::new(wk(vec![ramp(2, 100, 108)]), 250, 1.0);
         assert_eq!(
-            e.handle(Input::Start),
-            vec![Effect::TrainerStart, Effect::SetTarget(100)]
+            e.step(EngineEvent::Start),
+            vec![
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 100 }
+            ]
         );
-        assert_eq!(tick(&mut e), vec![Effect::SetTarget(101)]);
-        assert_eq!(tick(&mut e), vec![Effect::SetTarget(102)]);
-        assert_eq!(tick(&mut e), vec![Effect::SetTarget(103)]);
+        assert_eq!(
+            tick(&mut e),
+            vec![EngineAction::SetTargetPower { watts: 101 }]
+        );
+        assert_eq!(
+            tick(&mut e),
+            vec![EngineAction::SetTargetPower { watts: 102 }]
+        );
+        assert_eq!(
+            tick(&mut e),
+            vec![EngineAction::SetTargetPower { watts: 103 }]
+        );
     }
 
     #[test]
@@ -434,19 +477,25 @@ mod tests {
         // 100 -> 104 W over 4 s => +0.25 W per 250 ms tick; the rounded
         // value changes only when crossing a .5 boundary.
         let mut e = Engine::new(wk(vec![ramp(4, 100, 104)]), 250, 1.0);
-        e.handle(Input::Start); // SetTarget(100)
+        e.step(EngineEvent::Start); // SetTargetPower { watts: 100 }
         assert_eq!(tick(&mut e), vec![]); // 100.25 -> 100
-        assert_eq!(tick(&mut e), vec![Effect::SetTarget(101)]); // 100.5 -> 101
+        assert_eq!(
+            tick(&mut e),
+            vec![EngineAction::SetTargetPower { watts: 101 }]
+        ); // 100.5 -> 101
         assert_eq!(tick(&mut e), vec![]); // 100.75 -> 101
         assert_eq!(tick(&mut e), vec![]); // 101.0 -> 101
         assert_eq!(tick(&mut e), vec![]); // 101.25 -> 101
-        assert_eq!(tick(&mut e), vec![Effect::SetTarget(102)]); // 101.5 -> 102
+        assert_eq!(
+            tick(&mut e),
+            vec![EngineAction::SetTargetPower { watts: 102 }]
+        ); // 101.5 -> 102
     }
 
     #[test]
     fn steady_segment_ticks_emit_nothing() {
         let mut e = Engine::new(wk(vec![steady(10, 200)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         for _ in 0..8 {
             assert_eq!(tick(&mut e), vec![]);
         }
@@ -456,16 +505,22 @@ mod tests {
     // ---- Segment rollover ----
 
     #[test]
-    fn rollover_emits_lap_boundary_and_new_target() {
+    fn rollover_finalizes_segment_and_emits_new_target() {
         let mut e = Engine::new(wk(vec![steady(1, 100), steady(1, 150)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         assert_eq!(tick(&mut e), vec![]);
         assert_eq!(tick(&mut e), vec![]);
         assert_eq!(tick(&mut e), vec![]);
         // 4th tick reaches t = 1000 ms: boundary.
         assert_eq!(
             tick(&mut e),
-            vec![Effect::LapBoundary { seg_idx: 0 }, Effect::SetTarget(150)]
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::SetTargetPower { watts: 150 },
+            ]
         );
         assert_eq!(e.segment_index(), Some(1));
     }
@@ -473,28 +528,40 @@ mod tests {
     #[test]
     fn rollover_emits_target_even_when_watts_unchanged() {
         let mut e = Engine::new(wk(vec![steady(1, 100), steady(1, 100)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         for _ in 0..3 {
             tick(&mut e);
         }
         assert_eq!(
             tick(&mut e),
-            vec![Effect::LapBoundary { seg_idx: 0 }, Effect::SetTarget(100)]
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::SetTargetPower { watts: 100 },
+            ]
         );
     }
 
     #[test]
     fn huge_tick_crosses_multiple_boundaries_and_finishes() {
         let mut e = Engine::new(wk(vec![steady(1, 100), steady(1, 150)]), 250, 1.0);
-        e.handle(Input::Start);
-        let fx = e.handle(Input::Tick { dt_ms: 5000 });
+        e.step(EngineEvent::Start);
+        let actions = e.step(EngineEvent::Tick { dt_ms: 5000 });
         assert_eq!(
-            fx,
+            actions,
             vec![
-                Effect::LapBoundary { seg_idx: 0 },
-                Effect::LapBoundary { seg_idx: 1 },
-                Effect::WorkoutComplete,
-                Effect::TrainerReset
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::FinalizeSegment {
+                    segment_index: 1,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::CompleteWorkout,
+                EngineAction::ResetTrainer
             ]
         );
         assert_eq!(e.phase(), Phase::Finished);
@@ -507,15 +574,21 @@ mod tests {
     #[test]
     fn freeride_entry_emits_enter_freeride_and_no_targets_inside() {
         let mut e = Engine::new(wk(vec![steady(1, 100), free(2)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         for _ in 0..3 {
             assert_eq!(tick(&mut e), vec![]);
         }
         assert_eq!(
             tick(&mut e),
-            vec![Effect::LapBoundary { seg_idx: 0 }, Effect::EnterFreeRide]
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::EnterFreeRide,
+            ]
         );
-        // No SetTarget (and no repeated EnterFreeRide) inside FreeRide.
+        // No SetTargetPower (and no repeated EnterFreeRide) inside FreeRide.
         for _ in 0..7 {
             assert_eq!(tick(&mut e), vec![]);
         }
@@ -524,13 +597,19 @@ mod tests {
     #[test]
     fn leaving_freeride_reemits_erg_target() {
         let mut e = Engine::new(wk(vec![free(1), steady(1, 100)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         for _ in 0..3 {
             tick(&mut e);
         }
         assert_eq!(
             tick(&mut e),
-            vec![Effect::LapBoundary { seg_idx: 0 }, Effect::SetTarget(100)]
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::SetTargetPower { watts: 100 },
+            ]
         );
     }
 
@@ -539,18 +618,21 @@ mod tests {
     #[test]
     fn pause_resume_cycle() {
         let mut e = Engine::new(wk(vec![steady(10, 180)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         tick(&mut e);
-        assert_eq!(e.handle(Input::Pause), vec![Effect::TrainerStop]);
+        assert_eq!(e.step(EngineEvent::Pause), vec![EngineAction::StopTrainer]);
         assert_eq!(e.phase(), Phase::Paused);
-        // Ticks ignored while paused: no effects, no time advance.
+        // Ticks ignored while paused: no actions, no time advance.
         assert_eq!(tick(&mut e), vec![]);
         assert_eq!(tick(&mut e), vec![]);
         assert_eq!(e.active_ms(), 250);
         // Resume re-emits the current target even though it is unchanged.
         assert_eq!(
-            e.handle(Input::Resume),
-            vec![Effect::TrainerStart, Effect::SetTarget(180)]
+            e.step(EngineEvent::Resume),
+            vec![
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 180 }
+            ]
         );
         assert_eq!(e.phase(), Phase::Riding);
     }
@@ -558,11 +640,11 @@ mod tests {
     #[test]
     fn resume_inside_freeride_reenters_freeride() {
         let mut e = Engine::new(wk(vec![free(10)]), 250, 1.0);
-        e.handle(Input::Start);
-        e.handle(Input::Pause);
+        e.step(EngineEvent::Start);
+        e.step(EngineEvent::Pause);
         assert_eq!(
-            e.handle(Input::Resume),
-            vec![Effect::TrainerStart, Effect::EnterFreeRide]
+            e.step(EngineEvent::Resume),
+            vec![EngineAction::StartTrainer, EngineAction::EnterFreeRide]
         );
     }
 
@@ -571,12 +653,18 @@ mod tests {
     #[test]
     fn skip_mid_segment_jumps_to_next_boundary() {
         let mut e = Engine::new(wk(vec![steady(10, 100), steady(10, 200)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         tick(&mut e); // t = 250 ms, mid-segment
-        let fx = e.handle(Input::SkipSegment);
+        let actions = e.step(EngineEvent::SkipSegment);
         assert_eq!(
-            fx,
-            vec![Effect::LapBoundary { seg_idx: 0 }, Effect::SetTarget(200)]
+            actions,
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Skipped,
+                },
+                EngineAction::SetTargetPower { watts: 200 },
+            ]
         );
         assert_eq!(e.active_ms(), 10_000); // jumped to boundary
         assert_eq!(e.segment_index(), Some(1));
@@ -586,9 +674,9 @@ mod tests {
     #[test]
     fn skip_does_not_credit_ridden_time() {
         let mut e = Engine::new(wk(vec![steady(10, 100), steady(10, 200)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         tick(&mut e); // 250 ms actually ridden
-        e.handle(Input::SkipSegment); // position jumps 9.75 s, the rider does not
+        e.step(EngineEvent::SkipSegment); // position jumps 9.75 s, the rider does not
         assert_eq!(e.active_ms(), 10_000);
         assert_eq!(e.ridden_ms(), 250);
         tick(&mut e);
@@ -596,14 +684,41 @@ mod tests {
     }
 
     #[test]
+    fn skip_while_paused_advances_and_stays_paused() {
+        let mut e = Engine::new(wk(vec![steady(10, 100), steady(10, 200)]), 250, 1.0);
+        e.step(EngineEvent::Start);
+        tick(&mut e);
+        e.step(EngineEvent::Pause);
+
+        assert_eq!(
+            e.step(EngineEvent::SkipSegment),
+            vec![EngineAction::FinalizeSegment {
+                segment_index: 0,
+                reason: SegmentEndReason::Skipped,
+            }]
+        );
+        assert_eq!(e.active_ms(), 10_000);
+        assert_eq!(e.ridden_ms(), 250);
+        assert_eq!(e.segment_index(), Some(1));
+        assert_eq!(e.phase(), Phase::Paused);
+        assert_eq!(
+            e.step(EngineEvent::Resume),
+            vec![
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 200 }
+            ]
+        );
+    }
+
+    #[test]
     fn pausing_does_not_advance_ridden_time() {
         let mut e = Engine::new(wk(vec![steady(10, 100)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         tick(&mut e);
-        e.handle(Input::Pause);
+        e.step(EngineEvent::Pause);
         tick(&mut e); // ignored while paused
         assert_eq!(e.ridden_ms(), 250);
-        e.handle(Input::Resume);
+        e.step(EngineEvent::Resume);
         tick(&mut e);
         assert_eq!(e.ridden_ms(), 500);
     }
@@ -611,21 +726,24 @@ mod tests {
     #[test]
     fn skip_on_last_segment_ends_the_workout() {
         let mut e = Engine::new(wk(vec![steady(10, 100)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         tick(&mut e);
-        let fx = e.handle(Input::SkipSegment);
+        let actions = e.step(EngineEvent::SkipSegment);
         assert_eq!(
-            fx,
+            actions,
             vec![
-                Effect::LapBoundary { seg_idx: 0 },
-                Effect::WorkoutComplete,
-                Effect::TrainerReset
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Skipped,
+                },
+                EngineAction::CompleteWorkout,
+                EngineAction::ResetTrainer
             ]
         );
         assert_eq!(e.phase(), Phase::Finished);
         // Everything is ignored once finished.
         assert_eq!(tick(&mut e), vec![]);
-        assert_eq!(e.handle(Input::SkipSegment), vec![]);
+        assert_eq!(e.step(EngineEvent::SkipSegment), vec![]);
     }
 
     #[test]
@@ -637,14 +755,16 @@ mod tests {
             250,
             1.0,
         );
-        e.handle(Input::Start);
-        let fx = e.handle(Input::SkipSegment);
-        assert!(!fx.iter().any(|f| matches!(f, Effect::ShowText(_))));
+        e.step(EngineEvent::Start);
+        let actions = e.step(EngineEvent::SkipSegment);
+        assert!(!actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::ShowText(_))));
         // Ride to t = 12 s of active time (boundary was 10 s): event fires once.
         for _ in 0..7 {
             assert_eq!(tick(&mut e), vec![]);
         }
-        assert_eq!(tick(&mut e), vec![Effect::ShowText(later)]);
+        assert_eq!(tick(&mut e), vec![EngineAction::ShowText(later)]);
     }
 
     // ---- SetIntensity ----
@@ -652,51 +772,66 @@ mod tests {
     #[test]
     fn set_intensity_retargets_percent_segments_immediately() {
         let mut e = Engine::new(wk(vec![steady_pct(60, 0.8)]), 250, 1.0);
-        e.handle(Input::Start); // 0.8 * 250 = 200 W
-        assert_eq!(e.handle(Input::SetIntensity(1.1)), vec![Effect::SetTarget(220)]);
+        e.step(EngineEvent::Start); // 0.8 * 250 = 200 W
+        assert_eq!(
+            e.step(EngineEvent::SetIntensity(1.1)),
+            vec![EngineAction::SetTargetPower { watts: 220 }]
+        );
         assert!((e.intensity() - 1.1).abs() < 1e-12);
     }
 
     #[test]
     fn set_intensity_clamps_to_bounds() {
         let mut e = Engine::new(wk(vec![steady_pct(60, 1.0)]), 200, 1.0);
-        e.handle(Input::Start); // 200 W
-        assert_eq!(e.handle(Input::SetIntensity(9.0)), vec![Effect::SetTarget(300)]);
+        e.step(EngineEvent::Start); // 200 W
+        assert_eq!(
+            e.step(EngineEvent::SetIntensity(9.0)),
+            vec![EngineAction::SetTargetPower { watts: 300 }]
+        );
         assert_eq!(e.intensity(), INTENSITY_MAX);
-        assert_eq!(e.handle(Input::SetIntensity(0.01)), vec![Effect::SetTarget(100)]);
+        assert_eq!(
+            e.step(EngineEvent::SetIntensity(0.01)),
+            vec![EngineAction::SetTargetPower { watts: 100 }]
+        );
         assert_eq!(e.intensity(), INTENSITY_MIN);
     }
 
     #[test]
     fn set_intensity_noop_when_target_unchanged() {
-        // Absolute-watt targets ignore intensity: no SetTarget.
+        // Absolute-watt targets ignore intensity: no SetTargetPower.
         let mut e = Engine::new(wk(vec![steady(60, 150)]), 250, 1.0);
-        e.handle(Input::Start);
-        assert_eq!(e.handle(Input::SetIntensity(1.2)), vec![]);
+        e.step(EngineEvent::Start);
+        assert_eq!(e.step(EngineEvent::SetIntensity(1.2)), vec![]);
         assert!((e.intensity() - 1.2).abs() < 1e-12);
         // Same clamped value twice on a percent segment: second is a no-op.
         let mut e2 = Engine::new(wk(vec![steady_pct(60, 1.0)]), 200, 1.0);
-        e2.handle(Input::Start);
-        assert_eq!(e2.handle(Input::SetIntensity(1.1)), vec![Effect::SetTarget(220)]);
-        assert_eq!(e2.handle(Input::SetIntensity(1.1)), vec![]);
+        e2.step(EngineEvent::Start);
+        assert_eq!(
+            e2.step(EngineEvent::SetIntensity(1.1)),
+            vec![EngineAction::SetTargetPower { watts: 220 }]
+        );
+        assert_eq!(e2.step(EngineEvent::SetIntensity(1.1)), vec![]);
     }
 
     #[test]
     fn set_intensity_in_freeride_emits_nothing() {
         let mut e = Engine::new(wk(vec![free(60)]), 250, 1.0);
-        e.handle(Input::Start);
-        assert_eq!(e.handle(Input::SetIntensity(1.2)), vec![]);
+        e.step(EngineEvent::Start);
+        assert_eq!(e.step(EngineEvent::SetIntensity(1.2)), vec![]);
     }
 
     #[test]
     fn set_intensity_while_paused_updates_and_applies_on_resume() {
         let mut e = Engine::new(wk(vec![steady_pct(60, 1.0)]), 200, 1.0);
-        e.handle(Input::Start); // 200 W
-        e.handle(Input::Pause);
-        assert_eq!(e.handle(Input::SetIntensity(1.25)), vec![]);
+        e.step(EngineEvent::Start); // 200 W
+        e.step(EngineEvent::Pause);
+        assert_eq!(e.step(EngineEvent::SetIntensity(1.25)), vec![]);
         assert_eq!(
-            e.handle(Input::Resume),
-            vec![Effect::TrainerStart, Effect::SetTarget(250)]
+            e.step(EngineEvent::Resume),
+            vec![
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 250 }
+            ]
         );
     }
 
@@ -712,11 +847,11 @@ mod tests {
     fn text_event_fires_exactly_once_at_offset() {
         let ev = text(1, "go");
         let mut e = Engine::new(wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         assert_eq!(tick(&mut e), vec![]); // 250
         assert_eq!(tick(&mut e), vec![]); // 500
         assert_eq!(tick(&mut e), vec![]); // 750
-        assert_eq!(tick(&mut e), vec![Effect::ShowText(ev)]); // 1000
+        assert_eq!(tick(&mut e), vec![EngineAction::ShowText(ev)]); // 1000
         for _ in 0..8 {
             assert_eq!(tick(&mut e), vec![]);
         }
@@ -726,17 +861,17 @@ mod tests {
     fn text_event_does_not_fire_during_pause() {
         let ev = text(1, "go");
         let mut e = Engine::new(wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         tick(&mut e); // 250
         tick(&mut e); // 500
-        e.handle(Input::Pause);
+        e.step(EngineEvent::Pause);
         // Wall-clock time passes but active time does not: no fire.
         for _ in 0..10 {
             assert_eq!(tick(&mut e), vec![]);
         }
-        e.handle(Input::Resume);
+        e.step(EngineEvent::Resume);
         assert_eq!(tick(&mut e), vec![]); // 750
-        assert_eq!(tick(&mut e), vec![Effect::ShowText(ev)]); // 1000 active
+        assert_eq!(tick(&mut e), vec![EngineAction::ShowText(ev)]); // 1000 active
     }
 
     #[test]
@@ -749,12 +884,16 @@ mod tests {
             250,
             1.0,
         );
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         // One big tick past both offsets: all fire, in order, once.
-        let fx = e.handle(Input::Tick { dt_ms: 2000 });
+        let actions = e.step(EngineEvent::Tick { dt_ms: 2000 });
         assert_eq!(
-            fx,
-            vec![Effect::ShowText(a), Effect::ShowText(b), Effect::ShowText(c)]
+            actions,
+            vec![
+                EngineAction::ShowText(a),
+                EngineAction::ShowText(b),
+                EngineAction::ShowText(c),
+            ]
         );
         assert_eq!(tick(&mut e), vec![]);
     }
@@ -764,16 +903,19 @@ mod tests {
     #[test]
     fn natural_completion_emits_complete_and_reset() {
         let mut e = Engine::new(wk(vec![steady(1, 120)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         for _ in 0..3 {
             assert_eq!(tick(&mut e), vec![]);
         }
         assert_eq!(
             tick(&mut e),
             vec![
-                Effect::LapBoundary { seg_idx: 0 },
-                Effect::WorkoutComplete,
-                Effect::TrainerReset
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::CompleteWorkout,
+                EngineAction::ResetTrainer
             ]
         );
         assert_eq!(e.phase(), Phase::Finished);
@@ -782,71 +924,70 @@ mod tests {
     }
 
     #[test]
-    fn end_input_finishes_from_riding_and_paused() {
+    fn end_event_finishes_from_riding_and_paused() {
         let mut e = Engine::new(wk(vec![steady(60, 100)]), 250, 1.0);
-        e.handle(Input::Start);
+        e.step(EngineEvent::Start);
         tick(&mut e);
         assert_eq!(
-            e.handle(Input::End),
-            vec![Effect::WorkoutComplete, Effect::TrainerReset]
+            e.step(EngineEvent::End),
+            vec![EngineAction::CompleteWorkout, EngineAction::ResetTrainer]
         );
         assert_eq!(e.phase(), Phase::Finished);
         // Early end keeps the actual active time (no clamp to total).
         assert_eq!(e.active_ms(), 250);
 
         let mut e2 = Engine::new(wk(vec![steady(60, 100)]), 250, 1.0);
-        e2.handle(Input::Start);
-        e2.handle(Input::Pause);
+        e2.step(EngineEvent::Start);
+        e2.step(EngineEvent::Pause);
         assert_eq!(
-            e2.handle(Input::End),
-            vec![Effect::WorkoutComplete, Effect::TrainerReset]
+            e2.step(EngineEvent::End),
+            vec![EngineAction::CompleteWorkout, EngineAction::ResetTrainer]
         );
         assert_eq!(e2.phase(), Phase::Finished);
     }
 
-    // ---- Phase-invalid inputs ----
+    // ---- Phase-invalid events ----
 
     #[test]
-    fn phase_invalid_inputs_are_ignored() {
+    fn phase_invalid_events_are_ignored() {
         // Ready: everything except Start/SetIntensity is invalid.
         let mut e = Engine::new(wk(vec![steady(60, 100)]), 250, 1.0);
-        assert_eq!(e.handle(Input::Pause), vec![]);
-        assert_eq!(e.handle(Input::Resume), vec![]);
-        assert_eq!(e.handle(Input::SkipSegment), vec![]);
+        assert_eq!(e.step(EngineEvent::Pause), vec![]);
+        assert_eq!(e.step(EngineEvent::Resume), vec![]);
+        assert_eq!(e.step(EngineEvent::SkipSegment), vec![]);
         assert_eq!(tick(&mut e), vec![]);
-        assert_eq!(e.handle(Input::End), vec![]);
+        assert_eq!(e.step(EngineEvent::End), vec![]);
         assert_eq!(e.phase(), Phase::Ready);
         assert_eq!(e.active_ms(), 0);
 
         // Riding: Start and Resume are invalid.
-        e.handle(Input::Start);
-        assert_eq!(e.handle(Input::Start), vec![]);
-        assert_eq!(e.handle(Input::Resume), vec![]);
+        e.step(EngineEvent::Start);
+        assert_eq!(e.step(EngineEvent::Start), vec![]);
+        assert_eq!(e.step(EngineEvent::Resume), vec![]);
 
-        // Paused: Start, Pause, SkipSegment, Tick are invalid.
-        e.handle(Input::Pause);
-        assert_eq!(e.handle(Input::Start), vec![]);
-        assert_eq!(e.handle(Input::Pause), vec![]);
-        assert_eq!(e.handle(Input::SkipSegment), vec![]);
+        // Paused: Start, Pause, and Tick are invalid.
+        e.step(EngineEvent::Pause);
+        assert_eq!(e.step(EngineEvent::Start), vec![]);
+        assert_eq!(e.step(EngineEvent::Pause), vec![]);
         assert_eq!(tick(&mut e), vec![]);
         assert_eq!(e.phase(), Phase::Paused);
 
         // Finished: everything is invalid.
-        e.handle(Input::End);
+        e.step(EngineEvent::End);
         assert_eq!(e.phase(), Phase::Finished);
-        assert_eq!(e.handle(Input::Start), vec![]);
-        assert_eq!(e.handle(Input::Pause), vec![]);
-        assert_eq!(e.handle(Input::Resume), vec![]);
-        assert_eq!(e.handle(Input::SkipSegment), vec![]);
-        assert_eq!(e.handle(Input::SetIntensity(1.2)), vec![]);
+        assert_eq!(e.step(EngineEvent::Start), vec![]);
+        assert_eq!(e.step(EngineEvent::Pause), vec![]);
+        assert_eq!(e.step(EngineEvent::Resume), vec![]);
+        assert_eq!(e.step(EngineEvent::SkipSegment), vec![]);
+        assert_eq!(e.step(EngineEvent::SetIntensity(1.2)), vec![]);
         assert_eq!(tick(&mut e), vec![]);
-        assert_eq!(e.handle(Input::End), vec![]);
+        assert_eq!(e.step(EngineEvent::End), vec![]);
     }
 
     // ---- Full workout end-to-end snapshot ----
 
     #[test]
-    fn full_small_workout_effect_stream_snapshot() {
+    fn full_small_workout_action_stream_snapshot() {
         let hello = text(0, "hello");
         let go = text(1, "go");
         let w = wk_with_texts(
@@ -855,45 +996,57 @@ mod tests {
         );
         let mut e = Engine::new(w, 250, 1.0);
 
-        let mut stream: Vec<Vec<Effect>> = Vec::new();
-        stream.push(e.handle(Input::Start));
+        let mut stream: Vec<Vec<EngineAction>> = Vec::new();
+        stream.push(e.step(EngineEvent::Start));
         for _ in 0..16 {
             stream.push(tick(&mut e));
         }
 
-        let expected: Vec<Vec<Effect>> = vec![
+        let expected: Vec<Vec<EngineAction>> = vec![
             // Start
             vec![
-                Effect::TrainerStart,
-                Effect::SetTarget(100),
-                Effect::ShowText(hello),
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 100 },
+                EngineAction::ShowText(hello),
             ],
             vec![], // t=250
             vec![], // t=500
             vec![], // t=750
             // t=1000: text at offset 1 s, boundary into ramp (start 100 W).
             vec![
-                Effect::ShowText(go),
-                Effect::LapBoundary { seg_idx: 0 },
-                Effect::SetTarget(100),
+                EngineAction::ShowText(go),
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::SetTargetPower { watts: 100 },
             ],
-            vec![Effect::SetTarget(101)], // t=1250 (250 ms into 4 W/s ramp)
-            vec![Effect::SetTarget(102)], // t=1500
-            vec![Effect::SetTarget(103)], // t=1750
-            vec![Effect::SetTarget(104)], // t=2000
-            vec![Effect::SetTarget(105)], // t=2250
-            vec![Effect::SetTarget(106)], // t=2500
-            vec![Effect::SetTarget(107)], // t=2750
+            vec![EngineAction::SetTargetPower { watts: 101 }], // t=1250 (250 ms into 4 W/s ramp)
+            vec![EngineAction::SetTargetPower { watts: 102 }], // t=1500
+            vec![EngineAction::SetTargetPower { watts: 103 }], // t=1750
+            vec![EngineAction::SetTargetPower { watts: 104 }], // t=2000
+            vec![EngineAction::SetTargetPower { watts: 105 }], // t=2250
+            vec![EngineAction::SetTargetPower { watts: 106 }], // t=2500
+            vec![EngineAction::SetTargetPower { watts: 107 }], // t=2750
             // t=3000: boundary into FreeRide.
-            vec![Effect::LapBoundary { seg_idx: 1 }, Effect::EnterFreeRide],
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 1,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::EnterFreeRide,
+            ],
             vec![], // t=3250
             vec![], // t=3500
             vec![], // t=3750
             // t=4000: workout complete.
             vec![
-                Effect::LapBoundary { seg_idx: 2 },
-                Effect::WorkoutComplete,
-                Effect::TrainerReset,
+                EngineAction::FinalizeSegment {
+                    segment_index: 2,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::CompleteWorkout,
+                EngineAction::ResetTrainer,
             ],
         ];
         assert_eq!(stream, expected);
