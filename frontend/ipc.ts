@@ -2,7 +2,15 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-export type Role = "trainer" | "hrm";
+export type Role = "trainer" | "hrm" | "controller";
+export type ControllerSource = "trainer_controls" | "paired_controller" | "disabled";
+export type ControllerProfile = "wahoo_virtual_bike" | "zwift_ride";
+export type ControllerButton = "left_steer" | "right_steer" | "left_up" | "left_down" | "right_up" | "right_down" | "left_shift_up" | "left_shift_down" | "right_shift_up" | "right_shift_down" | "left_brake" | "right_brake" | "dpad_up" | "dpad_down" | "dpad_left" | "dpad_right" | "a" | "b" | "y" | "z" | "left_power" | "right_power" | "left_on_off" | "right_on_off";
+export interface ControllerInputEvent {
+  generation: number;
+  profile: ControllerProfile | null;
+  event: { kind: "button"; button: ControllerButton; pressed: boolean } | { kind: "cancel" };
+}
 
 export interface WorkoutSummary {
   id: string;
@@ -47,6 +55,9 @@ export interface DeviceSlot {
   saved_name: string | null;
   saved_platform_id: string | null;
   connected: boolean;
+  controller_source: ControllerSource | null;
+  controller_profile: ControllerProfile | null;
+  error: string | null;
 }
 
 export interface ScanResult {
@@ -291,6 +302,7 @@ export const ipc = {
     invoke<void>("connect_device", { role, platformId, name }),
   disconnectDevice: (role: Role) => invoke<void>("disconnect_device", { role }),
   forgetDevice: (role: Role) => invoke<void>("forget_device", { role }),
+  setControllerSource: (source: Exclude<ControllerSource, "paired_controller">) => invoke<void>("set_controller_source", { source }),
   getDeviceState: () => invoke<DeviceSlot[]>("get_device_state"),
 
   loadWorkout: (id: string, scheduledWorkoutId: string | null = null) =>

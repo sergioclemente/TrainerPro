@@ -6,6 +6,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
+use crate::{zwift_ride_protocol, ZwiftRideConnection};
 use btleplug::api::bleuuid::uuid_from_u16;
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager as BtleManager, Peripheral};
@@ -13,6 +14,7 @@ use serde::Serialize;
 use tokio::sync::{watch, Mutex, OnceCell, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::time::{sleep, Duration};
 use tracing::debug;
+use uuid::Uuid;
 
 use crate::ble_heart_rate_connection::BleHeartRateConnection;
 use crate::codec;
@@ -23,13 +25,14 @@ const SCAN_POLLS_PER_SECOND: u64 = 2;
 const SCAN_POLL_INTERVAL_MS: u64 = 500;
 const CONNECT_SCAN_DURATION_S: u64 = 12;
 const SCAN_SETTLE_MS: u64 = 300;
-const DISCOVERABLE_ROLES: [Role; 2] = [Role::Trainer, Role::Hrm];
+const DISCOVERABLE_ROLES: [Role; 3] = [Role::Trainer, Role::Hrm, Role::Controller];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Trainer,
     Hrm,
+    Controller,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,10 +45,14 @@ pub enum ConnectionPriority {
 }
 
 impl Role {
-    fn service_u16(self) -> u16 {
+    fn services(self) -> Vec<Uuid> {
         match self {
-            Role::Trainer => codec::SVC_FTMS,
-            Role::Hrm => codec::SVC_HEART_RATE,
+            Role::Trainer => vec![uuid_from_u16(codec::SVC_FTMS)],
+            Role::Hrm => vec![uuid_from_u16(codec::SVC_HEART_RATE)],
+            Role::Controller => vec![
+                uuid_from_u16(zwift_ride_protocol::CURRENT_SERVICE_UUID),
+                Uuid::from_u128(zwift_ride_protocol::LEGACY_SERVICE_UUID),
+            ],
         }
     }
 }
@@ -269,9 +276,10 @@ impl DeviceManager {
 
         let mut services = Vec::new();
         for (role, _) in targets {
-            let service = uuid_from_u16(role.service_u16());
-            if !services.contains(&service) {
-                services.push(service);
+            for service in role.services() {
+                if !services.contains(&service) {
+                    services.push(service);
+                }
             }
         }
         adapter
@@ -320,7 +328,7 @@ impl DeviceManager {
         let filter = ScanFilter {
             services: DISCOVERABLE_ROLES
                 .iter()
-                .map(|role| uuid_from_u16(role.service_u16()))
+                .flat_map(|role| role.services())
                 .collect(),
         };
         adapter
@@ -348,9 +356,19 @@ impl DeviceManager {
                     };
                     let name = properties.local_name.unwrap_or_else(|| "(unnamed)".into());
                     for role in DISCOVERABLE_ROLES {
-                        if !properties
-                            .services
-                            .contains(&uuid_from_u16(role.service_u16()))
+                        if !role
+                            .services()
+                            .iter()
+                            .any(|service| properties.services.contains(service))
+                        {
+                            continue;
+                        }
+                        if role == Role::Controller
+                            && !properties
+                                .manufacturer_data
+                                .get(&zwift_ride_protocol::ZWIFT_COMPANY_ID)
+                                .and_then(|data| data.first())
+                                .is_some_and(|kind| zwift_ride_protocol::is_left_device_type(*kind))
                         {
                             continue;
                         }
@@ -489,6 +507,47 @@ impl DeviceManager {
         BleHeartRateConnection::connect(adapter.clone(), peripheral).await
     }
 
+    pub async fn connect_zwift_ride(
+        &self,
+        platform_id: &str,
+        priority: ConnectionPriority,
+    ) -> Result<ZwiftRideConnection, BleError> {
+        let operation = self.operations.begin_connection(priority).await;
+        let adapter = self.adapter().await?;
+        let (peripheral, _setup) = match Self::find(adapter, platform_id).await {
+            Ok(peripheral) => (peripheral, operation),
+            Err(_) => {
+                if priority == ConnectionPriority::Startup {
+                    return Err(BleError::NotFound);
+                }
+                drop(operation);
+                let (discovery, session) = self
+                    .operations
+                    .begin_connection_discovery(
+                        priority,
+                        priority == ConnectionPriority::Background,
+                    )
+                    .await;
+                let active_scan = ActiveScan {
+                    operations: &self.operations,
+                    session: session.clone(),
+                };
+                let peripheral = self
+                    .find_with_scan(
+                        adapter,
+                        Role::Controller,
+                        platform_id,
+                        CONNECT_SCAN_DURATION_S,
+                        session.stop.clone(),
+                    )
+                    .await?;
+                drop(active_scan);
+                (peripheral, Some(RwLockWriteGuard::downgrade(discovery)))
+            }
+        };
+        ZwiftRideConnection::connect(adapter.clone(), peripheral).await
+    }
+
     /// Resolve a platform id, scanning until it appears or the bound expires.
     /// This targeted scan runs inside the connection's exclusive setup guard.
     async fn find_with_scan(
@@ -503,7 +562,7 @@ impl DeviceManager {
             return Ok(peripheral);
         }
         let filter = ScanFilter {
-            services: vec![uuid_from_u16(role.service_u16())],
+            services: role.services(),
         };
         adapter
             .start_scan(filter)

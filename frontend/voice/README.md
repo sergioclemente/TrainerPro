@@ -6,7 +6,7 @@
 ## Flow
 
 ```text
-microphone -> Moonshine worker -> completed transcript
+PTT hold -> microphone -> Moonshine worker -> release-finalized transcript
                                       |
 partial text -> composer              v
                              semantic worker -> intent
@@ -48,3 +48,9 @@ Run `npm run test:frontend` for focused tests. Run
 `npm run voice:conformance` for model-backed routing checks against the
 registry-derived cases and curated corpus; it checks text routing, not microphone
 or transcription accuracy.
+
+Capture is hold-to-talk. Space and mapped controller edges call the provider's
+begin/finish/cancel API. Speech pauses do not route commands. Finish retains
+worker flush callbacks; cancel invalidates them. Idle keeps models ready while
+releasing the microphone. A controller hold permits an unfocused visible Player;
+a keyboard hold requires focus. Input loss cancels rather than submitting.

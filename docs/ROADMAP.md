@@ -18,7 +18,7 @@ in [SPEC.md](SPEC.md), not here. This roadmap has no date commitments.
 
 ## Voice follow-ups
 
-These are follow-ups to the disabled-by-default MVP, not additional release gates.
+These are follow-ups, not additional release gates.
 
 - Complete the [spoken-command](../backend/tests/e2e/scenarios/voice-player-simulated-workout.md)
   and [runtime-discontinuity](../backend/tests/e2e/scenarios/voice-runtime-discontinuities.md)
