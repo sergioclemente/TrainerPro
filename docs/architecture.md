@@ -18,7 +18,7 @@ flowchart TD
     APP --> CORE[tp-core]
     APP --> HUB[Device hub]
     HUB --> MANAGER[tp-ble DeviceManager]
-    MANAGER --> TRAITS[TrainerConnection / HeartRateConnection]
+    MANAGER --> TRAITS[TrainerConnection / HeartRateConnection / StandaloneControllerConnection]
     TRAITS --> BLE[FTMS + HRM drivers]
     TRAITS --> SIM[Simulators]
     CORE --> TPW[TPW validation + compilation]
@@ -47,13 +47,21 @@ wall-clock access. It owns:
 
 `tp-ble` owns transport behavior. `DeviceManager` serializes adapter
 initialization, scanning, scan cancellation, and connection setup. Hardware is
-exposed only through `TrainerConnection` and `HeartRateConnection`; simulators
-implement the same contracts.
+exposed through `TrainerConnection`, `HeartRateConnection`, and
+`StandaloneControllerConnection`; simulators implement the same contracts.
 
 The application-level `Trainer` and `HeartRateMonitor` are stable role owners.
 They replace connection objects during recovery while consumers retain their
 status and measurement subscriptions. Ownership of an object is not proof of a
 live transport; `DeviceStatus` is the connectivity source of truth.
+
+The Controller owner selects trainer controls or a paired standalone controller
+connection. Wahoo input is an optional capability of the existing FTMS connection
+and its notification pump; the Controller never owns or retries that peripheral.
+Ride owns its direct BLE protocol lifecycle. Both produce physical button edges;
+application mappings stay in the Player. Source metadata and connectivity travel
+through the existing owner state stream; transient input carries its generation.
+Input discontinuities cancel holds rather than synthesizing releases.
 
 ### Backend application layer
 
@@ -182,8 +190,8 @@ unavailable command is not reinterpreted as another available action. Numeric
 arguments are parsed deterministically, and prepared commands re-read live state.
 Capture and semantic requests are serialized without an utterance queue.
 
-Capture and routing generations invalidate stale results after focus, permission,
-or device changes. Only completed transcripts are routed. Local models are
+Capture and routing generations invalidate stale results after visibility,
+permission, or device changes, and after keyboard focus loss for keyboard holds. Only completed transcripts are routed. Local models are
 bundled for offline use; microphone tracks and models are released on hard disable.
 Leaving the Player stops capture while retaining warm models. Pipeline tracing
 records lifecycle and dispatch boundaries, never audio or transcript content.
@@ -193,3 +201,12 @@ The pure workout engine consumes EngineEvent values, including runtime-supplied
 clock ticks, and returns EngineAction directives. The runtime performs trainer,
 recording, and UI effects. Segment finalization distinguishes completion from
 skip so the timeline and recording share the same transition source.
+
+Push-to-talk is owned by the existing voice provider and lifecycle reducer.
+Keyboard and controller edges invoke the same begin/finish/cancel operations.
+Model preparation does not open capture. Finish closes microphone input before
+flushing the speech worker, retains final line revisions, and routes the combined
+utterance once. Cancel invalidates the generation before closing the stream and
+discards late callbacks. Controller holds permit an unfocused visible Player;
+keyboard holds cancel on blur. Neither capture nor pending interpretation survives
+leaving the Player, hiding the window, or loss of its initiating input.

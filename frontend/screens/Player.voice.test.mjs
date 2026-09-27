@@ -177,6 +177,21 @@ test("recovers the observed end-ride substitution only while riding", () => {
   });
 });
 
+test("speech about voice capture cannot become a workout action", () => {
+  const { surface } = surfaceHarness(player("riding"));
+  for (const transcript of [
+    "stop listening",
+    "resume listening",
+    "stop talking",
+    "mute voice commands",
+  ]) {
+    assert.deepEqual(surface.prepareTranscript(transcript), {
+      kind: "rejected",
+      visible: false,
+    });
+  }
+});
+
 test("already-satisfied desired state is a successful no-op", async () => {
   const harness = surfaceHarness(player("riding", { erg_enabled: true }));
   const prepared = prepare(harness.surface, "ergOn", "Enable erg mode");

@@ -31,20 +31,22 @@ test("microphone permission alone does not enable voice", () => {
   state = reduce(state, { type: "permission-changed", permission: "granted" });
   assert.equal(state.phase, "off");
   state = reduce(state, { type: "enabled-changed", enabled: true });
+  assert.equal(state.phase, "permission-required");
+  state = reduce(state, { type: "permission-changed", permission: "granted" });
   assert.equal(state.phase, "preparing");
 });
 
-test("enabled voice waits for permission until a surface is active", () => {
+test("enabled voice waits for startup microphone permission", () => {
   let state = createVoiceMachine({ enabled: true });
   assert.equal(state.phase, "suspended");
 
   state = reduce(state, { type: "surface-changed", key: "player" });
   assert.equal(state.phase, "permission-required");
-
+  assert.equal(reduce(state, { type: "ptt-pressed" }), state);
   state = reduce(state, { type: "permission-changed", permission: "granted" });
   assert.equal(state.phase, "preparing");
   state = reduce(state, { type: "prepared", generation: state.generation });
-  assert.equal(state.phase, "listening");
+  assert.equal(state.phase, "idle");
 });
 
 test("disabling voice invalidates work and blocks preparation", () => {
@@ -62,16 +64,20 @@ test("disabling voice invalidates work and blocks preparation", () => {
     reduce(state, { type: "prepared", generation: preparingGeneration }),
     state,
   );
+  state = reduce(state, { type: "enabled-changed", enabled: true });
+  assert.equal(state.phase, "permission-required");
 });
 
-test("losing focus suspends capture and rejects stale model results", () => {
+test("hiding the Player suspends capture and rejects stale model results", () => {
   let state = createVoiceMachine({
     enabled: true,
     permission: "granted",
     surfaceKey: "player",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   const inferenceGeneration = state.generation;
 
@@ -93,7 +99,9 @@ test("permission revocation invalidates routing and makes voice unavailable", ()
     surfaceKey: "player",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   const routingGeneration = state.generation;
 
@@ -104,16 +112,21 @@ test("permission revocation invalidates routing and makes voice unavailable", ()
     reduce(state, { type: "model-result", generation: routingGeneration }),
     state,
   );
+  state = reduce(state, { type: "retry" });
+  assert.equal(state.permission, "unknown");
+  assert.equal(state.phase, "permission-required");
 });
 
-test("accepted commands serialize interpreting, executing, and listening", () => {
+test("accepted commands serialize interpreting, executing, and idle", () => {
   let state = createVoiceMachine({
     enabled: true,
     permission: "granted",
     surfaceKey: "player",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   assert.equal(state.phase, "interpreting");
 
@@ -121,41 +134,24 @@ test("accepted commands serialize interpreting, executing, and listening", () =>
   state = reduce(state, { type: "model-result", generation });
   assert.equal(state.phase, "executing");
   state = reduce(state, { type: "command-finished", generation });
-  assert.equal(state.phase, "listening");
+  assert.equal(state.phase, "idle");
 });
 
-test("command suspension keeps capture listening and resets on hard disable", () => {
+test("a rejected interpretation returns to idle without executing", () => {
   let state = createVoiceMachine({
     enabled: true,
     permission: "granted",
     surfaceKey: "player",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
-  const generation = state.generation;
-
-  state = reduce(state, { type: "command-suspension-changed", suspended: true });
-  assert.equal(state.phase, "listening");
-  assert.equal(state.commandsSuspended, true);
-  assert.equal(state.generation, generation);
-
-  state = reduce(state, { type: "enabled-changed", enabled: false });
-  assert.equal(state.phase, "off");
-  assert.equal(state.commandsSuspended, false);
-});
-
-test("a rejected interpretation returns to listening without executing", () => {
-  let state = createVoiceMachine({
-    enabled: true,
-    permission: "granted",
-    surfaceKey: "player",
-  });
-  state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   const generation = state.generation;
 
   state = reduce(state, { type: "interpretation-rejected", generation });
-  assert.equal(state.phase, "listening");
+  assert.equal(state.phase, "idle");
 });
 
 test("errors invalidate in-flight work and retry with a fresh generation", () => {
@@ -165,7 +161,9 @@ test("errors invalidate in-flight work and retry with a fresh generation", () =>
     surfaceKey: "player",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   const generation = state.generation;
   state = reduce(state, { type: "failed", generation, message: "microphone ended" });
@@ -185,7 +183,9 @@ test("a runtime restart discards in-flight work and prepares a fresh generation"
     surfaceKey: "player",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   const failedGeneration = state.generation;
 
@@ -208,7 +208,9 @@ test("a capture discontinuity invalidates an in-flight command and restarts clea
     surfaceKey: "player",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   const interruptedGeneration = state.generation;
   assert.equal(state.phase, "interpreting");
@@ -264,7 +266,9 @@ test("changing surfaces invalidates work even while voice remains active", () =>
     surfaceKey: "library",
   });
   state = reduce(state, { type: "prepared", generation: state.generation });
+  state = reduce(state, { type: "ptt-pressed" });
   state = reduce(state, { type: "speech-started" });
+  state = reduce(state, { type: "ptt-released" });
   state = reduce(state, { type: "utterance-accepted" });
   const libraryGeneration = state.generation;
 
@@ -275,4 +279,42 @@ test("changing surfaces invalidates work even while voice remains active", () =>
     reduce(state, { type: "model-result", generation: libraryGeneration }),
     state,
   );
+});
+
+function ready() {
+  const state = createVoiceMachine({ enabled: true, permission: "granted", surfaceKey: "player" });
+  return reduce(state, { type: "prepared", generation: state.generation });
+}
+
+test("speech cannot execute before release, and additional holds do not queue", () => {
+  let state = ready();
+  assert.equal(state.phase, "idle");
+  assert.equal(reduce(state, { type: "speech-started" }), state);
+  state = reduce(state, { type: "ptt-pressed" });
+  const generation = state.generation;
+  assert.equal(reduce(state, { type: "ptt-pressed" }), state);
+  state = reduce(state, { type: "speech-started" });
+  assert.equal(reduce(state, { type: "utterance-accepted" }), state);
+  state = reduce(state, { type: "ptt-released" });
+  state = reduce(state, { type: "utterance-accepted" });
+  assert.equal(reduce(state, { type: "ptt-pressed" }), state);
+  state = reduce(state, { type: "ptt-canceled" });
+  assert.equal(state.phase, "idle");
+  assert.equal(reduce(state, { type: "model-result", generation }), state);
+});
+
+test("release during startup, loss of input, and maximum hold cancel rather than submit", () => {
+  for (const phase of ["starting", "speech", "finalizing", "interpreting"]) {
+    let state = ready();
+    state = reduce(state, { type: "ptt-pressed" });
+    if (phase !== "starting") state = reduce(state, { type: "speech-started" });
+    if (["finalizing", "interpreting"].includes(phase)) state = reduce(state, { type: "ptt-released" });
+    if (phase === "interpreting") state = reduce(state, { type: "utterance-accepted" });
+    const generation = state.generation;
+    state = reduce(state, { type: "ptt-canceled" });
+    assert.equal(state.phase, "idle");
+    assert.ok(state.generation > generation);
+    assert.equal(reduce(state, { type: "utterance-accepted" }), state);
+    assert.equal(reduce(state, { type: "model-result", generation }), state);
+  }
 });

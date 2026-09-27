@@ -12,7 +12,10 @@ import {
   primeSounds,
   setMuted,
 } from "../sounds";
-import { useVoiceSurface } from "../voice/VoiceController";
+import { listen } from "@tauri-apps/api/event";
+import type { ControllerInputEvent } from "../ipc";
+import { createControllerInputHandler, isPushToTalkKey, isInteractiveTarget } from "../voice/controllerInput";
+import { useVoice, useVoiceSurface } from "../voice/VoiceController";
 import { playerActions } from "./Player.actions";
 import { createPlayerVoiceSurface } from "./Player.voice";
 
@@ -59,6 +62,7 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
     pushToast,
     clearRideTimeline,
   } = useStore();
+  const { beginPushToTalk, finishPushToTalk, cancelPushToTalk } = useVoice();
   useVoiceSurface(
     player !== null && player.phase !== "finished" ? PLAYER_VOICE_SURFACE : null,
   );
@@ -80,19 +84,8 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!player) return;
-      if (e.code === "Space") {
-        e.preventDefault();
-        if (player.phase === "riding") settlePlayerAction(playerActions.pauseRide());
-        else if (player.phase === "paused") {
-          primeSounds(); // inside the keydown gesture — see sounds.ts
-          primeVoiceFeedback();
-          settlePlayerAction(playerActions.resumeRide());
-        } else if (player.phase === "ready") {
-          primeSounds();
-          primeVoiceFeedback();
-          settlePlayerAction(playerActions.startRide());
-        }
-      } else if (e.key === "s") {
+      if (e.code === "Space") return;
+      if (e.key === "s") {
         settlePlayerAction(playerActions.skipSegment());
       } else if (e.key === "e") {
         settlePlayerAction(playerActions.setErg(!player.erg_enabled));
@@ -107,6 +100,58 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [player, toggleStats]);
+
+  useEffect(() => {
+    let down = false;
+    const keyDown = (event: KeyboardEvent) => {
+      if (!isPushToTalkKey(event) || isInteractiveTarget(event.target)) return;
+      event.preventDefault();
+      if (event.repeat || down) return;
+      down = true;
+      primeSounds();
+      primeVoiceFeedback();
+      beginPushToTalk("keyboard");
+    };
+    const keyUp = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || !down) return;
+      event.preventDefault();
+      down = false;
+      finishPushToTalk("keyboard");
+    };
+    const blur = () => { down = false; cancelPushToTalk("keyboard"); };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("blur", blur);
+      cancelPushToTalk("keyboard");
+    };
+  }, [beginPushToTalk, finishPushToTalk, cancelPushToTalk]);
+
+  useEffect(() => {
+    let disposed = false;
+    const input = createControllerInputHandler({
+      begin: () => beginPushToTalk("controller"),
+      finish: () => finishPushToTalk("controller"),
+      cancel: () => cancelPushToTalk("controller"),
+      visible: () => document.visibilityState === "visible",
+      pauseResume: () => {
+        const current = useStore.getState().player;
+        if (current?.phase === "riding") settlePlayerAction(playerActions.pauseRide());
+        else if (current?.phase === "paused") settlePlayerAction(playerActions.resumeRide());
+      },
+    });
+    const subscription = listen<ControllerInputEvent>("controller_input", ({ payload }) => {
+      if (!disposed) input(payload);
+    });
+    return () => {
+      disposed = true;
+      void subscription.then((unlisten) => unlisten());
+      cancelPushToTalk("controller");
+    };
+  }, [beginPushToTalk, finishPushToTalk, cancelPushToTalk]);
 
   // Countdown into each segment boundary. State arrives about once a second,
   // so arm a timer as soon as the boundary is within a tick of the lead-in and
@@ -383,7 +428,7 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
         </button>
       </div>
       <p className="muted footnote">
-        space pause/resume · s skip · e ERG · d stats · ↑/↓ intensity
+        hold space to talk · s skip · e ERG · d stats · ↑/↓ intensity
       </p>
     </div>
   );

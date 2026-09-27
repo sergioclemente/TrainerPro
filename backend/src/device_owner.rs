@@ -22,6 +22,9 @@ pub enum DeviceStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceState {
     pub status: DeviceStatus,
+    pub controller_source: Option<crate::controller::ControllerSource>,
+    pub controller_profile: Option<tp_ble::ControllerProfile>,
+    pub error: Option<String>,
     /// Changes when a connection is invalidated, even if an observer misses
     /// the intermediate disconnected state during a fast reconnect.
     pub generation: u64,
@@ -33,6 +36,9 @@ impl Default for DeviceState {
     fn default() -> Self {
         Self {
             status: DeviceStatus::Disconnected,
+            controller_source: None,
+            controller_profile: None,
+            error: None,
             generation: 0,
             platform_id: None,
             name: None,
@@ -113,4 +119,12 @@ pub fn retry_delay(attempt: u32) -> Duration {
             .copied()
             .unwrap_or(RECONNECT_STEADY_S),
     )
+}
+
+/// Transient input is generation-bound, unlike a retained connection object.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DeviceInput {
+    pub generation: u64,
+    pub profile: tp_ble::ControllerProfile,
+    pub event: tp_ble::ControllerInputEvent,
 }

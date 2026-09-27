@@ -4,7 +4,9 @@ export type VoicePhase =
   | "off"
   | "permission-required"
   | "preparing"
-  | "listening"
+  | "idle"
+  | "starting"
+  | "finalizing"
   | "speech"
   | "interpreting"
   | "executing"
@@ -18,8 +20,6 @@ export interface VoiceMachineState {
   permission: VoicePermission;
   surfaceKey: string | null;
   appActive: boolean;
-  /** Session-scoped gate for application commands; capture remains active. */
-  commandsSuspended: boolean;
   /** Automatic input recovery is limited until the voice context changes or Retry is used. */
   captureRestartAttempts: number;
   /** Invalidates asynchronous results created against an older context. */
@@ -32,8 +32,10 @@ export type VoiceMachineEvent =
   | { type: "permission-changed"; permission: VoicePermission }
   | { type: "surface-changed"; key: string | null }
   | { type: "app-activity-changed"; active: boolean }
-  | { type: "command-suspension-changed"; suspended: boolean }
   | { type: "prepared"; generation: number }
+  | { type: "ptt-pressed" }
+  | { type: "ptt-released" }
+  | { type: "ptt-canceled" }
   | { type: "speech-started" }
   | { type: "utterance-ignored" }
   | { type: "utterance-accepted" }
@@ -50,7 +52,6 @@ export interface VoiceMachineOptions {
   permission?: VoicePermission;
   surfaceKey?: string | null;
   appActive?: boolean;
-  commandsSuspended?: boolean;
 }
 
 function activationPhase(state: VoiceMachineState): VoicePhase {
@@ -68,7 +69,6 @@ export function createVoiceMachine(options: VoiceMachineOptions): VoiceMachineSt
     permission: options.permission ?? "unknown",
     surfaceKey: options.surfaceKey ?? null,
     appActive: options.appActive ?? true,
-    commandsSuspended: options.enabled ? (options.commandsSuspended ?? false) : false,
     captureRestartAttempts: 0,
     generation: 0,
     error: null,
@@ -101,10 +101,10 @@ export function reduceVoiceMachine(
   switch (event.type) {
     case "enabled-changed":
       if (event.enabled === state.enabled) return state;
-      return {
-        ...contextChanged(state, { enabled: event.enabled }),
-        commandsSuspended: event.enabled ? state.commandsSuspended : false,
-      };
+      return contextChanged(state, {
+        enabled: event.enabled,
+        permission: event.enabled ? "unknown" : state.permission,
+      });
     case "permission-changed":
       return event.permission === state.permission
         ? state
@@ -117,23 +117,26 @@ export function reduceVoiceMachine(
       return event.active === state.appActive
         ? state
         : contextChanged(state, { appActive: event.active });
-    case "command-suspension-changed":
-      return event.suspended === state.commandsSuspended
-        ? state
-        : { ...state, commandsSuspended: event.suspended };
     case "prepared":
       return state.phase === "preparing" && hasCurrentGeneration(state, event.generation)
-        ? { ...state, phase: "listening" }
+        ? { ...state, phase: "idle" }
         : state;
+    case "ptt-pressed":
+      return state.phase === "idle" ? { ...state, phase: "starting", generation: state.generation + 1 } : state;
+    case "ptt-released":
+      return state.phase === "speech" ? { ...state, phase: "finalizing" } : state;
+    case "ptt-canceled":
+      return ["starting", "speech", "finalizing", "interpreting", "executing"].includes(state.phase)
+        ? { ...state, phase: "idle", generation: state.generation + 1 } : state;
     case "speech-started":
-      return state.phase === "listening" ? { ...state, phase: "speech" } : state;
+      return state.phase === "starting" ? { ...state, phase: "speech" } : state;
     case "utterance-ignored":
-      return state.phase === "speech" ? { ...state, phase: "listening" } : state;
+      return (state.phase === "speech" || state.phase === "finalizing") ? { ...state, phase: "idle" } : state;
     case "utterance-accepted":
-      return state.phase === "speech" ? { ...state, phase: "interpreting" } : state;
+      return state.phase === "finalizing" ? { ...state, phase: "interpreting" } : state;
     case "interpretation-rejected":
       return state.phase === "interpreting" && hasCurrentGeneration(state, event.generation)
-        ? { ...state, phase: "listening" }
+        ? { ...state, phase: "idle" }
         : state;
     case "model-result":
       if (state.phase !== "interpreting" || !hasCurrentGeneration(state, event.generation)) {
@@ -142,7 +145,7 @@ export function reduceVoiceMachine(
       return { ...state, phase: "executing" };
     case "command-finished":
       return state.phase === "executing" && hasCurrentGeneration(state, event.generation)
-        ? { ...state, phase: "listening" }
+        ? { ...state, phase: "idle" }
         : state;
     case "capture-restart-requested":
       if (!hasCurrentGeneration(state, event.generation) ||
@@ -175,6 +178,7 @@ export function reduceVoiceMachine(
       if (state.phase !== "error" && state.phase !== "unavailable") return state;
       const next = {
         ...state,
+        permission: state.phase === "unavailable" ? "unknown" as const : state.permission,
         captureRestartAttempts: 0,
         generation: state.generation + 1,
         error: null,

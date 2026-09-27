@@ -15,11 +15,14 @@ use tp_ble::{
 };
 
 use crate::app_state::AppState;
+use crate::controller::{Controller, ControllerConnector, ControllerSource};
 use crate::database::devices as device_db;
 use crate::device_owner::DeviceStatus;
 use crate::heart_rate_monitor::{HeartRateConnector, HeartRateMonitor};
 use crate::trainer::{Trainer, TrainerConnector};
+use tp_ble::{SimController, StandaloneControllerConnection};
 
+#[cfg(not(feature = "simulator"))]
 const SCAN_DURATION_S: u64 = 10;
 const DEVICE_MEASUREMENT_INTERVAL_S: u64 = 1;
 const STARTUP_RECONNECT_DELAY_MS: u64 = 1_500;
@@ -41,7 +44,7 @@ impl TrainerConnector for TrainerConnections {
             #[cfg(feature = "simulator")]
             {
                 self.manager.quiesce_scan(priority).await;
-                return Ok(Box::new(SimTrainer::new()));
+                return Ok(Box::new(SimTrainer::with_controls()));
             }
         }
         Ok(Box::new(
@@ -78,15 +81,52 @@ impl HeartRateConnector for HeartRateConnections {
     }
 }
 
+struct ControllerConnections {
+    manager: Arc<DeviceManager>,
+}
+
+#[async_trait]
+impl ControllerConnector for ControllerConnections {
+    async fn connect(
+        &self,
+        platform_id: &str,
+        priority: ConnectionPriority,
+    ) -> Result<Box<dyn StandaloneControllerConnection>, BleError> {
+        if platform_id == SimController::ID {
+            #[cfg(not(feature = "simulator"))]
+            return Err(BleError::NotFound);
+            #[cfg(feature = "simulator")]
+            {
+                self.manager.quiesce_scan(priority).await;
+                return Ok(Box::new(SimController::new(
+                    tp_ble::ControllerProfile::ZwiftRide,
+                )));
+            }
+        }
+        Ok(Box::new(
+            self.manager
+                .connect_zwift_ride(platform_id, priority)
+                .await?,
+        ))
+    }
+}
+
 #[derive(Clone)]
 pub struct DeviceHub {
     manager: Arc<DeviceManager>,
     trainer: Trainer,
     heart_rate_monitor: HeartRateMonitor,
+    controller: Controller,
 }
 
 impl Default for DeviceHub {
     fn default() -> Self {
+        Self::new(ControllerSource::TrainerControls)
+    }
+}
+
+impl DeviceHub {
+    pub fn new(source: ControllerSource) -> Self {
         let manager = Arc::new(DeviceManager::new());
         let trainer = Trainer::new(Arc::new(TrainerConnections {
             manager: manager.clone(),
@@ -96,7 +136,15 @@ impl Default for DeviceHub {
             #[cfg(feature = "simulator")]
             trainer: trainer.clone(),
         }));
+        let controller = Controller::new(
+            Arc::new(ControllerConnections {
+                manager: manager.clone(),
+            }),
+            trainer.clone(),
+            source,
+        );
         Self {
+            controller,
             manager,
             trainer,
             heart_rate_monitor,
@@ -132,6 +180,10 @@ fn emit_device_status(app: &AppHandle, role: Role, status: DeviceStatus, name: O
 }
 
 impl DeviceHub {
+    pub fn controller(&self) -> &Controller {
+        &self.controller
+    }
+
     pub fn trainer(&self) -> &Trainer {
         &self.trainer
     }
@@ -151,6 +203,7 @@ impl DeviceHub {
     /// Start the application event bridges once. Their subscriptions remain
     /// valid while the owners replace connections underneath them.
     pub fn start_event_forwarders(&self, app: AppHandle) {
+        spawn_controller_forwarder(app.clone(), self.controller.clone());
         spawn_trainer_state_forwarder(app.clone(), self.trainer.clone());
         spawn_heart_rate_state_forwarder(app.clone(), self.heart_rate_monitor.clone());
         spawn_trainer_measurement_forwarder(app.clone(), self.trainer.clone());
@@ -175,23 +228,37 @@ impl DeviceHub {
                     role: Role::Hrm,
                 },
             ];
+            let _ = app.emit(
+                "scan_result",
+                ScanResult {
+                    platform_id: SimController::ID.into(),
+                    name: "Simulated Zwift Ride".into(),
+                    rssi: None,
+                    role: Role::Controller,
+                },
+            );
             for simulator in simulators {
                 let _ = app.emit("scan_result", &simulator);
             }
+            return Ok(());
         }
 
-        let app_for_result = app.clone();
-        self.manager
-            .scan(SCAN_DURATION_S, move |result| {
-                let _ = app_for_result.emit("scan_result", &result);
-            })
-            .await
+        #[cfg(not(feature = "simulator"))]
+        {
+            let app_for_result = app.clone();
+            self.manager
+                .scan(SCAN_DURATION_S, move |result| {
+                    let _ = app_for_result.emit("scan_result", &result);
+                })
+                .await
+        }
     }
 
     pub async fn connect(&self, role: Role, platform_id: &str) -> Result<String, BleError> {
         match role {
             Role::Trainer => self.trainer.connect(platform_id).await,
             Role::Hrm => self.heart_rate_monitor.connect(platform_id).await,
+            Role::Controller => self.controller.connect(platform_id).await,
         }
     }
 
@@ -201,6 +268,7 @@ impl DeviceHub {
         let generation = match role {
             Role::Trainer => self.trainer.state().generation,
             Role::Hrm => self.heart_rate_monitor.state().generation,
+            Role::Controller => self.controller.state().generation,
         };
         self.maintain_if_generation(
             role,
@@ -219,6 +287,11 @@ impl DeviceHub {
         priority: ConnectionPriority,
     ) -> Result<(), BleError> {
         match role {
+            Role::Controller => {
+                self.controller
+                    .maintain_if_generation(platform_id, generation, priority)
+                    .await
+            }
             Role::Trainer => {
                 self.trainer
                     .maintain_if_generation(platform_id, generation, priority)
@@ -236,8 +309,36 @@ impl DeviceHub {
         match role {
             Role::Trainer => self.trainer.disconnect().await,
             Role::Hrm => self.heart_rate_monitor.disconnect().await,
+            Role::Controller => self.controller.disconnect().await,
         }
     }
+}
+
+fn spawn_controller_forwarder(app: AppHandle, controller: Controller) {
+    let mut status = controller.subscribe_state();
+    let mut inputs = controller.subscribe_inputs();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                changed = status.changed() => {
+                    if changed.is_err() { return; }
+                    let state = status.borrow_and_update().clone();
+                    let _ = app.emit("controller_input", serde_json::json!({ "generation": state.generation, "profile": state.controller_profile, "event": { "kind": "cancel" } }));
+                    emit_device_status(&app, Role::Controller, state.status, state.name);
+                    if let Some(error) = state.error { let _ = app.emit("toast", serde_json::json!({ "level": "error", "message": error })); }
+                }
+                result = inputs.recv() => match result {
+                    Ok(input) if status.borrow().is_connected() && status.borrow().generation == input.generation => { let _ = app.emit("controller_input", input); }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        let _ = app.emit("controller_input", serde_json::json!({ "generation": status.borrow().generation, "profile": status.borrow().controller_profile, "event": { "kind": "cancel" } }));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    _ => {},
+                }
+            }
+        }
+    });
 }
 
 fn spawn_trainer_state_forwarder(app: AppHandle, trainer: Trainer) {
@@ -349,12 +450,19 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
             .filter_map(|(role, platform_id)| match role.as_str() {
                 "trainer" => Some((Role::Trainer, platform_id)),
                 "hrm" => Some((Role::Hrm, platform_id)),
+                "controller"
+                    if state.hub.controller.state().controller_source
+                        == Some(ControllerSource::PairedController) =>
+                {
+                    Some((Role::Controller, platform_id))
+                }
                 _ => None,
             })
             .collect();
 
         let trainer_state = state.hub.trainer().state();
         let hrm_state = state.hub.heart_rate_monitor().state();
+        let controller_state = state.hub.controller.state();
 
         // Simulators are an explicit QA choice and never auto-connect. Startup
         // also yields a role once the user has acted on it.
@@ -364,17 +472,21 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
                 let owner_state = match role {
                     Role::Trainer => &trainer_state,
                     Role::Hrm => &hrm_state,
+                    Role::Controller => &controller_state,
                 };
                 owner_state.generation == 0
                     && owner_state.platform_id.is_none()
                     && !matches!(
                         (role, platform_id.as_str()),
-                        (Role::Trainer, SimTrainer::ID) | (Role::Hrm, SimHrm::ID)
+                        (Role::Trainer, SimTrainer::ID)
+                            | (Role::Hrm, SimHrm::ID)
+                            | (Role::Controller, SimController::ID)
                     )
             })
             .collect();
         let trainer_generation = trainer_state.generation;
         let hrm_generation = hrm_state.generation;
+        let controller_generation = controller_state.generation;
         let callback_targets = physical.clone();
         let callback_hub = state.hub.clone();
         let found = match state
@@ -390,6 +502,7 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
                 let generation = match role {
                     Role::Trainer => trainer_generation,
                     Role::Hrm => hrm_generation,
+                    Role::Controller => controller_generation,
                 };
                 let platform_id = platform_id.clone();
                 let hub = callback_hub.clone();
@@ -423,6 +536,7 @@ pub fn spawn_startup_reconnect(app: AppHandle) {
             let generation = match role {
                 Role::Trainer => trainer_generation,
                 Role::Hrm => hrm_generation,
+                Role::Controller => controller_generation,
             };
             let result = state
                 .hub

@@ -2,6 +2,7 @@ import type { DeviceStatusEvent } from "../ipc";
 import { useStore } from "../state";
 import RailStatusCard, {
   HeartRateStatusIcon,
+  ControllerStatusIcon,
   TrainerStatusIcon,
   type RailStatusTone,
 } from "./RailStatusCard";
@@ -23,17 +24,23 @@ export default function ConnectionStatus({ className = "" }: { className?: strin
 
   return (
     <div className={`connection-status ${className}`.trim()} aria-label="Device connections">
-      {(["trainer", "hrm"] as const).map((role) => {
+      {(["trainer", "hrm", "controller"] as const).map((role) => {
         const device = deviceStatus[role];
-        const presentation = connectionPresentation(device?.status);
         const trainer = role === "trainer";
         const saved = devices.find((slot) => slot.role === role);
-        const name = device?.name ?? saved?.saved_name ?? "Not configured";
-        const roleLabel = trainer ? "Trainer" : "Heart-rate monitor";
+        const controllerSource = role === "controller" ? saved?.controller_source : null;
+        const presentation = controllerSource === "disabled"
+          ? connectionPresentation(undefined)
+          : connectionPresentation(device?.status ?? (saved?.connected ? "connected" : undefined));
+        const name = controllerSource === "disabled" ? "Off"
+          : controllerSource === "trainer_controls"
+            ? (device?.status === "connected" ? device.name : null) ?? "Trainer controls"
+            : device?.name ?? saved?.saved_name ?? "Not configured";
+        const roleLabel = trainer ? "Trainer" : role === "hrm" ? "Heart-rate monitor" : "Controller";
         return (
           <RailStatusCard
             key={role}
-            icon={trainer ? <TrainerStatusIcon /> : <HeartRateStatusIcon />}
+            icon={trainer ? <TrainerStatusIcon /> : role === "hrm" ? <HeartRateStatusIcon /> : <ControllerStatusIcon />}
             primary={name}
             tone={presentation.tone}
             ariaLabel={`${roleLabel}: ${name}, ${presentation.state}`}

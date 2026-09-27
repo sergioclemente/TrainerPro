@@ -200,6 +200,16 @@ const MIGRATIONS: &[&str] = &[
       ON provider_connections(provider)
       WHERE disconnected_at_unix_ms IS NULL;
     ",
+    // v12: standalone handlebar controller selection, preserving saved sensors.
+    "
+    CREATE TABLE devices_with_controller (
+      role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm','controller')),
+      platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
+    INSERT INTO devices_with_controller(role, platform_id, name, last_connected_at)
+      SELECT role, platform_id, name, last_connected_at FROM devices;
+    DROP TABLE devices;
+    ALTER TABLE devices_with_controller RENAME TO devices;
+    ",
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -230,6 +240,43 @@ pub(super) fn test_connection() -> Connection {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn controller_migration_preserves_pairings_and_accepts_controller() {
+        const PRE_CONTROLLER_MIGRATION_COUNT: usize = 11;
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        for (index, sql) in super::MIGRATIONS
+            .iter()
+            .take(PRE_CONTROLLER_MIGRATION_COUNT)
+            .enumerate()
+        {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", (index + 1) as i64)
+                .unwrap();
+        }
+        super::devices::upsert(&conn, "trainer", "bike", "My bike", 1).unwrap();
+        super::devices::upsert(&conn, "hrm", "strap", "My HRM", 2).unwrap();
+        let conn = super::prepare(conn).unwrap();
+        super::devices::upsert(&conn, "controller", "ride", "My Ride", 3).unwrap();
+        assert_eq!(super::devices::list(&conn).unwrap().len(), 3);
+        assert_eq!(
+            super::devices::platform_id_for_role(&conn, "trainer").unwrap(),
+            Some("bike".into())
+        );
+        assert_eq!(
+            super::devices::platform_id_for_role(&conn, "hrm").unwrap(),
+            Some("strap".into())
+        );
+        let connected_at: i64 = conn
+            .query_row(
+                "SELECT last_connected_at FROM devices WHERE role = 'trainer'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(connected_at, 1);
+        assert!(super::devices::upsert(&conn, "unknown", "id", "name", 4).is_err());
+    }
+
     use super::*;
 
     const PRE_PROVIDER_SYNC_MIGRATION_COUNT: usize = 9;

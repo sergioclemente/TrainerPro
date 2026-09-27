@@ -33,7 +33,8 @@ scenario checks one representative spoken path per application action.
 
 ## Rules for spoken steps
 
-- A person speaks each phrase in quotation marks naturally into the microphone.
+- For each spoken step, hold **Space**, wait for the ready cue, speak the phrase
+  naturally, and release Space. Verify no action occurs before release.
 - Do not click a Player control or use a keyboard shortcut in place of a spoken
   step.
 - After each phrase, wait for the command feedback and the corresponding Player
@@ -46,7 +47,7 @@ scenario checks one representative spoken path per application action.
 ## Steps
 
 1. Open **Sweet Spot 3x10**, select **Ride this workout**, and wait until the
-   Player rail shows **Listening** and the trainer shows **Simulated KICKR** as
+   Player rail shows **Hold Space or controller button to talk** and the trainer shows **Simulated KICKR** as
    connected. The Player must show **Start** and **ready to start**.
 2. Say **“Set intensity to ninety percent.”** Expect feedback
    **Intensity set to 90%** and a persistent **90% intensity** badge.

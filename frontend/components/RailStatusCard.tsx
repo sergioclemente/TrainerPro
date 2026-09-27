@@ -67,3 +67,12 @@ export function HeartRateStatusIcon() {
     </svg>
   );
 }
+
+export function ControllerStatusIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M8 7h8a4 4 0 0 1 4 3l1 7a2 2 0 0 1-3 2l-3-3H9l-3 3a2 2 0 0 1-3-2l1-7a4 4 0 0 1 4-3Z" />
+      <path d="M7 10v4M5 12h4M16 11h.01M18 13h.01" />
+    </svg>
+  );
+}

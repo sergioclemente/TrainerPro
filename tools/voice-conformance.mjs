@@ -18,8 +18,6 @@ const CORPUS_PATH = path.join(
   "frontend/screens/Player.voice.conformance.json",
 );
 const PLAYER_VOICE_PATH = path.join(REPOSITORY_ROOT, "frontend/screens/Player.voice.ts");
-const VOICE_CONTROLS_PATH = path.join(REPOSITORY_ROOT, "frontend/voice/voiceControls.ts");
-const VOICE_ROUTING_PATH = path.join(REPOSITORY_ROOT, "frontend/voice/voiceRouting.ts");
 const MATCHER_PATH = path.join(REPOSITORY_ROOT, "frontend/voice/semanticMatcher.ts");
 const VALID_PHASES = ["ready", "riding", "paused"];
 const verbose = process.argv.includes("--verbose");
@@ -42,9 +40,8 @@ function player(phase) {
   return { phase, intensity: 1, erg_enabled: true };
 }
 
-function createSurfaceHarness(playerVoiceModule, voiceControlsModule, voiceRoutingModule) {
+function createSurfaceHarness(playerVoiceModule) {
   let currentPlayer = player("ready");
-  let commandsSuspended = false;
   const noOp = async () => undefined;
   const surface = playerVoiceModule.createPlayerVoiceSurface({
     getPlayer: () => currentPlayer,
@@ -57,48 +54,25 @@ function createSurfaceHarness(playerVoiceModule, voiceControlsModule, voiceRouti
       setErg: noOp,
     },
   });
-  const controls = voiceControlsModule.createVoiceControlSurface({
-    getCommandsSuspended: () => commandsSuspended,
-    setCommandsSuspended: (suspended) => {
-      commandsSuspended = suspended;
-    },
-  });
   return {
     surface,
-    catalog: voiceRoutingModule.voiceRoutingCatalog(surface, controls),
-    setContext: (phase, suspended = false) => {
+    setContext: (phase) => {
       currentPlayer = player(phase);
-      commandsSuspended = suspended;
     },
-    currentIntentGroups: () => voiceRoutingModule.currentVoiceIntentGroups(
-      surface,
-      controls,
-      commandsSuspended,
-    ),
-    prepareCommand: (match) => voiceRoutingModule.prepareRoutedVoiceCommand(
-      surface,
-      controls,
-      commandsSuspended,
-      match,
-    ),
   };
 }
 
 function canonicalCases(harness) {
-  const contexts = VALID_PHASES.flatMap((phase) => [
-    { phase, commandsSuspended: false },
-    { phase, commandsSuspended: true },
-  ]);
-  return harness.catalog.flatMap((group) => {
+  return harness.surface.catalog.flatMap((group) => {
     return group.phrases.map((transcript) => {
-      const context = contexts.find(({ phase, commandsSuspended }) => {
-        harness.setContext(phase, commandsSuspended);
-        return harness.currentIntentGroups().some(({ id }) => id === group.id);
+      const phase = VALID_PHASES.find((phase) => {
+        harness.setContext(phase);
+        return harness.surface.currentIntentGroups().some(({ id }) => id === group.id);
       });
-      if (!context) throw new Error(`Command ${group.id} has no active voice context`);
+      if (!phase) throw new Error(`Command ${group.id} has no active voice context`);
       return {
         name: `canonical ${group.id}: ${transcript}`,
-        ...context,
+        phase,
         transcript,
         expectedIntent: group.id,
         expectedCommand: true,
@@ -121,7 +95,7 @@ function formatMatch(result) {
 }
 
 async function evaluate(testCase, harness, matcher) {
-  harness.setContext(testCase.phase, testCase.commandsSuspended ?? false);
+  harness.setContext(testCase.phase);
   const { surface } = harness;
   const transcriptPreparation = surface.prepareTranscript?.(testCase.transcript) ?? {
     kind: "route",
@@ -140,7 +114,7 @@ async function evaluate(testCase, harness, matcher) {
     };
   }
 
-  const groups = harness.currentIntentGroups();
+  const groups = surface.currentIntentGroups();
   if (groups.length === 0) {
     return {
       ...testCase,
@@ -155,11 +129,11 @@ async function evaluate(testCase, harness, matcher) {
   }
   const { match, embeddingDurationMs } = matcher.bestMatch(
     transcriptPreparation.transcript,
-    harness.catalog,
+    surface.catalog,
   );
   const acceptedMatch = match && match.score >= surface.threshold ? match : null;
   const prepared = acceptedMatch
-    ? harness.prepareCommand({
+    ? surface.prepareCommand({
         intentId: acceptedMatch.intentId,
         transcript: transcriptPreparation.transcript,
         matchedPhrase: acceptedMatch.phrase,
@@ -224,26 +198,18 @@ async function main() {
     manifest,
     corpus,
     playerVoiceModule,
-    voiceControlsModule,
-    voiceRoutingModule,
     matcherModule,
   ] = await Promise.all([
     readFile(MANIFEST_PATH, "utf8").then(JSON.parse),
     readFile(CORPUS_PATH, "utf8").then(JSON.parse),
     importBundled(PLAYER_VOICE_PATH),
-    importBundled(VOICE_CONTROLS_PATH),
-    importBundled(VOICE_ROUTING_PATH),
     importBundled(MATCHER_PATH),
   ]);
   if (corpus.schemaVersion !== 1) {
     throw new Error(`Unsupported voice conformance schema ${corpus.schemaVersion}`);
   }
 
-  const harness = createSurfaceHarness(
-    playerVoiceModule,
-    voiceControlsModule,
-    voiceRoutingModule,
-  );
+  const harness = createSurfaceHarness(playerVoiceModule);
   const cases = [
     ...canonicalCases(harness),
     ...corpus.cases.map((testCase) => ({ ...testCase, source: "curated" })),
@@ -257,7 +223,7 @@ async function main() {
   try {
     const matcher = new matcherModule.SemanticMatcher(model);
     const warmupStartedAt = performance.now();
-    matcher.prepare(harness.catalog);
+    matcher.prepare(harness.surface.catalog);
     const warmupMs = performance.now() - warmupStartedAt;
 
     const results = [];

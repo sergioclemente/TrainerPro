@@ -20,17 +20,10 @@ import { useStore } from "../state";
 import { resolveVoiceModelUrls, type VoiceModelUrls } from "./modelAssets";
 import { SemanticRouterClient } from "./semanticRouterClient";
 import {
-  createVoiceControlSurface,
-} from "./voiceControls";
-import {
-  currentVoiceIntentGroups,
-  prepareRoutedVoiceCommand,
-  voiceRoutingCatalog,
-} from "./voiceRouting";
-import {
   createVoiceMachine,
   reduceVoiceMachine,
   type VoiceMachineState,
+  type VoiceMachineEvent,
 } from "./voiceMachine";
 import type { VoiceSurface } from "./voiceSurface";
 import {
@@ -66,7 +59,12 @@ export interface VoicePreparationProgress {
   totalBytes: number | null;
 }
 
+export type PushToTalkSource = "keyboard" | "controller";
+
 interface VoiceContextValue {
+  beginPushToTalk: (source: PushToTalkSource) => void;
+  finishPushToTalk: (source: PushToTalkSource) => void;
+  cancelPushToTalk: (source?: PushToTalkSource) => void;
   state: VoiceMachineState;
   progress: VoicePreparationProgress | null;
   notice: VoiceNotice | null;
@@ -91,7 +89,7 @@ function isPermissionDenial(error: unknown): boolean {
 }
 
 function appIsActive(): boolean {
-  return document.visibilityState === "visible" && document.hasFocus();
+  return document.visibilityState === "visible";
 }
 
 function browserVoicePermission(state: PermissionState): VoiceMachineState["permission"] {
@@ -122,7 +120,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const settings = useStore((state) => state.settings);
   const enabled = settings?.voice_enabled ?? false;
 
-  const [state, dispatch] = useReducer(
+  const [state, rawDispatch] = useReducer(
     reduceVoiceMachine,
     undefined,
     () => createVoiceMachine({ enabled: false, appActive: appIsActive() }),
@@ -136,9 +134,15 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 
   const stateRef = useRef(state);
   stateRef.current = state;
+  const dispatch = useCallback((event: VoiceMachineEvent) => {
+    stateRef.current = reduceVoiceMachine(stateRef.current, event);
+    rawDispatch(event);
+  }, []);
+  const pushToTalkRef = useRef<{ source: PushToTalkSource; generation: number; released: boolean } | null>(null);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const mountedRef = useRef(true);
+  const permissionRequestRef = useRef<Promise<"granted" | "denied"> | null>(null);
   const transcriberRef = useRef<WorkerMicTranscriber | null>(null);
   const routerRef = useRef<SemanticRouterClient | null>(null);
   const routerRestartAttemptsRef = useRef(0);
@@ -151,16 +155,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const surfaceRef = useRef<VoiceSurface | null>(null);
   const utteranceSequenceRef = useRef(0);
   const voiceOutageRef = useRef(false);
-  const controlSurfaceRef = useRef<VoiceSurface | null>(null);
-  controlSurfaceRef.current ??= createVoiceControlSurface({
-    getCommandsSuspended: () => stateRef.current.commandsSuspended,
-    setCommandsSuspended: (suspended) => {
-      useStore.getState().recordUserAction(
-        suspended ? "Pause voice commands" : "Resume voice commands",
-      );
-      dispatch({ type: "command-suspension-changed", suspended });
-    },
-  });
 
   const clearSpeechTimer = useCallback(() => {
     if (speechTimerRef.current !== null) window.clearTimeout(speechTimerRef.current);
@@ -193,6 +187,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const invalidateCapture = useCallback(() => {
+    pushToTalkRef.current = null;
     transcriberRef.current?.invalidateCapture();
     captureGenerationRef.current = -1;
     clearSpeechTimer();
@@ -235,9 +230,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }, VOICE_NOTICE_DISPLAY_MS);
   }, []);
 
-  const enqueueCapture = useCallback((operation: () => Promise<void>): Promise<void> => {
+  const enqueueCapture = useCallback(<T,>(operation: () => Promise<T>): Promise<T> => {
     const queued = captureQueueRef.current.catch(() => undefined).then(operation);
-    captureQueueRef.current = queued.catch(() => undefined);
+    captureQueueRef.current = queued.then(() => undefined, () => undefined);
     return queued;
   }, []);
 
@@ -291,12 +286,13 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "semantic-router-restart-requested", generation });
   }, [failCurrent, invalidateCapture, isCurrentCapture, showNotice]);
 
-  const resetStream = useCallback(async (generation: number): Promise<boolean> => {
+  const finishActivation = useCallback(async (generation: number): Promise<boolean> => {
     try {
       await enqueueCapture(async () => {
         if (!isCurrentCapture(generation)) return;
-        await transcriberRef.current?.resetStream();
+        await transcriberRef.current?.stop();
       });
+      if (isCurrentCapture(generation)) pushToTalkRef.current = null;
       return isCurrentCapture(generation);
     } catch (error) {
       failCurrent(generation, error);
@@ -314,10 +310,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     } else {
       clearTranscripts();
     }
-    if (await resetStream(generation)) {
+    if (await finishActivation(generation)) {
       dispatch({ type: "interpretation-rejected", generation });
     }
-  }, [clearTranscripts, resetStream, showNotice]);
+  }, [clearTranscripts, finishActivation, showNotice]);
 
   const routeCompletedLine = useCallback(async (
     transcript: string,
@@ -327,8 +323,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   ) => {
     const router = routerRef.current;
     const surface = surfaceRef.current;
-    const controls = controlSurfaceRef.current;
-    if (!router || !surface || !controls) {
+    if (!router || !surface) {
       traceVoiceRoute(utteranceId, generation, "unavailable");
       await rejectUtterance(generation, false);
       return;
@@ -344,12 +339,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         await rejectUtterance(generation, transcriptPreparation.visible);
         return;
       }
-      const intentGroups = currentVoiceIntentGroups(
-        surface,
-        controls,
-        stateRef.current.commandsSuspended,
-      );
-      if (intentGroups.length === 0) {
+      if (surface.currentIntentGroups().length === 0) {
         traceVoiceRoute(utteranceId, generation, "no_available_intent");
         await rejectUtterance(generation, false);
         return;
@@ -358,7 +348,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       try {
         result = await router.route(
           transcriptPreparation.transcript,
-          voiceRoutingCatalog(surface, controls),
+          surface.catalog,
           surface.threshold,
         );
         routerRestartAttemptsRef.current = 0;
@@ -392,12 +382,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         matchedPhrase: result.matchedPhrase,
         score: result.score,
       };
-      const commandPreparation = prepareRoutedVoiceCommand(
-        surface,
-        controls,
-        stateRef.current.commandsSuspended,
-        match,
-      );
+      const commandPreparation = surface.prepareCommand(match);
       if (commandPreparation.kind === "rejected") {
         traceVoiceRoute(utteranceId, generation, "command_rejected", {
           intent: result.intentId,
@@ -447,7 +432,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         await playVoiceErrorCue();
       }
 
-      if (await resetStream(generation)) {
+      if (await finishActivation(generation)) {
         dispatch({ type: "command-finished", generation });
       }
     } catch (error) {
@@ -458,66 +443,84 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     isCurrentCapture,
     recoverSemanticRouter,
     rejectUtterance,
-    resetStream,
+    finishActivation,
     scheduleTranscriptClear,
     showNotice,
   ]);
 
-  const finishLongUtterance = useCallback(async (generation: number) => {
-    if (!isCurrentCapture(generation) || stateRef.current.phase !== "speech") return;
-    transcriberRef.current?.mute(true);
-    showNotice({ message: COMMAND_REJECTED, kind: "error" });
-    await playVoiceErrorCue();
-    if (await resetStream(generation)) dispatch({ type: "utterance-ignored" });
-  }, [isCurrentCapture, resetStream, showNotice]);
+  const cancelPushToTalk = useCallback((source?: PushToTalkSource) => {
+    if (source && pushToTalkRef.current?.source !== source) return;
+    invalidateCapture();
+    dispatch({ type: "ptt-canceled" });
+    void enqueueCapture(async () => { await transcriberRef.current?.stop(); }).catch(() => undefined);
+  }, [invalidateCapture, enqueueCapture, dispatch]);
 
-  const noteSpeech = useCallback(() => {
-    const current = stateRef.current;
-    if (captureGenerationRef.current !== current.generation || !surfaceRef.current) return;
-    if (current.phase !== "listening" && current.phase !== "speech") return;
-    if (current.phase === "listening") {
-      clearNotice();
-      if (transcriptTimerRef.current !== null) {
-        window.clearTimeout(transcriptTimerRef.current);
-        transcriptTimerRef.current = null;
-      }
-      setFinalTranscript("");
-      dispatch({ type: "speech-started" });
-    }
-    if (speechTimerRef.current !== null) return;
-    const generation = current.generation;
-    speechTimerRef.current = window.setTimeout(() => {
-      speechTimerRef.current = null;
-      void finishLongUtterance(generation);
-    }, VOICE_MAX_UTTERANCE_MS);
-  }, [clearNotice, finishLongUtterance]);
-
-  const acceptLine = useCallback((text: string) => {
-    const current = stateRef.current;
-    if (captureGenerationRef.current !== current.generation || !surfaceRef.current) return;
-    if (current.phase !== "listening" && current.phase !== "speech") return;
-    clearSpeechTimer();
+  const beginPushToTalk = useCallback((source: PushToTalkSource) => {
+    if (!enabledRef.current || !surfaceRef.current || !appIsActive() ||
+        (source === "keyboard" && !document.hasFocus()) ||
+        stateRef.current.phase !== "idle" || pushToTalkRef.current) return;
+    dispatch({ type: "ptt-pressed" });
+    const generation = stateRef.current.generation;
+    pushToTalkRef.current = { source, generation, released: false };
     clearNotice();
-    transcriberRef.current?.mute(true);
-    dispatch({ type: "speech-started" });
-    const transcript = text.trim();
-    if (!transcript) {
-      void resetStream(current.generation).then((fresh) => {
-        if (fresh) dispatch({ type: "utterance-ignored" });
-      });
+    clearTranscripts();
+    speechTimerRef.current = window.setTimeout(() => {
+      cancelPushToTalk(source);
+      showNotice({ message: "Held too long — release and try again", kind: "error" });
+    }, VOICE_MAX_UTTERANCE_MS);
+    void enqueueCapture(async () => {
+      if (!isCurrent(generation) || pushToTalkRef.current?.generation !== generation) return;
+      captureGenerationRef.current = generation;
+      await transcriberRef.current?.start();
+      if (!isCurrentCapture(generation) || pushToTalkRef.current?.generation !== generation) {
+        await transcriberRef.current?.stop();
+        return;
+      }
+      dispatch({ type: "speech-started" });
+      void playVoiceReadyCue();
+    }).catch((error) => {
+      if (!isCurrent(generation)) return;
+      if (isPermissionDenial(error)) {
+        invalidateCapture();
+        dispatch({ type: "permission-changed", permission: "denied" });
+      } else {
+        failCurrent(generation, error);
+      }
+    });
+  }, [dispatch, clearNotice, clearTranscripts, enqueueCapture, isCurrent, isCurrentCapture, cancelPushToTalk, showNotice, failCurrent, invalidateCapture]);
+
+  const finishPushToTalk = useCallback((source: PushToTalkSource) => {
+    const activation = pushToTalkRef.current;
+    if (!activation || activation.source !== source || activation.released) return;
+    activation.released = true;
+    if (stateRef.current.phase === "starting") {
+      cancelPushToTalk(source);
       return;
     }
-    setPartialTranscript("");
-    setFinalTranscript(transcript);
-    dispatch({ type: "utterance-accepted" });
-    const utteranceId = ++utteranceSequenceRef.current;
-    const finalizedAt = performance.now();
-    traceEvent("voice_line_finalized", {
-      utterance_id: utteranceId,
-      generation: current.generation,
-    });
-    void routeCompletedLine(transcript, current.generation, utteranceId, finalizedAt);
-  }, [clearNotice, clearSpeechTimer, resetStream, routeCompletedLine]);
+    if (stateRef.current.phase !== "speech") return;
+    clearSpeechTimer();
+    transcriberRef.current?.mute(true);
+    dispatch({ type: "ptt-released" });
+    const generation = activation.generation;
+    void enqueueCapture(async () => {
+      if (!isCurrentCapture(generation)) return "";
+      return (await transcriberRef.current?.finish()) ?? "";
+    }).then((text) => {
+      if (!isCurrentCapture(generation)) return;
+      const transcript = text.trim();
+      if (!transcript) {
+        pushToTalkRef.current = null;
+        dispatch({ type: "utterance-ignored" });
+        return;
+      }
+      setPartialTranscript("");
+      setFinalTranscript(transcript);
+      dispatch({ type: "utterance-accepted" });
+      const utteranceId = ++utteranceSequenceRef.current;
+      traceEvent("voice_line_finalized", { utterance_id: utteranceId, generation });
+      void routeCompletedLine(transcript, generation, utteranceId, performance.now());
+    }).catch((error) => failCurrent(generation, error));
+  }, [cancelPushToTalk, clearSpeechTimer, dispatch, enqueueCapture, isCurrentCapture, routeCompletedLine, failCurrent]);
 
   const recoverCapture = useCallback((
     generation: number,
@@ -551,8 +554,8 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     const stopping = enqueueCapture(async () => {
       await transcriber?.stop();
     });
-    // Invalidate routing immediately. The preparing effect queues the new
-    // capture after this stop, so audio from either input cannot be joined.
+    // Discard this hold immediately. Preparation warms models only;
+    // another explicit press is required before reacquiring the microphone.
     dispatch({ type: "capture-restart-requested", generation });
     void stopping.catch((error) => {
       failCurrent(
@@ -574,10 +577,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     });
     transcriberRef.current ??= new WorkerMicTranscriber(urls.moonshine, {
       onText: (text) => {
-        if (text.trim()) noteSpeech();
-        if (mountedRef.current) setPartialTranscript(text.trim());
+        if (mountedRef.current && isCurrentCapture(stateRef.current.generation)) setPartialTranscript(text.trim());
       },
-      onLine: (line) => acceptLine(line.text),
+      onLine: () => undefined, // Finalize the whole hold only after release.
       onAudioLevel: (level) => {
         if (mountedRef.current) setInputLevel(level);
       },
@@ -603,7 +605,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         throw new Error(`Speech model failed to load: ${errorMessage(error)}`);
       }),
     ]);
-  }, [acceptLine, failCurrent, noteSpeech, recoverCapture]);
+  }, [failCurrent, isCurrentCapture, recoverCapture]);
 
   const disposeRuntimes = useCallback(() => {
     const router = routerRef.current;
@@ -629,6 +631,35 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }
     dispatch({ type: "enabled-changed", enabled });
   }, [enabled, invalidateCapture]);
+
+  useEffect(() => {
+    if (!enabled || state.permission !== "unknown" || state.phase === "error") return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      failCurrent(stateRef.current.generation, new Error("Microphone capture is not supported"));
+      return;
+    }
+    let canceled = false;
+    const request = permissionRequestRef.current ??= (async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: VOICE_AUDIO_CONSTRAINTS });
+      stream.getTracks().forEach((track) => track.stop());
+      return "granted" as const;
+    })();
+    void request.then((permission) => {
+      if (permissionRequestRef.current === request) permissionRequestRef.current = null;
+      if (!canceled && mountedRef.current && enabledRef.current) {
+        dispatch({ type: "permission-changed", permission });
+      }
+    }).catch((error) => {
+      if (permissionRequestRef.current === request) permissionRequestRef.current = null;
+      if (canceled || !mountedRef.current || !enabledRef.current) return;
+      if (isPermissionDenial(error)) {
+        dispatch({ type: "permission-changed", permission: "denied" });
+      } else {
+        failCurrent(stateRef.current.generation, error);
+      }
+    });
+    return () => { canceled = true; };
+  }, [enabled, failCurrent, state.permission, state.phase]);
 
   useEffect(() => {
     if (!enabled || state.permission === "unknown") return;
@@ -674,7 +705,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       );
       return;
     }
-    if (state.phase === "listening" && voiceOutageRef.current) {
+    if (state.phase === "idle" && voiceOutageRef.current) {
       voiceOutageRef.current = false;
       useStore.getState().appendRideMessage("Voice commands restored");
     }
@@ -691,7 +722,8 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "app-activity-changed", active: false });
     };
     window.addEventListener("focus", update);
-    window.addEventListener("blur", update);
+    const blur = () => cancelPushToTalk("keyboard");
+    window.addEventListener("blur", blur);
     window.addEventListener("pagehide", deactivate);
     window.addEventListener("pageshow", update);
     document.addEventListener("visibilitychange", update);
@@ -699,41 +731,14 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     document.addEventListener("resume", update);
     return () => {
       window.removeEventListener("focus", update);
-      window.removeEventListener("blur", update);
+      window.removeEventListener("blur", blur);
       window.removeEventListener("pagehide", deactivate);
       window.removeEventListener("pageshow", update);
       document.removeEventListener("visibilitychange", update);
       document.removeEventListener("freeze", deactivate);
       document.removeEventListener("resume", update);
     };
-  }, [invalidateCapture]);
-
-  useEffect(() => {
-    if (state.phase !== "permission-required") return;
-    const generation = state.generation;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      failCurrent(generation, new Error("Microphone capture is not supported"));
-      return;
-    }
-    let canceled = false;
-    void navigator.mediaDevices.getUserMedia({ audio: VOICE_AUDIO_CONSTRAINTS }).then((stream) => {
-      stream.getTracks().forEach((track) => track.stop());
-      if (!canceled && isCurrent(generation)) {
-        dispatch({ type: "permission-changed", permission: "granted" });
-      }
-    }).catch((error) => {
-      if (canceled || !isCurrent(generation)) return;
-      if (isPermissionDenial(error)) {
-        invalidateCapture();
-        dispatch({ type: "permission-changed", permission: "denied" });
-      } else {
-        failCurrent(generation, error);
-      }
-    });
-    return () => {
-      canceled = true;
-    };
-  }, [failCurrent, invalidateCapture, isCurrent, state.generation, state.phase]);
+  }, [invalidateCapture, cancelPushToTalk]);
 
   useEffect(() => {
     if (state.phase !== "preparing") return;
@@ -748,26 +753,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         await ensureRuntimes(modelUrlsRef.current);
         if (canceled || !isCurrent(generation) || surfaceRef.current !== surface) return;
         const router = routerRef.current;
-        const controls = controlSurfaceRef.current;
-        if (!router || !controls) throw new Error("The semantic router is unavailable");
-        await router.prepare(voiceRoutingCatalog(surface, controls));
+        if (!router) throw new Error("The semantic router is unavailable");
+        await router.prepare(surface.catalog);
         if (canceled || !isCurrent(generation) || surfaceRef.current !== surface) return;
-        await enqueueCapture(async () => {
-          if (canceled || !isCurrent(generation) || surfaceRef.current !== surface) return;
-          captureGenerationRef.current = generation;
-          try {
-            await transcriberRef.current?.start();
-            transcriberRef.current?.mute(true);
-            await playVoiceReadyCue();
-            if (canceled || !isCurrent(generation) || surfaceRef.current !== surface) return;
-            await transcriberRef.current?.resetStream();
-          } catch (error) {
-            if (isPermissionDenial(error) || stateRef.current.captureRestartAttempts === 0) {
-              throw error;
-            }
-            throw new Error(`The microphone could not be reconnected: ${errorMessage(error)}`);
-          }
-        });
         if (!canceled && isCurrent(generation) && surfaceRef.current === surface) {
           setProgress(null);
           dispatch({ type: "prepared", generation });
@@ -811,21 +799,24 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }
   }, [clearNotice, clearSpeechTimer, disposeRuntimes, enqueueCapture, state.phase]);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    clearSpeechTimer();
-    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
-    if (transcriptTimerRef.current !== null) window.clearTimeout(transcriptTimerRef.current);
-    routerRef.current?.close();
-    const transcriber = transcriberRef.current;
-    transcriberRef.current = null;
-    captureGenerationRef.current = -1;
-    if (transcriber) {
-      void enqueueCapture(async () => {
-        await transcriber.stop();
-        transcriber.close();
-      }).catch(() => transcriber.close());
-    }
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearSpeechTimer();
+      if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+      if (transcriptTimerRef.current !== null) window.clearTimeout(transcriptTimerRef.current);
+      routerRef.current?.close();
+      const transcriber = transcriberRef.current;
+      transcriberRef.current = null;
+      captureGenerationRef.current = -1;
+      if (transcriber) {
+        void enqueueCapture(async () => {
+          await transcriber.stop();
+          transcriber.close();
+        }).catch(() => transcriber.close());
+      }
+    };
   }, [clearSpeechTimer, enqueueCapture]);
 
   const retry = useCallback(() => {
@@ -847,6 +838,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         finalTranscript,
         inputLevel,
         retry,
+        beginPushToTalk, finishPushToTalk, cancelPushToTalk,
       }}>
         {children}
       </VoiceContext.Provider>

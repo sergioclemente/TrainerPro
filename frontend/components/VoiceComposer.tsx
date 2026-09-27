@@ -9,7 +9,9 @@ const PHASE_COPY: Record<VoicePhase, string> = {
   off: "Voice commands off",
   "permission-required": "Allow microphone access…",
   preparing: "Preparing voice commands…",
-  listening: "Listening",
+  idle: "Push to talk",
+  starting: "Opening microphone…",
+  finalizing: "Finishing speech…",
   speech: "Listening…",
   interpreting: "Interpreting…",
   executing: "Running command…",
@@ -42,10 +44,6 @@ export default function VoiceComposer() {
     inputLevel,
     retry,
   } = useVoice();
-  const commandsPaused = state.commandsSuspended && (
-    state.phase === "listening" || state.phase === "speech" ||
-    state.phase === "interpreting" || state.phase === "executing"
-  );
   const canRetry = state.phase === "unavailable" || state.phase === "error";
   const transcript = state.phase === "speech"
     ? partialTranscript
@@ -53,14 +51,11 @@ export default function VoiceComposer() {
   const loading = state.phase === "preparing" && progress
     ? `Loading ${progress.source === "speech" ? "speech" : "commands"}…`
     : null;
-  const statusMessage = loading || (
-    commandsPaused ? "Commands paused — say “resume listening”" : null
-  ) || state.error || PHASE_COPY[state.phase];
+  const statusMessage = loading || state.error || PHASE_COPY[state.phase];
   const announcement = transcript && notice
     ? `Heard ${transcript}. ${notice.message}`
     : transcript || notice?.message || statusMessage;
-  const showWaveform = !notice && !transcript && !loading &&
-    !commandsPaused && state.phase === "listening";
+  const showWaveform = !notice && !transcript && !loading && state.phase === "speech";
 
   return (
     <div
