@@ -18,6 +18,7 @@ use tp_core::journal::{
     compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
 };
 use tp_core::metrics::{normalized_power, session_totals, tss};
+use tp_core::model::ExecutableWorkout;
 use tp_core::workout_definition::WorkoutDefinition;
 
 use crate::app_error::AppError;
@@ -46,6 +47,10 @@ pub enum PlayerCommand {
 pub struct PlayerHandle {
     pub command_tx: mpsc::Sender<PlayerCommand>,
     pub state_rx: watch::Receiver<PlayerState>,
+    /// Immutable workout and FTP captured with the engine, independent of
+    /// later provider refreshes or profile edits.
+    pub workout: ExecutableWorkout,
+    pub ftp_w: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -288,6 +293,8 @@ pub async fn spawn(
     Ok(PlayerHandle {
         command_tx,
         state_rx,
+        workout,
+        ftp_w: settings.profile.ftp,
     })
 }
 

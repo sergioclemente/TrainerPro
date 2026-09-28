@@ -75,6 +75,7 @@ fn main() {
             commands::player::end_ride,
             commands::player::clear_ride,
             commands::player::get_player_state,
+            commands::player::get_player_workout_profile,
             commands::activity_history::list_activities,
             commands::activity_history::delete_activity,
             commands::activity_history::save_fit_as,

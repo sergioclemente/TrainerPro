@@ -211,6 +211,14 @@ export interface WorkoutDetail {
   segments: SegmentRow[];
 }
 
+/** Immutable workout profile captured when this player session was loaded. */
+export interface PlayerWorkoutProfile {
+  workout_session_id: string;
+  graph: [number, number][];
+  segments: SegmentRow[];
+  ftp_w: number;
+}
+
 export interface PlannerPreview {
   wid: number;
   graph: [number, number][];
@@ -316,6 +324,8 @@ export const ipc = {
   endRide: () => invoke<ActivitySummary>("end_ride"),
   clearRide: () => invoke<void>("clear_ride"),
   getPlayerState: () => invoke<PlayerState | null>("get_player_state"),
+  getPlayerWorkoutProfile: (workoutSessionId: string) =>
+    invoke<PlayerWorkoutProfile | null>("get_player_workout_profile", { workoutSessionId }),
 
   listActivities: () => invoke<ActivityRow[]>("list_activities"),
   deleteActivity: (id: string) => invoke<void>("delete_activity", { id }),
