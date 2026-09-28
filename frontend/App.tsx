@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ipc, type SegmentRow } from "./ipc";
+import { ipc, type WorkoutDetail as WorkoutDetailData } from "./ipc";
 import { useStore } from "./state";
 import Library from "./screens/Library";
 import Devices from "./screens/Devices";
@@ -60,7 +60,7 @@ function AppShell() {
     refreshSettings,
     loadPlayer,
   } = useStore();
-  const [segments, setSegments] = useState<SegmentRow[]>([]);
+  const [activeWorkout, setActiveWorkout] = useState<WorkoutDetailData | null>(null);
 
   useEffect(() => {
     void refreshWorkouts();
@@ -77,15 +77,15 @@ function AppShell() {
 
   const workoutId = player?.workout_definition_id;
   useEffect(() => {
+    setActiveWorkout(null);
     if (!workoutId) {
-      setSegments([]);
       return;
     }
     let live = true;
     void ipc.getWorkoutDetail(workoutId).then((detail) => {
-      if (live) setSegments(detail.segments);
+      if (live) setActiveWorkout(detail);
     }).catch(() => {
-      if (live) setSegments([]);
+      if (live) setActiveWorkout(null);
     });
     return () => {
       live = false;
@@ -93,6 +93,7 @@ function AppShell() {
   }, [workoutId]);
 
   const riding = player !== null && screen === "player";
+  const playerWorkout = activeWorkout?.summary.id === workoutId ? activeWorkout : null;
 
   return (
     <div className={`app ${riding ? "app-riding" : ""}`}>
@@ -116,11 +117,11 @@ function AppShell() {
           <ConnectionStatus className="rail-status" />
         </nav>
       )}
-      {riding && <RideEventRail segments={segments} />}
+      {riding && <RideEventRail segments={playerWorkout?.segments ?? []} />}
       <main className="content">
         {screen === "library" && <Library />}
         {screen === "devices" && <Devices />}
-        {screen === "player" && <Player segments={segments} />}
+        {screen === "player" && <Player workout={playerWorkout} />}
         {screen === "summary" && <Summary />}
         {screen === "activities" && <Activities />}
         {screen === "settings" && <SettingsScreen />}
