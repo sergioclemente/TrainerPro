@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ipc, type SegmentRow } from "./ipc";
+import { ipc, type PlayerWorkoutProfile } from "./ipc";
 import { useStore } from "./state";
 import Library from "./screens/Library";
 import Devices from "./screens/Devices";
@@ -60,7 +60,7 @@ function AppShell() {
     refreshSettings,
     loadPlayer,
   } = useStore();
-  const [segments, setSegments] = useState<SegmentRow[]>([]);
+  const [activeWorkout, setActiveWorkout] = useState<PlayerWorkoutProfile | null>(null);
 
   useEffect(() => {
     void refreshWorkouts();
@@ -75,24 +75,25 @@ function AppShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const workoutId = player?.workout_definition_id;
+  const workoutSessionId = player?.workout_session_id;
   useEffect(() => {
-    if (!workoutId) {
-      setSegments([]);
+    setActiveWorkout(null);
+    if (!workoutSessionId) {
       return;
     }
     let live = true;
-    void ipc.getWorkoutDetail(workoutId).then((detail) => {
-      if (live) setSegments(detail.segments);
+    void ipc.getPlayerWorkoutProfile(workoutSessionId).then((profile) => {
+      if (live) setActiveWorkout(profile);
     }).catch(() => {
-      if (live) setSegments([]);
+      if (live) setActiveWorkout(null);
     });
     return () => {
       live = false;
     };
-  }, [workoutId]);
+  }, [workoutSessionId]);
 
   const riding = player !== null && screen === "player";
+  const playerWorkout = activeWorkout?.workout_session_id === workoutSessionId ? activeWorkout : null;
 
   return (
     <div className={`app ${riding ? "app-riding" : ""}`}>
@@ -116,11 +117,11 @@ function AppShell() {
           <ConnectionStatus className="rail-status" />
         </nav>
       )}
-      {riding && <RideEventRail segments={segments} />}
+      {riding && <RideEventRail segments={playerWorkout?.segments ?? []} />}
       <main className="content">
         {screen === "library" && <Library />}
         {screen === "devices" && <Devices />}
-        {screen === "player" && <Player segments={segments} />}
+        {screen === "player" && <Player workout={playerWorkout} />}
         {screen === "summary" && <Summary />}
         {screen === "activities" && <Activities />}
         {screen === "settings" && <SettingsScreen />}

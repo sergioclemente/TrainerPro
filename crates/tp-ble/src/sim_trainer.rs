@@ -231,34 +231,3 @@ impl TrainerConnection for SimTrainer {
         "Simulated KICKR"
     }
 }
-
-#[cfg(test)]
-mod controller_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn embedded_controls_follow_the_trainer_link() {
-        let trainer = SimTrainer::with_controls();
-        let mut status = trainer.subscribe_status();
-        let mut input = trainer.controller_input().unwrap().events;
-
-        trainer.inject_button(crate::ControllerButton::RightSteer, true);
-        assert_eq!(
-            input.recv().await.unwrap(),
-            crate::ControllerInputEvent::Button {
-                button: crate::ControllerButton::RightSteer,
-                pressed: true,
-            }
-        );
-
-        trainer.inject_disconnect();
-        status.changed().await.unwrap();
-        assert_eq!(*status.borrow(), ConnectionStatus::Disconnected);
-        assert_eq!(
-            input.recv().await.unwrap(),
-            crate::ControllerInputEvent::Cancel
-        );
-        trainer.inject_button(crate::ControllerButton::RightSteer, true);
-        assert!(input.try_recv().is_err());
-    }
-}

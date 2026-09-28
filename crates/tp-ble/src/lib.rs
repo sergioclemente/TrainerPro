@@ -1,6 +1,6 @@
 //! `tp-ble`: BLE device layer for TrainerPro.
 //!
-//! Layering: `codec` is pure byte parsing/building (unit-tested, no BLE); the
+//! Layering: `codec` is pure byte parsing/building with no BLE dependencies; the
 //! concrete connection types implement the `traits` contracts; `DeviceManager`
 //! scans and connects; the simulated connections carry development and CI
 //! through the same public contracts.
@@ -21,8 +21,8 @@ mod zwift_ride_protocol;
 
 pub use ble_heart_rate_connection::BleHeartRateConnection;
 pub use controller::{
-    ControllerButton, StandaloneControllerConnection, ControllerInputStream, ControllerInputEvent,
-    ControllerProfile,
+    ControllerButton, ControllerInputEvent, ControllerInputStream, ControllerProfile,
+    StandaloneControllerConnection,
 };
 pub use device_manager::{ConnectionPriority, DeviceManager, Role, ScanResult};
 pub use ftms_trainer_connection::FtmsTrainerConnection;

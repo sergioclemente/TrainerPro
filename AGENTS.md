@@ -57,8 +57,10 @@ Do not duplicate those documents here.
   product constants.
 - Treat Rust serialized payloads and `frontend/ipc.ts` as one API; update every
   producer and consumer together.
-- Keep module-level tests inline until a source file exceeds 1,000 lines. Use a
-  crate's `tests/` directory only for genuine integration tests of public behavior.
+- Prefer crate and IPC interface tests of public behavior. Use a crate's
+  `tests/` directory for public API tests; keep narrow inline tests only for
+  private invariants without a practical public test path. See
+  `CONTRIBUTING.md` for the testing philosophy.
 
 ## Verification
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppError, SegmentRow, fmtDuration, ipc } from "../ipc";
+import { AppError, PlayerWorkoutProfile, fmtDuration, ipc } from "../ipc";
 import { useStore } from "../state";
 import WorkoutGraph from "../components/WorkoutGraph";
 import { BoltIcon, CadenceIcon, HeartIcon } from "../components/MetricIcons";
@@ -52,11 +52,10 @@ function Stat({
   );
 }
 
-export default function Player({ segments }: { segments: SegmentRow[] }) {
+export default function Player({ workout }: { workout: PlayerWorkoutProfile | null }) {
   const {
     player,
     measurement,
-    workouts,
     settings,
     go,
     pushToast,
@@ -203,7 +202,7 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
     );
   }
 
-  const workout = workouts.find((w) => w.id === player.workout_definition_id);
+  const segments = workout?.segments ?? [];
   const power = measurement?.power_smoothed_3s_w ?? measurement?.power_w ?? null;
   const targetPower = player.target_power_w;
   const weight = settings?.profile.weight_kg ?? null;
@@ -269,7 +268,7 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
             progressS={player.elapsed_s}
             height={140}
             segments={segments}
-            ftp={settings?.profile.ftp}
+            ftp={workout.ftp_w}
             activeIndex={player.seg_idx}
           />
         )}
