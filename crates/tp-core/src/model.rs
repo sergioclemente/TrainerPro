@@ -38,7 +38,12 @@ pub enum Segment {
         cadence_rpm: Option<u16>,
     },
     /// No ERG target; trainer switches to simulation mode, grade 0 %.
-    FreeRide { duration_s: u32 },
+    /// Open interval: duration with no power target. The trainer runs in
+    /// simulation mode; a cadence prescription may still ride along.
+    FreeRide {
+        duration_s: u32,
+        cadence_rpm: Option<u16>,
+    },
 }
 
 impl Segment {
@@ -46,7 +51,7 @@ impl Segment {
         match self {
             Segment::Steady { duration_s, .. }
             | Segment::Ramp { duration_s, .. }
-            | Segment::FreeRide { duration_s } => *duration_s,
+            | Segment::FreeRide { duration_s, .. } => *duration_s,
         }
     }
 }
@@ -112,15 +117,14 @@ impl ExecutableWorkout {
     }
 
     /// Compiled cadence prescription in rpm at active-time offset `t_s`.
-    /// `None` inside FreeRide, when cadence is not prescribed, or past the
-    /// end of the workout.
+    /// `None` when cadence is not prescribed or past the end of the workout.
+    /// Open (FreeRide) intervals may prescribe cadence like any other.
     pub fn target_cadence_rpm_at(&self, t_s: u32) -> Option<u16> {
         let (segment_index, _) = self.segment_at(t_s)?;
         match &self.segments[segment_index] {
-            Segment::Steady { cadence_rpm, .. } | Segment::Ramp { cadence_rpm, .. } => {
-                *cadence_rpm
-            }
-            Segment::FreeRide { .. } => None,
+            Segment::Steady { cadence_rpm, .. }
+            | Segment::Ramp { cadence_rpm, .. }
+            | Segment::FreeRide { cadence_rpm, .. } => *cadence_rpm,
         }
     }
 }
@@ -167,7 +171,10 @@ mod tests {
                 power: PowerTarget::Watts(100),
                 cadence_rpm: Some(95),
             },
-            Segment::FreeRide { duration_s: 30 },
+            Segment::FreeRide {
+                duration_s: 30,
+                cadence_rpm: None,
+            },
         ]);
         assert_eq!(w.segment_at(59), Some((0, 59)));
         assert_eq!(w.segment_at(60), Some((1, 0)));

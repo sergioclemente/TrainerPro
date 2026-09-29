@@ -57,7 +57,10 @@ pub fn graph_points(w: &ExecutableWorkout, ftp: u16) -> Vec<(u32, f64)> {
                 out.push((t, pct(start)));
                 out.push((t + duration_s, pct(end)));
             }
-            Segment::FreeRide { duration_s } => {
+            Segment::FreeRide { duration_s, .. } => {
+                // Zero at both ends marks an open interval: no real target
+                // can be 0 % (POWER_FRACTION_MIN), so the graph draws the
+                // pair as an open block rather than a zone bar.
                 out.push((t, 0.0));
                 out.push((t + duration_s, 0.0));
             }
@@ -314,14 +317,17 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
                     cadence_rpm: *cadence_rpm,
                 }
             }
-            Segment::FreeRide { duration_s } => SegmentRow {
+            Segment::FreeRide {
+                duration_s,
+                cadence_rpm,
+            } => SegmentRow {
                 kind: "freeride".into(),
                 label: "Free ride".into(),
                 note,
                 duration_s: *duration_s,
                 start_pct: 0.0,
                 end_pct: 0.0,
-                cadence_rpm: None,
+                cadence_rpm: *cadence_rpm,
             },
         };
         rows.push(row);

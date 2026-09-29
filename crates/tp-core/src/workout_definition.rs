@@ -62,6 +62,8 @@ pub enum CyclingStep {
     },
     FreeRide {
         duration_seconds: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cadence: Option<CyclingCadenceTarget>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         cues: Vec<WorkoutCue>,
     },
@@ -188,8 +190,9 @@ impl WorkoutDefinition {
                     cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
                     cues,
                 },
-                Segment::FreeRide { .. } => CyclingStep::FreeRide {
+                Segment::FreeRide { cadence_rpm, .. } => CyclingStep::FreeRide {
                     duration_seconds,
+                    cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
                     cues,
                 },
             };
@@ -405,9 +408,13 @@ fn validate_step(
         }
         CyclingStep::FreeRide {
             duration_seconds,
+            cadence,
             cues,
         } => {
             validate_duration(*duration_seconds, path)?;
+            if let Some(cadence) = cadence {
+                validate_cadence(cadence, &format!("{path}.cadence"))?;
+            }
             validate_cues(cues, *duration_seconds, path)?;
             Ok(leaf_stats(*duration_seconds))
         }
@@ -616,11 +623,13 @@ fn compile_steps(
             }
             CyclingStep::FreeRide {
                 duration_seconds,
+                cadence,
                 cues,
             } => {
                 compile_cues(cues, *offset_seconds, text_events);
                 segments.push(Segment::FreeRide {
                     duration_s: *duration_seconds,
+                    cadence_rpm: cadence.as_ref().map(compile_cadence),
                 });
                 *offset_seconds += duration_seconds;
             }
@@ -857,7 +866,10 @@ mod tests {
                     power: PowerTarget::PercentFtp(0.75),
                     cadence_rpm: Some(90),
                 },
-                Segment::FreeRide { duration_s: 30 },
+                Segment::FreeRide {
+                    duration_s: 30,
+                    cadence_rpm: None,
+                },
             ],
             text_events: vec![TextEvent {
                 offset_s: 65,

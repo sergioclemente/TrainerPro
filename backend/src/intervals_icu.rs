@@ -372,14 +372,17 @@ fn convert_step(step: &IntervalsStep, path: &str) -> Result<CyclingStep, Interva
     let cues = cues(step);
 
     if step.freeride {
-        if step.ramp || step.power.is_some() || step.cadence.is_some() {
-            return invalid(
-                path,
-                "freeride must not also define ramp, power, or cadence",
-            );
+        if step.ramp || step.power.is_some() {
+            return invalid(path, "freeride must not also define ramp or power");
         }
+        let cadence = step
+            .cadence
+            .as_ref()
+            .map(|target| convert_cadence(target, &format!("{path}.cadence")))
+            .transpose()?;
         return Ok(CyclingStep::FreeRide {
             duration_seconds,
+            cadence,
             cues,
         });
     }
@@ -852,6 +855,45 @@ mod tests {
         );
         assert_eq!(cues[0].message, "Hold good form");
         assert_eq!(cues[0].display_seconds, TEXT_EVENT_DEFAULT_S);
+    }
+
+    #[test]
+    fn freeride_keeps_cadence_but_rejects_power() {
+        let pct = || IntervalsTarget {
+            units: "%ftp".into(),
+            value: Some(70.0),
+            start: None,
+            end: None,
+        };
+        let open_step = || {
+            let mut step = leaf_step(pct());
+            step.freeride = true;
+            step.power = None;
+            step.cadence = Some(IntervalsTarget {
+                units: "rpm".into(),
+                value: Some(90.0),
+                start: None,
+                end: None,
+            });
+            step
+        };
+        let definition = event_with_steps(vec![open_step()], 60)
+            .to_workout_definition()
+            .unwrap();
+        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        assert!(matches!(
+            &steps[0],
+            CyclingStep::FreeRide {
+                cadence: Some(CyclingCadenceTarget::Exact { rpm: 90 }),
+                ..
+            }
+        ));
+
+        let mut with_power = open_step();
+        with_power.power = Some(pct());
+        assert!(event_with_steps(vec![with_power], 60)
+            .to_workout_definition()
+            .is_err());
     }
 
     #[test]

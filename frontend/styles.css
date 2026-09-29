@@ -1285,6 +1285,29 @@ button.big {
   left: auto;
   right: 6px;
 }
+/* Open (no-target) block label. The box spans the block so a container
+   query can drop the word when the block is too narrow to hold it. */
+.graph-open {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: inline-size;
+  pointer-events: none;
+}
+.graph-open-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c9d1d9;
+  text-shadow: 0 0 4px rgba(13, 17, 23, 0.95), 0 0 2px rgba(13, 17, 23, 0.95);
+  white-space: nowrap;
+}
+@container (max-width: 48px) {
+  .graph-open-label {
+    display: none;
+  }
+}
 /* Right-click menu on an interval. Sits above the tooltip, which is hidden
    while the menu is open. */
 .graph-menu {

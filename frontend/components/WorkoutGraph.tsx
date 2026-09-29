@@ -40,6 +40,9 @@ interface Props {
 
 /** Watt spacing of the scale labels. */
 const GRID_STEP_W = 100;
+/** Height of an open (no-target) block. It is a placeholder for time, not a
+    target: the hatch and dashed outline say so, and it never joins `maxPct`. */
+const OPEN_BLOCK_NOMINAL_PCT = 60;
 /** Bottom of the rpm scale. Targets below it sit on the edge. */
 const CADENCE_AXIS_MIN_RPM = 40;
 /** Top of the rpm scale unless a target needs more room. */
@@ -78,7 +81,10 @@ export function wattsFromPct(pct: number, ftp: number): number {
 }
 
 export function segmentText(s: SegmentRow, ftp?: number): string {
-  if (s.kind === "freeride") return `${s.label} — ${fmtDuration(s.duration_s)}`;
+  if (s.kind === "freeride") {
+    const cad = s.cadence_rpm != null ? ` · ${s.cadence_rpm} rpm` : "";
+    return `${s.label} — ${fmtDuration(s.duration_s)} · open${cad}`;
+  }
   const pct =
     s.kind === "ramp"
       ? `${Math.round(s.start_pct)}% → ${Math.round(s.end_pct)}%`
@@ -194,8 +200,17 @@ export default function WorkoutGraph({
   const x = (t: number) => (t / Math.max(durationS, 1)) * W;
   const y = (p: number) => height - (p / maxPct) * height;
 
-  const polys: { points: string; color: string; x0: number; x1: number; t0: number; t1: number }[] =
-    [];
+  const polys: {
+    points: string;
+    color: string;
+    x0: number;
+    x1: number;
+    t0: number;
+    t1: number;
+    /** No power target: both breakpoints are 0 %, which no real target can
+        be (POWER_FRACTION_MIN). Drawn as a hatched block, not a zone bar. */
+    open: boolean;
+  }[] = [];
   for (let i = 0; i + 1 < graph.length; i += 2) {
     const [t0, p0] = graph[i];
     const [t1, p1] = graph[i + 1];
@@ -206,8 +221,10 @@ export default function WorkoutGraph({
       x1: x(t1),
       t0,
       t1,
+      open: p0 === 0 && p1 === 0,
     });
   }
+  const openTop = y(OPEN_BLOCK_NOMINAL_PCT);
 
   /** Midpoint of a bar as a % of the width, kept off the edges so a tooltip
       centred there is not clipped by the (overflow-hidden) graph frame. */
@@ -308,15 +325,49 @@ export default function WorkoutGraph({
       preserveAspectRatio="none"
       style={{ width: "100%", height: "100%", display: "block" }}
     >
+      <defs>
+        {/* Diagonal hatch for open blocks. Pattern space is the stretched
+            viewBox, so the stripes lean with the aspect ratio; that is fine
+            for a texture whose only job is to read as "not a bar". */}
+        <pattern
+          id="graph-open-hatch"
+          width={14}
+          height={14}
+          patternUnits="userSpaceOnUse"
+          patternTransform="rotate(45)"
+        >
+          <rect width={14} height={14} fill="#6e7681" fillOpacity={0.16} />
+          <rect width={4} height={14} fill="#8b949e" fillOpacity={0.45} />
+        </pattern>
+      </defs>
       <line x1={0} x2={W} y1={y(100)} y2={y(100)} stroke="#30363d" strokeDasharray="6 6" />
-      {polys.map((p, i) => (
-        <polygon
-          key={i}
-          points={p.points}
-          fill={p.color}
-          opacity={range === null || (i >= range[0] && i <= range[1]) ? 0.95 : 0.5}
-        />
-      ))}
+      {polys.map((p, i) => {
+        const dim = range === null || (i >= range[0] && i <= range[1]) ? 0.95 : 0.5;
+        if (!p.open) return <polygon key={i} points={p.points} fill={p.color} opacity={dim} />;
+        return (
+          <g key={i} opacity={dim}>
+            <rect
+              x={p.x0}
+              y={openTop}
+              width={Math.max(p.x1 - p.x0, 1)}
+              height={height - openTop}
+              fill="url(#graph-open-hatch)"
+            />
+            <rect
+              x={p.x0}
+              y={openTop}
+              width={Math.max(p.x1 - p.x0, 1)}
+              height={height - openTop}
+              fill="none"
+              stroke="#c9d1d9"
+              strokeOpacity={0.8}
+              strokeWidth={1.5}
+              strokeDasharray="5 4"
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
+        );
+      })}
       {showCadence &&
         polys.map((p, i) => {
           const rpm = segments![i].cadence_rpm;
@@ -424,6 +475,28 @@ export default function WorkoutGraph({
       {w} W
     </span>
   ));
+  // "OPEN" centred in each open block. HTML like the scale labels, and a
+  // container query hides it when the block is too narrow to hold it.
+  const openLabels = interactive
+    ? polys.flatMap((p, i) =>
+        p.open
+          ? [
+              <div
+                key={`o${i}`}
+                className="graph-open"
+                style={{
+                  left: `${(p.x0 / W) * 100}%`,
+                  width: `${(Math.max(p.x1 - p.x0, 1) / W) * 100}%`,
+                  top: `${(openTop / height) * 100}%`,
+                  height: `${((height - openTop) / height) * 100}%`,
+                }}
+              >
+                <span className="graph-open-label">open</span>
+              </div>,
+            ]
+          : [],
+      )
+    : [];
   const cadenceLabels = gridRpm.map((r) => (
     <span
       key={`r${r}`}
@@ -466,6 +539,7 @@ export default function WorkoutGraph({
       {svg}
       {scaleLabels}
       {cadenceLabels}
+      {openLabels}
       {hovered && menu === null && (
         <div
           className="graph-tooltip"

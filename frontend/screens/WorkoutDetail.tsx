@@ -70,7 +70,10 @@ const ZONES = [
   { name: "Z5", color: "#f0883e" },
   { name: "Z6", color: "#f85149" },
   { name: "Z7", color: "#bc8cff" },
+  // Open intervals have no zone; the strip shows their time as a hatch.
+  { name: "Open", color: "repeating-linear-gradient(45deg, #6e7681 0 3px, #30363d 3px 7px)" },
 ];
+const OPEN_BUCKET = ZONES.length - 1;
 
 function zoneOf(pct: number): number {
   if (pct < 55) return 0;
@@ -83,9 +86,11 @@ function zoneOf(pct: number): number {
 }
 
 function zoneSeconds(segments: SegmentRow[]): number[] {
-  const out = [0, 0, 0, 0, 0, 0, 0];
+  const out = ZONES.map(() => 0);
   for (const s of segments) {
-    if (s.kind === "ramp") {
+    if (s.kind === "freeride") {
+      out[OPEN_BUCKET] += s.duration_s;
+    } else if (s.kind === "ramp") {
       const slices = 10;
       for (let i = 0; i < slices; i++) {
         const p = s.start_pct + ((s.end_pct - s.start_pct) * (i + 0.5)) / slices;

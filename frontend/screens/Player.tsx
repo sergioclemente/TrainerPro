@@ -253,7 +253,9 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
       ? "ready to start"
       : targetPower !== null
         ? `target ${targetPower} W`
-        : "free ride";
+        : // An open interval shows the author's text for it when there is
+          // one; the generic line only when there is nothing better.
+          `open · ${segment?.note ?? "ride as you like"}`;
 
   async function endRide() {
     if (

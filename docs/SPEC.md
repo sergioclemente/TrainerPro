@@ -124,7 +124,9 @@ Keyboard controls are hold Space for push-to-talk, `S` for skip, and Up/Down
 for intensity. Space does not start, pause, or resume a workout. Display power uses a three-second rolling average; recording retains
 the unsmoothed measurement stream. The player graph draws the ridden power from
 the same one-second samples the journal records, and shows each interval's
-cadence target against an rpm scale on its right edge.
+cadence target against an rpm scale on its right edge. Open intervals (free
+ride, no power target) draw as a hatched placeholder block rather than a zone
+bar; they may carry a cadence target, and the Player labels them "open".
 
 Loss of trainer control pauses the ride and starts reconnect attempts. Recovery
 reapplies control state and the current target, but never resumes the timer

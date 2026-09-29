@@ -32,12 +32,14 @@ function ordinal(n: number): string {
   }
 }
 
-function segmentSummary(result: SegmentResult): string {
+function segmentSummary(result: SegmentResult, segment?: SegmentRow): string {
   const duration = result.skipped
     ? `${formatTimelineDuration(result.ridden_duration_s)} / ${formatTimelineDuration(result.planned_duration_s)}`
     : formatTimelineDuration(result.planned_duration_s);
-  return result.average_power_w === null
-    ? duration
+  if (result.average_power_w === null) return duration;
+  // An open interval had no target, so "@" would suggest one it never had.
+  return segment?.kind === "freeride"
+    ? `${duration} · rode ${result.average_power_w} W avg`
     : `${duration} @ ${result.average_power_w} W`;
 }
 
@@ -61,7 +63,7 @@ function SegmentCard({ result, segment }: { result: SegmentResult; segment?: Seg
         </span>
         {result.skipped && <span className="timeline-segment-skipped">Skipped</span>}
       </div>
-      <div className="timeline-segment-result">{segmentSummary(result)}</div>
+      <div className="timeline-segment-result">{segmentSummary(result, segment)}</div>
       {result.average_cadence_rpm !== null && (
         <div className="timeline-segment-cadence">
           {result.average_cadence_rpm} rpm

@@ -130,12 +130,14 @@ Moves linearly from `start_power` to `end_power` over `duration_seconds`.
 
 ### `free_ride`
 
-Specifies duration without a power or cadence target.
+An open interval: duration without a power target. The trainer runs in
+simulation mode. A cadence target may still be prescribed.
 
 | Field | Required | Meaning |
 |---|---:|---|
 | `type` | yes | `"free_ride"` |
 | `duration_seconds` | yes | Positive integer duration |
+| `cadence` | no | Cycling cadence target |
 | `cues` | no | Coaching cues; defaults to an empty list |
 
 ### `repeat`
