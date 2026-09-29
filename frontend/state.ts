@@ -17,6 +17,7 @@ import {
   SegmentResult,
   Settings,
   PlayerMeasurement,
+  RideTracePoint,
   WorkoutSummary,
   ipc,
 } from "./ipc";
@@ -89,6 +90,8 @@ interface Store {
   player: PlayerState | null;
   measurement: PlayerMeasurement | null;
   rideTimeline: RideTimelineState;
+  /** Ridden power/cadence so far, one point per second, in arrival order. */
+  rideTrace: RideTracePoint[];
   summary: ActivitySummary | null;
   detail: WorkoutDetailView | null;
   activities: ActivityRow[];
@@ -117,6 +120,8 @@ interface Store {
   refreshActivities: () => Promise<void>;
   refreshSettings: () => Promise<void>;
   loadPlayer: (player: PlayerState) => void;
+  /** Replace the ridden trace, e.g. from `get_ride_trace` after a reload. */
+  loadRideTrace: (trace: RideTracePoint[]) => void;
   recordUserAction: (
     label: string,
     expectedPhase?: PlayerState["phase"] | null,
@@ -146,6 +151,7 @@ export const useStore = create<Store>((set, get) => ({
   player: null,
   measurement: null,
   rideTimeline: createRideTimelineState(),
+  rideTrace: [],
   summary: null,
   detail: null,
   activities: [],
@@ -220,7 +226,9 @@ export const useStore = create<Store>((set, get) => ({
       lastTrainerStatus: state.deviceStatus.trainer?.status ??
         state.rideTimeline.lastTrainerStatus,
     },
+    rideTrace: [],
   })),
+  loadRideTrace: (trace) => set({ rideTrace: trace }),
   recordUserAction: (label, expectedPhase = null) => set((state) => ({
     rideTimeline: recordUserAction(
       state.rideTimeline,
@@ -245,6 +253,7 @@ export const useStore = create<Store>((set, get) => ({
       ...createRideTimelineState(),
       lastTrainerStatus: state.deviceStatus.trainer?.status ?? null,
     },
+    rideTrace: [],
   })),
   pushToast: (level, message) => {
     const id = ++toastSeq;
@@ -301,6 +310,10 @@ export async function wireEvents(): Promise<void> {
   await listen<PlayerMeasurement>("player_measurement", (e) =>
     s.setState({ measurement: e.payload }),
   );
+
+  await listen<RideTracePoint>("ride_sample", (e) => {
+    s.setState((state) => ({ rideTrace: [...state.rideTrace, e.payload] }));
+  });
 
   await listen<PlayerState>("player_state", (e) => {
     if (e.payload.phase !== lastTracedPlayerPhase) {
@@ -367,6 +380,7 @@ export async function wireEvents(): Promise<void> {
         ...createRideTimelineState(),
         lastTrainerStatus: state.deviceStatus.trainer?.status ?? null,
       },
+      rideTrace: [],
     }));
     void s.getState().refreshActivities();
     void s.getState().refreshNextUp();

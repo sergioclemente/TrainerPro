@@ -14,6 +14,10 @@
 //! - Pause: StopTrainer. Resume: StartTrainer + re-emit current target.
 //! - SkipSegment: jump to next boundary (FinalizeSegment) while riding or
 //!   paused; skip on last segment behaves like End.
+//! - GoTo: reposition to the start of any segment, forward or backward. The
+//!   current segment is finalized as skipped, and so is every segment a
+//!   forward jump passes over (with nothing ridden). Ridden time never moves.
+//!   In Ready it only sets the start position.
 //! - SetIntensity clamps to INTENSITY_MIN..=MAX, re-emits target if changed.
 //! - Text events fire when active time crosses offset_s (paused excluded);
 //!   each fires exactly once.
@@ -36,6 +40,8 @@ pub enum EngineEvent {
     Pause,
     Resume,
     SkipSegment,
+    /// Move to the start of the given segment, in either direction.
+    GoToSegment(usize),
     SetIntensity(f64),
     Tick { dt_ms: u64 },
     End,
@@ -194,6 +200,43 @@ impl Engine {
                 }
                 self.fire_texts(&mut actions);
             }
+            EngineEvent::GoToSegment(target) => {
+                if target >= self.workout.segments.len() {
+                    return actions;
+                }
+                match self.phase {
+                    Phase::Ready => {
+                        // Only the start position moves; Start still emits
+                        // the trainer commands and cues for it.
+                        self.reposition(target);
+                    }
+                    Phase::Riding | Phase::Paused => {
+                        // The interval being left ends as skipped, whatever
+                        // direction the jump goes — a jump onto the current
+                        // interval restarts it. A forward jump also closes
+                        // every interval it passes over, in order, with
+                        // nothing ridden in them.
+                        actions.push(EngineAction::FinalizeSegment {
+                            segment_index: self.seg_idx,
+                            reason: SegmentEndReason::Skipped,
+                        });
+                        for passed in (self.seg_idx + 1)..target {
+                            actions.push(EngineAction::FinalizeSegment {
+                                segment_index: passed,
+                                reason: SegmentEndReason::Skipped,
+                            });
+                        }
+                        self.reposition(target);
+                        // While paused, keep the trainer stopped. Resume
+                        // force-emits the new segment's target.
+                        if self.phase == Phase::Riding {
+                            self.retarget(&mut actions, true);
+                        }
+                        self.fire_texts(&mut actions);
+                    }
+                    Phase::Finished => {}
+                }
+            }
             EngineEvent::SetIntensity(v) => {
                 if self.phase == Phase::Finished {
                     return actions;
@@ -312,6 +355,26 @@ impl Engine {
 
     fn seg_dur_ms(&self, idx: usize) -> u64 {
         u64::from(self.workout.segments[idx].duration_s()) * 1000
+    }
+
+    /// Active-time offset at which segment `idx` begins.
+    fn segment_start_ms(&self, idx: usize) -> u64 {
+        (0..idx).map(|i| self.seg_dur_ms(i)).sum()
+    }
+
+    /// Put the position at the start of segment `target`. Text cues behind
+    /// the new position are never fired; cues at or after it fire again even
+    /// if they already did, so a repeated interval is coached again.
+    fn reposition(&mut self, target: usize) {
+        self.seg_idx = target;
+        self.active_ms = self.segment_start_ms(target);
+        self.seg_elapsed_ms = 0;
+        self.next_text = self
+            .workout
+            .text_events
+            .iter()
+            .position(|ev| text_offset_ms(ev) >= self.active_ms)
+            .unwrap_or(self.workout.text_events.len());
     }
 
     fn total_ms(&self) -> u64 {
@@ -765,6 +828,183 @@ mod tests {
             assert_eq!(tick(&mut e), vec![]);
         }
         assert_eq!(tick(&mut e), vec![EngineAction::ShowText(later)]);
+    }
+
+    // ---- GoTo ----
+
+    fn three_steady() -> ExecutableWorkout {
+        wk(vec![steady(10, 100), steady(10, 200), steady(10, 300)])
+    }
+
+    #[test]
+    fn goto_forward_finalizes_current_and_passed_segments_in_order() {
+        let mut e = Engine::new(three_steady(), 250, 1.0);
+        e.step(EngineEvent::Start);
+        tick(&mut e);
+        let actions = e.step(EngineEvent::GoToSegment(2));
+        assert_eq!(
+            actions,
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Skipped,
+                },
+                EngineAction::FinalizeSegment {
+                    segment_index: 1,
+                    reason: SegmentEndReason::Skipped,
+                },
+                EngineAction::SetTargetPower { watts: 300 },
+            ]
+        );
+        assert_eq!(e.segment_index(), Some(2));
+        assert_eq!(e.active_ms(), 20_000);
+        assert_eq!(e.phase(), Phase::Riding);
+    }
+
+    #[test]
+    fn goto_backward_finalizes_only_current_and_keeps_ridden_time() {
+        let mut e = Engine::new(three_steady(), 250, 1.0);
+        e.step(EngineEvent::Start);
+        e.step(EngineEvent::SkipSegment);
+        e.step(EngineEvent::SkipSegment);
+        for _ in 0..4 {
+            tick(&mut e);
+        }
+        assert_eq!(e.segment_index(), Some(2));
+        assert_eq!(e.ridden_ms(), 1_000);
+        let actions = e.step(EngineEvent::GoToSegment(0));
+        assert_eq!(
+            actions,
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 2,
+                    reason: SegmentEndReason::Skipped,
+                },
+                EngineAction::SetTargetPower { watts: 100 },
+            ]
+        );
+        assert_eq!(e.segment_index(), Some(0));
+        assert_eq!(e.active_ms(), 0);
+        assert_eq!(e.ridden_ms(), 1_000);
+        // The re-ridden segment ends again as Completed, like the first time.
+        for _ in 0..39 {
+            assert!(!tick(&mut e)
+                .iter()
+                .any(|a| matches!(a, EngineAction::FinalizeSegment { .. })));
+        }
+        assert_eq!(
+            tick(&mut e),
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Completed,
+                },
+                EngineAction::SetTargetPower { watts: 200 },
+            ]
+        );
+    }
+
+    #[test]
+    fn goto_same_segment_restarts_it() {
+        let mut e = Engine::new(three_steady(), 250, 1.0);
+        e.step(EngineEvent::Start);
+        for _ in 0..8 {
+            tick(&mut e);
+        }
+        let actions = e.step(EngineEvent::GoToSegment(0));
+        assert_eq!(
+            actions,
+            vec![
+                EngineAction::FinalizeSegment {
+                    segment_index: 0,
+                    reason: SegmentEndReason::Skipped,
+                },
+                EngineAction::SetTargetPower { watts: 100 },
+            ]
+        );
+        assert_eq!(e.segment_index(), Some(0));
+        assert_eq!(e.active_ms(), 0);
+        assert_eq!(e.ridden_ms(), 2_000);
+    }
+
+    #[test]
+    fn goto_in_ready_sets_start_position_without_actions() {
+        let mut e = Engine::new(three_steady(), 250, 1.0);
+        assert_eq!(e.step(EngineEvent::GoToSegment(1)), vec![]);
+        assert_eq!(e.phase(), Phase::Ready);
+        assert_eq!(e.segment_index(), Some(1));
+        assert_eq!(e.active_ms(), 10_000);
+        assert_eq!(
+            e.step(EngineEvent::Start),
+            vec![
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 200 }
+            ]
+        );
+    }
+
+    #[test]
+    fn goto_while_paused_repositions_and_stays_paused() {
+        let mut e = Engine::new(three_steady(), 250, 1.0);
+        e.step(EngineEvent::Start);
+        e.step(EngineEvent::Pause);
+        let actions = e.step(EngineEvent::GoToSegment(2));
+        assert_eq!(e.phase(), Phase::Paused);
+        assert!(!actions
+            .iter()
+            .any(|a| matches!(a, EngineAction::SetTargetPower { .. })));
+        assert_eq!(e.segment_index(), Some(2));
+        assert_eq!(
+            e.step(EngineEvent::Resume),
+            vec![
+                EngineAction::StartTrainer,
+                EngineAction::SetTargetPower { watts: 300 }
+            ]
+        );
+    }
+
+    #[test]
+    fn goto_recomputes_text_cues_in_both_directions() {
+        let early = text(2, "early");
+        let at_boundary = text(10, "boundary");
+        let later = text(15, "later");
+        let mut e = Engine::new(
+            wk_with_texts(
+                vec![steady(10, 100), steady(10, 200)],
+                vec![early.clone(), at_boundary.clone(), later.clone()],
+            ),
+            250,
+            1.0,
+        );
+        e.step(EngineEvent::Start);
+        // Forward: the cue behind the new position is dropped, the one on the
+        // boundary fires with the jump.
+        let actions = e.step(EngineEvent::GoToSegment(1));
+        assert!(actions.contains(&EngineAction::ShowText(at_boundary.clone())));
+        assert!(!actions.contains(&EngineAction::ShowText(early.clone())));
+        // Backward: cues at or after the new position fire again.
+        e.step(EngineEvent::GoToSegment(0));
+        for _ in 0..7 {
+            assert_eq!(tick(&mut e), vec![]);
+        }
+        assert_eq!(tick(&mut e), vec![EngineAction::ShowText(early)]);
+    }
+
+    #[test]
+    fn goto_out_of_range_is_ignored() {
+        let mut e = Engine::new(three_steady(), 250, 1.0);
+        e.step(EngineEvent::Start);
+        assert_eq!(e.step(EngineEvent::GoToSegment(3)), vec![]);
+        assert_eq!(e.segment_index(), Some(0));
+    }
+
+    #[test]
+    fn goto_after_finish_is_ignored() {
+        let mut e = Engine::new(wk(vec![steady(1, 100)]), 250, 1.0);
+        e.step(EngineEvent::Start);
+        e.step(EngineEvent::End);
+        assert_eq!(e.step(EngineEvent::GoToSegment(0)), vec![]);
+        assert_eq!(e.phase(), Phase::Finished);
     }
 
     // ---- SetIntensity ----

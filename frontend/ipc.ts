@@ -102,9 +102,19 @@ export interface PlayerMeasurement {
   power_smoothed_3s_w: number | null;
 }
 
+/** One 1 Hz point of the ridden trace, the same sample the journal records.
+    `elapsed_s` is the workout position, so a Go To makes it jump. */
+export interface RideTracePoint {
+  elapsed_s: number;
+  power_w: number | null;
+  cadence_rpm: number | null;
+}
+
 export interface SegmentResult {
   workout_session_id: string;
   segment_index: number;
+  /** 1-based: above 1 when a backward Go To re-rode this interval. */
+  attempt: number;
   planned_duration_s: number;
   ridden_duration_s: number;
   average_power_w: number | null;
@@ -319,6 +329,8 @@ export const ipc = {
   pauseRide: () => invoke<void>("pause_ride"),
   resumeRide: () => invoke<void>("resume_ride"),
   skipSegment: () => invoke<void>("skip_segment"),
+  goToSegment: (index: number) => invoke<void>("go_to_segment", { index }),
+  getRideTrace: () => invoke<RideTracePoint[]>("get_ride_trace"),
   setIntensity: (pct: number) => invoke<void>("set_intensity", { pct }),
   setErg: (enabled: boolean) => invoke<void>("set_erg", { enabled }),
   endRide: () => invoke<ActivitySummary>("end_ride"),

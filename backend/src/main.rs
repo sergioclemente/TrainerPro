@@ -70,6 +70,8 @@ fn main() {
             commands::player::pause_ride,
             commands::player::resume_ride,
             commands::player::skip_segment,
+            commands::player::go_to_segment,
+            commands::player::get_ride_trace,
             commands::player::set_intensity,
             commands::player::set_erg,
             commands::player::end_ride,

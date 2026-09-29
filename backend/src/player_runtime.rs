@@ -37,7 +37,13 @@ pub enum PlayerCommand {
     Pause,
     Resume,
     SkipSegment,
+    /// Move to the start of a segment, in either direction. The index is
+    /// validated by the command layer against the loaded workout.
+    GoToSegment(usize),
     SetIntensity(f64),
+    /// Read back the 1 Hz trace ridden so far, for a UI that (re)mounts
+    /// mid-ride and missed the `ride_sample` events.
+    GetRideTrace(oneshot::Sender<Vec<RideTracePoint>>),
     /// Toggle ERG mode. Off = trainer switches to simulation grade 0 (free
     /// resistance); workout targets keep advancing but aren't sent.
     SetErg(bool),
@@ -48,7 +54,8 @@ pub struct PlayerHandle {
     pub command_tx: mpsc::Sender<PlayerCommand>,
     pub state_rx: watch::Receiver<PlayerState>,
     /// Immutable workout and FTP captured with the engine, independent of
-    /// later provider refreshes or profile edits.
+    /// later provider refreshes or profile edits. Callers also use the
+    /// workout to reject a segment index before it reaches the runtime.
     pub workout: ExecutableWorkout,
     pub ftp_w: u16,
 }
@@ -94,11 +101,23 @@ pub struct PlayerMeasurement {
 pub struct SegmentResult {
     pub workout_session_id: String,
     pub segment_index: usize,
+    /// 1-based count of results for this index in the session. Above 1 when
+    /// a backward Go To re-rides an interval; results are append-only.
+    pub attempt: u32,
     pub planned_duration_s: u32,
     pub ridden_duration_s: u32,
     pub average_power_w: Option<u16>,
     pub average_cadence_rpm: Option<u16>,
     pub skipped: bool,
+}
+
+/// One point of the ridden trace the Player graph draws: the workout position
+/// and what the same 1 Hz journal sample recorded there.
+#[derive(Debug, Clone, Serialize)]
+pub struct RideTracePoint {
+    pub elapsed_s: u32,
+    pub power_w: Option<u16>,
+    pub cadence_rpm: Option<u16>,
 }
 
 #[derive(Default)]
@@ -130,6 +149,7 @@ impl SegmentAccumulator {
         &mut self,
         workout_session_id: &str,
         segment_index: usize,
+        attempt: u32,
         planned_duration_s: u32,
         skipped: bool,
     ) -> SegmentResult {
@@ -137,6 +157,7 @@ impl SegmentAccumulator {
         SegmentResult {
             workout_session_id: workout_session_id.to_owned(),
             segment_index,
+            attempt,
             planned_duration_s,
             ridden_duration_s: (completed.ridden_ms / MILLIS_PER_SECOND) as u32,
             average_power_w: (completed.power_n > 0)
@@ -287,6 +308,8 @@ pub async fn spawn(
         hr_sum: 0,
         hr_n: 0,
         segment_accumulator: SegmentAccumulator::default(),
+        segment_attempts: vec![0; workout.segments.len()],
+        ride_trace: Vec::new(),
         ftp_w: settings.profile.ftp,
     };
     tokio::spawn(rt.run(command_rx));
@@ -336,6 +359,11 @@ struct Runtime {
     hr_n: u32,
     /// Ride time and 1 Hz measurements for the current workout segment.
     segment_accumulator: SegmentAccumulator,
+    /// Results emitted so far per segment index; a Go To can re-ride one.
+    segment_attempts: Vec<u32>,
+    /// Every `ride_sample` emitted this session, in emission order, so a UI
+    /// that mounts mid-ride can draw the line it missed.
+    ride_trace: Vec<RideTracePoint>,
     /// Rider FTP at load time — TSS and IF are relative to it.
     ftp_w: u16,
 }
@@ -375,6 +403,13 @@ impl Runtime {
                         PlayerCommand::SkipSegment => {
                             let actions = self.engine.step(EngineEvent::SkipSegment);
                             self.apply_engine_actions(actions).await;
+                        }
+                        PlayerCommand::GoToSegment(index) => {
+                            let actions = self.engine.step(EngineEvent::GoToSegment(index));
+                            self.apply_engine_actions(actions).await;
+                        }
+                        PlayerCommand::GetRideTrace(reply) => {
+                            let _ = reply.send(self.ride_trace.clone());
                         }
                         PlayerCommand::SetIntensity(i) => {
                             let actions = self.engine.step(EngineEvent::SetIntensity(i));
@@ -620,9 +655,11 @@ impl Runtime {
                 } => {
                     let planned_duration_s =
                         self.engine.workout().segments[*segment_index].duration_s();
+                    self.segment_attempts[*segment_index] += 1;
                     let result = self.segment_accumulator.take_result(
                         &self.workout_session_id,
                         *segment_index,
+                        self.segment_attempts[*segment_index],
                         planned_duration_s,
                         *reason == SegmentEndReason::Skipped,
                     );
@@ -721,6 +758,15 @@ impl Runtime {
                 error!("journal write: {err}");
             }
         }
+        // The graph's ridden line is fed by this very sample, so it can never
+        // disagree with the journal or the FIT file.
+        let point = RideTracePoint {
+            elapsed_s: (self.engine.active_ms() / MILLIS_PER_SECOND) as u32,
+            power_w: s.power_w,
+            cadence_rpm: s.cadence_rpm,
+        };
+        let _ = self.app.emit("ride_sample", &point);
+        self.ride_trace.push(point);
     }
 
     fn current_target_cadence_rpm(&self) -> Option<u16> {
@@ -940,10 +986,11 @@ mod tests {
         accumulator.note_sample(Some(200), Some(88));
         accumulator.note_sample(Some(220), None);
 
-        let result = accumulator.take_result("session", 3, 300, true);
+        let result = accumulator.take_result("session", 3, 2, 300, true);
 
         assert_eq!(result.workout_session_id, "session");
         assert_eq!(result.segment_index, 3);
+        assert_eq!(result.attempt, 2);
         assert_eq!(result.planned_duration_s, 300);
         assert_eq!(result.ridden_duration_s, 2);
         assert_eq!(result.average_power_w, Some(210));
@@ -956,9 +1003,9 @@ mod tests {
         let mut accumulator = SegmentAccumulator::default();
         accumulator.note_tick(1_000);
         accumulator.note_sample(Some(250), Some(90));
-        let _ = accumulator.take_result("session", 0, 60, false);
+        let _ = accumulator.take_result("session", 0, 1, 60, false);
 
-        let result = accumulator.take_result("session", 1, 30, false);
+        let result = accumulator.take_result("session", 1, 1, 30, false);
 
         assert_eq!(result.ridden_duration_s, 0);
         assert_eq!(result.average_power_w, None);
