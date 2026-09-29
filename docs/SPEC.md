@@ -92,6 +92,9 @@ runtime owns clocks, device commands, events, and recording.
 The player supports:
 
 - start, pause, explicit resume, skip, and end;
+- go to any interval from the graph (right-click), forward or backward, before
+  or during the ride; the interval left and any passed over are recorded as
+  skipped, and a re-ridden interval records a further result and lap;
 - intensity adjustment from 50% through 150%;
 - ERG enable/disable;
 - steady and ramp power targets, free ride, cadence targets, and coaching cues;
@@ -100,7 +103,9 @@ The player supports:
 
 Keyboard controls are Space for pause/resume, `S` for skip, and Up/Down for
 intensity. Display power uses a three-second rolling average; recording retains
-the unsmoothed measurement stream.
+the unsmoothed measurement stream. The player graph draws the ridden power from
+the same one-second samples the journal records, and shows each interval's
+cadence target against an rpm scale on its right edge.
 
 Loss of trainer control pauses the ride and starts reconnect attempts. Recovery
 reapplies control state and the current target, but never resumes the timer

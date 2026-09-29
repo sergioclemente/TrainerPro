@@ -1264,6 +1264,38 @@ button.big {
   text-shadow: 0 0 4px rgba(13, 17, 23, 0.95), 0 0 2px rgba(13, 17, 23, 0.95);
   pointer-events: none;
 }
+.graph-scale-label-right {
+  left: auto;
+  right: 6px;
+}
+/* Right-click menu on an interval. Sits above the tooltip, which is hidden
+   while the menu is open. */
+.graph-menu {
+  position: absolute;
+  z-index: 6;
+  background: rgba(13, 17, 23, 0.98);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  min-width: 160px;
+}
+.graph-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.graph-menu button:hover,
+.graph-menu button:focus-visible {
+  background: #21262d;
+  outline: none;
+}
 .graph-tooltip {
   position: absolute;
   z-index: 5;
@@ -1279,6 +1311,11 @@ button.big {
 .graph-tooltip-title {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+.graph-tooltip-ridden {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
 }
 .graph-tooltip-note {
   color: var(--muted);

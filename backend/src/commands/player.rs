@@ -6,7 +6,9 @@ use crate::app_error::AppError;
 use crate::app_state::AppState;
 use crate::commands::workout::load_workout_definition;
 use crate::database::scheduled_workouts as scheduled_db;
-use crate::player_runtime::{self as runtime, ActivitySummary, PlayerCommand, PlayerState};
+use crate::player_runtime::{
+    self as runtime, ActivitySummary, PlayerCommand, PlayerState, RideTracePoint,
+};
 
 type R<T> = Result<T, AppError>;
 
@@ -106,6 +108,33 @@ pub async fn resume_ride(state: State<'_, AppState>) -> R<()> {
 #[tauri::command]
 pub async fn skip_segment(state: State<'_, AppState>) -> R<()> {
     send_player_command(&state, PlayerCommand::SkipSegment).await
+}
+#[tauri::command]
+pub async fn go_to_segment(state: State<'_, AppState>, index: usize) -> R<()> {
+    {
+        let player = state.player.lock().await;
+        let handle = player
+            .as_ref()
+            .ok_or_else(|| AppError::new("no_ride", "no ride loaded"))?;
+        if index >= handle.segment_count {
+            return Err(AppError::new(
+                "bad_segment",
+                format!(
+                    "interval {} does not exist (workout has {})",
+                    index + 1,
+                    handle.segment_count
+                ),
+            ));
+        }
+    }
+    send_player_command(&state, PlayerCommand::GoToSegment(index)).await
+}
+#[tauri::command]
+pub async fn get_ride_trace(state: State<'_, AppState>) -> R<Vec<RideTracePoint>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    send_player_command(&state, PlayerCommand::GetRideTrace(tx)).await?;
+    rx.await
+        .map_err(|_| AppError::new("no_ride", "player exited before answering"))
 }
 #[tauri::command]
 pub async fn set_intensity(state: State<'_, AppState>, pct: f64) -> R<()> {

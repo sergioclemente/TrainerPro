@@ -6,6 +6,8 @@ export interface PlayerActionCommands {
   pauseRide: () => Promise<void>;
   resumeRide: () => Promise<void>;
   skipSegment: () => Promise<void>;
+  /** Jump to the start of interval `index`; `label` names it in the rail. */
+  goToSegment: (index: number, label: string) => Promise<void>;
   setIntensity: (intensity: number) => Promise<void>;
   setErg: (enabled: boolean) => Promise<void>;
 }
@@ -47,6 +49,8 @@ export const playerActions: PlayerActionCommands = {
   pauseRide: () => runPlayerAction("Pause workout", "paused", ipc.pauseRide),
   resumeRide: () => runPlayerAction("Resume workout", "riding", ipc.resumeRide),
   skipSegment: () => runPlayerAction("Skip interval", null, ipc.skipSegment),
+  goToSegment: (index, label) =>
+    runPlayerAction(`Go to ${label}`, null, () => ipc.goToSegment(index)),
   setIntensity: (intensity) => {
     const bounded = boundedIntensity(intensity);
     const percent = Math.round(bounded * PERCENT_SCALE);

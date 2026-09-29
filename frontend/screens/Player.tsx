@@ -17,6 +17,9 @@ import { playerActions } from "./Player.actions";
 import { createPlayerVoiceSurface } from "./Player.voice";
 
 const STATS_KEY = "trainerpro.player.stats";
+/** Position moves of more than this between two states are a skip or a
+    Go To, not the clock ticking. State arrives about once a second. */
+const POSITION_JUMP_S = 3;
 const PLAYER_VOICE_SURFACE = createPlayerVoiceSurface({
   getPlayer: () => useStore.getState().player,
   commands: playerActions,
@@ -53,6 +56,7 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
   const {
     player,
     measurement,
+    rideTrace,
     workouts,
     settings,
     go,
@@ -113,6 +117,7 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
   // let it land on the beat; seg_idx keeps it to one cue per segment.
   const cueTimer = useRef<number | null>(null);
   const cuedSeg = useRef<number | null>(null);
+  const lastElapsedS = useRef<number | null>(null);
   const chimed = useRef(false);
   useEffect(() => {
     return () => {
@@ -122,6 +127,20 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
   useEffect(() => {
     if (!player) return;
     const { phase, seg_idx, seg_remaining_s, elapsed_s, workout_duration_s } = player;
+    // A jump (either direction) invalidates a cue armed for the old position
+    // and lets the same interval be cued again when it is restarted.
+    const previous = lastElapsedS.current;
+    lastElapsedS.current = elapsed_s;
+    if (
+      previous !== null &&
+      (elapsed_s < previous || elapsed_s - previous > POSITION_JUMP_S)
+    ) {
+      if (cueTimer.current !== null) {
+        window.clearTimeout(cueTimer.current);
+        cueTimer.current = null;
+      }
+      cuedSeg.current = null;
+    }
     if (phase !== "riding") {
       // Pausing drops the pending cue; resuming re-arms it from the new state.
       if (cueTimer.current !== null) {
@@ -212,6 +231,11 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
     settlePlayerAction(playerActions.setErg(!player!.erg_enabled));
   }
 
+  function goToSegment(index: number) {
+    const label = segments[index]?.label || `Interval ${index + 1}`;
+    settlePlayerAction(playerActions.goToSegment(index, label));
+  }
+
   return (
     <div className="player">
       <h1 className="player-title">{player.workout_name}</h1>
@@ -226,6 +250,8 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
             segments={segments}
             ftp={settings?.profile.ftp}
             activeIndex={player.seg_idx}
+            trace={rideTrace}
+            onGoTo={player.phase !== "finished" ? goToSegment : undefined}
           />
         )}
       </div>
@@ -383,7 +409,8 @@ export default function Player({ segments }: { segments: SegmentRow[] }) {
         </button>
       </div>
       <p className="muted footnote">
-        space pause/resume · s skip · e ERG · d stats · ↑/↓ intensity
+        space pause/resume · s skip · e ERG · d stats · ↑/↓ intensity · right-click
+        an interval to go to it
       </p>
     </div>
   );

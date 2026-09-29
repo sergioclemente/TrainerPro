@@ -59,6 +59,7 @@ function AppShell() {
     refreshActivities,
     refreshSettings,
     loadPlayer,
+    loadRideTrace,
   } = useStore();
   const [segments, setSegments] = useState<SegmentRow[]>([]);
 
@@ -70,7 +71,10 @@ function AppShell() {
     // Rehydrate a ride the backend still has loaded (e.g. after a UI
     // reload), so the sidebar shows it and the Player screen can resume.
     void ipc.getPlayerState().then((ps) => {
-      if (ps) loadPlayer(ps);
+      if (!ps) return;
+      loadPlayer(ps);
+      // The ridden line arrives as events; a reload missed them.
+      void ipc.getRideTrace().then(loadRideTrace).catch(() => undefined);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

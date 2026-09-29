@@ -16,6 +16,22 @@ function formatTimelineDuration(durationS: number): string {
   return remainder === 0 ? `${minutes} min` : `${minutes} min ${remainder} sec`;
 }
 
+/** "2nd", "3rd", … for a re-ridden interval's attempt number. */
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
+}
+
 function segmentSummary(result: SegmentResult): string {
   const duration = result.skipped
     ? `${formatTimelineDuration(result.ridden_duration_s)} / ${formatTimelineDuration(result.planned_duration_s)}`
@@ -39,7 +55,10 @@ function SegmentCard({ result, segment }: { result: SegmentResult; segment?: Seg
       style={style}
     >
       <div className="timeline-segment-head">
-        <span>{segment?.label || `Interval ${result.segment_index + 1}`}</span>
+        <span>
+          {segment?.label || `Interval ${result.segment_index + 1}`}
+          {result.attempt > 1 && ` (${ordinal(result.attempt)})`}
+        </span>
         {result.skipped && <span className="timeline-segment-skipped">Skipped</span>}
       </div>
       <div className="timeline-segment-result">{segmentSummary(result)}</div>
