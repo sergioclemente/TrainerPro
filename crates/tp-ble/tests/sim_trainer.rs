@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use tp_ble::{BleError, ConnectionStatus, SimTrainer, TrainerConnection};
+use tp_ble::{
+    BleError, ConnectionStatus, ControllerButton, ControllerInputEvent, SimTrainer,
+    TrainerConnection,
+};
 
 const SIMULATOR_TICK: Duration = Duration::from_millis(250);
 const CONVERGENCE_TICKS: usize = 40;
@@ -51,4 +54,27 @@ async fn refuse_next_op_fires_once() {
         Err(BleError::ControlRefused(_))
     ));
     assert!(sim.start_or_resume_training().await.is_ok());
+}
+
+#[tokio::test]
+async fn embedded_controller_input_follows_the_trainer_status_stream() {
+    let trainer = SimTrainer::with_controls();
+    let mut status = trainer.subscribe_status();
+    let mut input = trainer.controller_input().unwrap().events;
+
+    trainer.inject_button(ControllerButton::RightSteer, true);
+    assert_eq!(
+        input.recv().await.unwrap(),
+        ControllerInputEvent::Button {
+            button: ControllerButton::RightSteer,
+            pressed: true,
+        }
+    );
+
+    trainer.inject_disconnect();
+    status.changed().await.unwrap();
+    assert_eq!(*status.borrow(), ConnectionStatus::Disconnected);
+    assert_eq!(input.recv().await.unwrap(), ControllerInputEvent::Cancel);
+    trainer.inject_button(ControllerButton::RightSteer, true);
+    assert!(input.try_recv().is_err());
 }

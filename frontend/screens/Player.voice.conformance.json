@@ -190,20 +190,6 @@
       "expectedLabel": "Pause workout"
     },
     {
-      "name": "stop listening suspends commands",
-      "phase": "riding",
-      "transcript": "stop listening",
-      "expectedIntent": "suspendVoiceCommands",
-      "expectedLabel": "Pause voice commands"
-    },
-    {
-      "name": "stop talking suspends commands",
-      "phase": "riding",
-      "transcript": "stop talking",
-      "expectedIntent": "suspendVoiceCommands",
-      "expectedLabel": "Pause voice commands"
-    },
-    {
       "name": "resume means resume workout",
       "phase": "paused",
       "transcript": "resume",
@@ -211,51 +197,16 @@
       "expectedLabel": "Resume workout"
     },
     {
-      "name": "resume listening reactivates commands",
-      "phase": "paused",
-      "commandsSuspended": true,
-      "transcript": "resume listening",
-      "expectedIntent": "resumeVoiceCommands",
-      "expectedLabel": "Resume voice commands"
-    },
-    {
-      "name": "start listening reactivates commands",
+      "name": "stop listening is not a workout command",
       "phase": "riding",
-      "commandsSuspended": true,
-      "transcript": "start listening",
-      "expectedIntent": "resumeVoiceCommands",
-      "expectedLabel": "Resume voice commands"
-    },
-    {
-      "name": "workout pause is blocked while commands are suspended",
-      "phase": "riding",
-      "commandsSuspended": true,
-      "transcript": "pause",
-      "expectedIntent": "pause",
-      "expectedCommand": false
-    },
-    {
-      "name": "workout resume cannot reactivate voice commands",
-      "phase": "paused",
-      "commandsSuspended": true,
-      "transcript": "resume the workout",
-      "expectedIntent": "resume",
-      "expectedCommand": false
-    },
-    {
-      "name": "stop listening is already satisfied while suspended",
-      "phase": "riding",
-      "commandsSuspended": true,
       "transcript": "stop listening",
-      "expectedIntent": "suspendVoiceCommands",
-      "expectedCommand": false
+      "expectedIntent": null
     },
     {
-      "name": "resume listening is unavailable while active",
-      "phase": "riding",
+      "name": "resume listening is not a workout command",
+      "phase": "paused",
       "transcript": "resume listening",
-      "expectedIntent": "resumeVoiceCommands",
-      "expectedCommand": false
+      "expectedIntent": null
     }
   ]
 }

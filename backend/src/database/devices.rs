@@ -63,6 +63,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn controller_source_and_saved_selection_round_trip_independently() {
+        use crate::controller::ControllerSource;
+        let conn = super::super::test_connection();
+        assert_eq!(controller_source(&conn), ControllerSource::TrainerControls);
+        upsert(&conn, "controller", "ride-id", "Ride", 1).unwrap();
+        for source in [
+            ControllerSource::PairedController,
+            ControllerSource::Disabled,
+            ControllerSource::TrainerControls,
+        ] {
+            save_controller_source(&conn, source).unwrap();
+            assert_eq!(controller_source(&conn), source);
+            assert_eq!(
+                platform_id_for_role(&conn, "controller").unwrap(),
+                Some("ride-id".into())
+            );
+        }
+        save_controller_source(&conn, ControllerSource::PairedController).unwrap();
+        assert_eq!(
+            super::super::settings::get(&conn, "controller_source").unwrap(),
+            Some("\"paired_controller\"".into())
+        );
+    }
+
+    #[test]
     fn upsert_list_and_delete_saved_device() {
         let conn = super::super::test_connection();
 
@@ -90,4 +115,23 @@ mod tests {
         delete(&conn, "trainer").unwrap();
         assert!(list(&conn).unwrap().is_empty());
     }
+}
+
+pub fn controller_source(conn: &Connection) -> crate::controller::ControllerSource {
+    super::settings::get(conn, "controller_source")
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or(crate::controller::ControllerSource::TrainerControls)
+}
+
+pub fn save_controller_source(
+    conn: &Connection,
+    source: crate::controller::ControllerSource,
+) -> rusqlite::Result<()> {
+    super::settings::set(
+        conn,
+        "controller_source",
+        &serde_json::to_string(&source).expect("enum serialization"),
+    )
 }

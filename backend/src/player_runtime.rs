@@ -18,6 +18,7 @@ use tp_core::journal::{
     compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
 };
 use tp_core::metrics::{normalized_power, session_totals, tss};
+use tp_core::model::ExecutableWorkout;
 use tp_core::workout_definition::WorkoutDefinition;
 
 use crate::app_error::AppError;
@@ -52,9 +53,11 @@ pub enum PlayerCommand {
 pub struct PlayerHandle {
     pub command_tx: mpsc::Sender<PlayerCommand>,
     pub state_rx: watch::Receiver<PlayerState>,
-    /// Number of executable segments in the loaded workout, so callers can
-    /// reject a segment index before it reaches the runtime.
-    pub segment_count: usize,
+    /// Immutable workout and FTP captured with the engine, independent of
+    /// later provider refreshes or profile edits. Callers also use the
+    /// workout to reject a segment index before it reaches the runtime.
+    pub workout: ExecutableWorkout,
+    pub ftp_w: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,7 +255,6 @@ pub async fn spawn(
         settings.intensity_default,
     );
     let (command_tx, command_rx) = mpsc::channel(PLAYER_COMMAND_CAPACITY);
-    let segment_count = workout.segments.len();
     let initial = PlayerState {
         phase: "ready".into(),
         workout_session_id: workout_session_id.clone(),
@@ -306,7 +308,7 @@ pub async fn spawn(
         hr_sum: 0,
         hr_n: 0,
         segment_accumulator: SegmentAccumulator::default(),
-        segment_attempts: vec![0; segment_count],
+        segment_attempts: vec![0; workout.segments.len()],
         ride_trace: Vec::new(),
         ftp_w: settings.profile.ftp,
     };
@@ -314,7 +316,8 @@ pub async fn spawn(
     Ok(PlayerHandle {
         command_tx,
         state_rx,
-        segment_count,
+        workout,
+        ftp_w: settings.profile.ftp,
     })
 }
 

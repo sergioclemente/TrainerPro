@@ -139,8 +139,7 @@ fn load_sources(saved_sources: Option<&str>, legacy_planner: Option<&str>) -> Ha
 pub struct Settings {
     pub profile: Profile,
     pub record_distance: bool,
-    /// Voice requires explicit enablement independently of microphone permission.
-    #[serde(default = "default_voice_enabled")]
+    /// Voice can be disabled independently of microphone permission.
     pub voice_enabled: bool,
     pub intensity_default: f64,
     /// Extra folder FIT files are copied to at ride end (friendly names).
@@ -149,12 +148,11 @@ pub struct Settings {
     pub export_dir: Option<String>,
     /// Workout-library providers, keyed by id (see `SourceConfig`). Replaces
     /// the old typed `planner` object; `woz` is now a first-class entry.
-    #[serde(default)]
     pub sources: HashMap<String, SourceConfig>,
 }
 
 const fn default_voice_enabled() -> bool {
-    false
+    true
 }
 
 impl Settings {
@@ -264,9 +262,18 @@ mod tests {
     }
 
     #[test]
-    fn existing_install_without_voice_key_defaults_disabled() {
+    fn install_without_voice_key_defaults_enabled() {
         let conn = settings_connection();
-        assert!(!load_settings(&conn).voice_enabled);
+        assert!(load_settings(&conn).voice_enabled);
+    }
+
+    #[test]
+    fn settings_update_requires_voice_and_sources() {
+        for field in ["voice_enabled", "sources"] {
+            let mut payload = serde_json::to_value(Settings::default()).unwrap();
+            payload.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<Settings>(payload).is_err(), "{field}");
+        }
     }
 
     #[test]

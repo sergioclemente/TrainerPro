@@ -46,6 +46,7 @@ const DECREASE_WORDS = /\b(?:decrease|reduce|lower|easier|softer|down|drop)\b/;
 const END_RIDE_WORDS = /\b(?:end|finish)\b.*\b(?:ride|workout)\b|\bstop\b.*\b(?:ride|workout)\b/;
 const END_RIDE_STT_SUBSTITUTION = /^and the ride\.?$/;
 const END_RIDE_CANONICAL_PHRASE = "end the ride";
+const VOICE_CONTROL_WORDS = /\b(?:listen(?:ing)?|talk(?:ing)?|voice commands?)\b/;
 
 function phaseIs(...phases: readonly PlayerState["phase"][]) {
   return ({ player }: PlayerVoiceContext): boolean => phases.includes(player.phase);
@@ -246,7 +247,11 @@ export function createPlayerVoiceSurface(
     },
     contextUnavailableMessage: "The workout is no longer active",
     prepareTranscript: (transcript, { player }) => {
-      if (!END_RIDE_STT_SUBSTITUTION.test(normalizeVoiceTranscript(transcript))) {
+      const normalized = normalizeVoiceTranscript(transcript);
+      if (VOICE_CONTROL_WORDS.test(normalized)) {
+        return { kind: "rejected", visible: false };
+      }
+      if (!END_RIDE_STT_SUBSTITUTION.test(normalized)) {
         return { kind: "route", transcript };
       }
       return player.phase === "riding"

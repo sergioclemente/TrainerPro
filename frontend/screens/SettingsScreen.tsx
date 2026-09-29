@@ -111,10 +111,10 @@ export default function SettingsScreen() {
             <div className="setting-option">
               <label className="row gap">
                 <input type="checkbox" checked={settings.voice_enabled} onChange={toggleVoice} />
-                Enable voice commands
+                Enable push-to-talk voice commands
               </label>
               <span className="muted setting-description">
-                Processed on this device. Audio and transcripts are not stored or sent.
+                Microphone permission is checked at startup or when voice is enabled. Hold Space or the controller talk button in the Player. Audio and transcripts are not stored or sent.
               </span>
             </div>
             <button className="primary" onClick={saveAll}>
@@ -156,7 +156,7 @@ export default function SettingsScreen() {
           <section>
             <h2>Privacy</h2>
             <p>
-              Voice commands are processed entirely on this device. TrainerPro does not
+              Push-to-talk voice commands are processed entirely on this device. TrainerPro does not
               store or send microphone audio or transcripts.
             </p>
           </section>

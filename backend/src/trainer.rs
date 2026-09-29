@@ -24,6 +24,7 @@ pub trait TrainerConnector: Send + Sync {
 /// Clones refer to the same owner; only its worker owns the physical connection.
 #[derive(Clone)]
 pub struct Trainer {
+    inputs: broadcast::Sender<crate::device_owner::DeviceInput>,
     commands: mpsc::Sender<Request>,
     state_rx: watch::Receiver<DeviceState>,
     measurements: broadcast::Sender<Measurement<TrainerMeasurement>>,
@@ -50,12 +51,24 @@ impl Trainer {
         let (commands, requests) = mpsc::channel(COMMAND_CAPACITY);
         let (state_tx, state_rx) = watch::channel(DeviceState::default());
         let (measurements, _) = broadcast::channel(MEASUREMENT_CAPACITY);
-        tauri::async_runtime::spawn(run(connector, requests, state_tx, measurements.clone()));
+        let (inputs, _) = broadcast::channel(tp_ble::controller::INPUT_CAPACITY);
+        tauri::async_runtime::spawn(run(
+            connector,
+            requests,
+            state_tx,
+            measurements.clone(),
+            inputs.clone(),
+        ));
         Self {
+            inputs,
             commands,
             state_rx,
             measurements,
         }
+    }
+
+    pub fn subscribe_inputs(&self) -> broadcast::Receiver<crate::device_owner::DeviceInput> {
+        self.inputs.subscribe()
     }
 
     pub fn state(&self) -> DeviceState {
@@ -205,11 +218,13 @@ async fn run(
     mut requests: mpsc::Receiver<Request>,
     status_tx: watch::Sender<DeviceState>,
     measurements_tx: broadcast::Sender<Measurement<TrainerMeasurement>>,
+    inputs_tx: broadcast::Sender<crate::device_owner::DeviceInput>,
 ) {
     let mut state = DeviceState::default();
     let mut connection: Option<Box<dyn TrainerConnection>> = None;
     let mut connection_status = None;
     let mut connection_measurements = None;
+    let mut controller_events = None;
     let mut pending: Option<ConnectionAttempt<dyn TrainerConnection>> = None;
     let mut connect_reply: Option<Reply<String>> = None;
     let mut disconnect_replies: Vec<Reply<()>> = Vec::new();
@@ -223,6 +238,7 @@ async fn run(
             request = requests.recv() => {
                 let Some(request) = request else {
                     state.generation += 1;
+                    state.controller_profile = None;
                     state.status = DeviceStatus::Disconnected;
                     status_tx.send_replace(state);
                     let _ = retire(&mut connection, &mut connection_status, &mut connection_measurements).await;
@@ -246,6 +262,8 @@ async fn run(
                         }
                         if let Some(reply) = connect_reply.take() { let _ = reply.send(Err(BleError::Disconnected)); }
                         state.generation += 1;
+                    state.controller_profile = None;
+                    controller_events = None;
                         state.platform_id = Some(platform_id);
                         state.name = None;
                         state.status = DeviceStatus::Connecting;
@@ -264,6 +282,8 @@ async fn run(
                     }
                     Request::Disconnect(reply) => {
                         state.generation += 1;
+                    state.controller_profile = None;
+                    controller_events = None;
                         state.platform_id = None;
                         state.name = None;
                         state.status = DeviceStatus::Disconnected;
@@ -373,6 +393,10 @@ async fn run(
                         state.name = Some(name.clone());
                         connection_status = Some(new_connection.subscribe_status());
                         connection_measurements = Some(new_connection.subscribe_measurements());
+                        if let Some(input) = new_connection.controller_input() {
+                            state.controller_profile = Some(input.profile);
+                            controller_events = Some(input.events);
+                        }
                         connection = Some(new_connection);
                         state.status = DeviceStatus::Connected;
                         status_tx.send_replace(state.clone());
@@ -396,6 +420,8 @@ async fn run(
             status = device::connection_status(&mut connection_status) => {
                 if status == ConnectionStatus::Disconnected {
                     state.generation += 1;
+                    state.controller_profile = None;
+                    controller_events = None;
                     state.status = DeviceStatus::Reconnecting;
                     status_tx.send_replace(state.clone());
                     if let Err(error) = retire(
@@ -410,6 +436,23 @@ async fn run(
                     retry_at = Some(Instant::now() + device::retry_delay(0));
                 }
             }
+            result = device::connection_measurement(&mut controller_events) => {
+                let event = match result {
+                    Ok(event) => event,
+                    Err(broadcast::error::RecvError::Lagged(_)) => tp_ble::ControllerInputEvent::Cancel,
+                    Err(broadcast::error::RecvError::Closed) => {
+                        controller_events = None;
+                        state.controller_profile = None;
+                        status_tx.send_replace(state.clone());
+                        continue;
+                    }
+                };
+                if state.is_connected() && connection_status.as_ref().is_some_and(|rx| *rx.borrow() == ConnectionStatus::Connected) {
+                    if let Some(profile) = state.controller_profile {
+                        let _ = inputs_tx.send(crate::device_owner::DeviceInput { generation: state.generation, profile, event });
+                    }
+                }
+            }
             result = device::connection_measurement(&mut connection_measurements) => {
                 match result {
                     Ok(value) => {
@@ -421,6 +464,8 @@ async fn run(
                     Err(broadcast::error::RecvError::Closed) => {
                         // A closed measurement stream is also a failed connection.
                         state.generation += 1;
+                    state.controller_profile = None;
+                    controller_events = None;
                         state.status = DeviceStatus::Reconnecting;
                         status_tx.send_replace(state.clone());
                         if let Err(error) = retire(

@@ -424,6 +424,23 @@ button.big {
   flex-direction: column;
   gap: 10px;
 }
+.controller-sources,
+.controller-saved-device {
+  flex-wrap: wrap;
+}
+.source-choice[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #1f3653;
+  color: var(--fg);
+}
+.source-choice[aria-pressed="true"]:disabled {
+  opacity: 1;
+}
+.controller-saved-device {
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
 .status.ok {
   color: var(--ok);
 }

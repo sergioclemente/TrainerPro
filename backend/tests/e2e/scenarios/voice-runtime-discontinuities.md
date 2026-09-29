@@ -18,7 +18,7 @@ boundary must start a fresh Moonshine stream before another command can run.
 - Run the current TrainerPro QA debug application. Do not launch or interact
   with the regular TrainerPro application.
 - Open an unfinished workout in the Player and wait for the Voice card to show
-  **Listening**.
+  **Hold Space or controller button to talk**.
 - Voice commands are enabled, microphone permission is granted, and the current
   intensity is **100%**.
 - Two working microphone inputs are available for the default-input step.
@@ -29,7 +29,7 @@ boundary must start a fresh Moonshine stream before another command can run.
 
 - For each boundary, say **“increase intensity”** immediately before the
   boundary and **“by five percent”** only after returning to TrainerPro and
-  observing **Listening** again.
+  observing **Hold Space or controller button to talk** again.
 - Neither half is a valid command by itself. If the intensity changes to 105%,
   audio crossed the boundary and the step fails.
 - After the unchanged-intensity assertion, say the complete phrase
@@ -37,24 +37,30 @@ boundary must start a fresh Moonshine stream before another command can run.
   then say **“set intensity to one hundred percent”** and wait for 100% before
   continuing. This proves the post-boundary capture is functional.
 
+For every spoken attempt, hold Space, wait for the ready cue, speak, then
+release. In interrupted attempts, hold Space across the boundary and release
+only afterward; no partial command may execute. A fresh press is required after
+recovery. The focus test applies to keyboard PTT; handlebar PTT intentionally
+continues in an unfocused visible window.
+
 ## Steps
 
 1. Test application focus. Say the first half, switch focus to another
-   application, wait two seconds, return to TrainerPro, wait for **Listening**,
+   application, wait two seconds, return to TrainerPro, wait for **Hold Space or controller button to talk**,
    and say the second half. Expect the intensity to remain 100%, then run the
    complete-phrase check above.
 2. Test sleep/wake. Say the first half, put the Mac to sleep, wake and unlock
-   it, return to TrainerPro, wait for **Listening**, and say the second half.
+   it, return to TrainerPro, wait for **Hold Space or controller button to talk**, and say the second half.
    Expect the intensity to remain 100%, then run the complete-phrase check.
 3. Test default-input replacement. Say the first half, change the macOS
    system-default input to the other working microphone, return to TrainerPro,
-   wait for **Listening**, and say the second half into the new default input.
+   wait for **Hold Space or controller button to talk**, and say the second half into the new default input.
    Expect the intensity to remain 100%, then run the complete-phrase check
    using the new microphone.
 4. Test permission revocation. Say the first half, revoke TrainerPro QA's
    microphone permission in macOS System Settings, and return to TrainerPro.
    Expect **Unavailable** or a persistent Voice error and no intensity change.
-   Restore permission, use **Retry**, wait for **Listening**, and say the second
+   Restore permission, use **Retry**, wait for **Hold Space or controller button to talk**, and say the second
    half. Expect the intensity to remain 100%, then run the complete-phrase
    check.
 
@@ -63,7 +69,7 @@ boundary must start a fresh Moonshine stream before another command can run.
 - No split phrase changes workout state or produces successful command
   feedback.
 - Every boundary returns through **Preparing…** or a clean recovery state
-  before **Listening**.
+  before **Hold Space or controller button to talk**.
 - One complete post-boundary command works exactly once after each recovery.
 - Permission revocation leaves pointer and keyboard controls usable.
 

@@ -4634,6 +4634,7 @@ dependencies = [
  "tokio",
  "tp-core",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

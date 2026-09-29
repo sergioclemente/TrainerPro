@@ -96,6 +96,7 @@ export class WorkerMicTranscriber {
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private running = false;
+  private lines = new Map<string, TranscriptLine>();
   private muted = false;
   private streamGeneration = 0;
   private captureGeneration = 0;
@@ -145,16 +146,25 @@ export class WorkerMicTranscriber {
   async start(): Promise<void> {
     if (this.running) return;
     if (this.closed) throw new Error("The microphone transcriber is closed");
+    const startingGeneration = ++this.captureGeneration;
     await this.load();
+    if (startingGeneration !== this.captureGeneration || this.closed) return;
     this.running = true;
+    this.muted = false;
+    this.lines.clear();
     try {
       await this.host.createStream(TRANSCRIBER_ID, STREAM_ID);
       this.setStreamListener();
       await this.host.start(STREAM_ID);
+      if (startingGeneration !== this.captureGeneration) { await this.stop(); return; }
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: VOICE_AUDIO_CONSTRAINTS,
       });
-      const captureGeneration = ++this.captureGeneration;
+      if (startingGeneration !== this.captureGeneration) {
+        await this.stop();
+        return;
+      }
+      const captureGeneration = startingGeneration;
       this.reportedDiscontinuityGeneration = -1;
       for (const track of this.mediaStream.getTracks()) {
         track.addEventListener("ended", () => {
@@ -204,25 +214,31 @@ export class WorkerMicTranscriber {
     if (muted) this.callbacks.onAudioLevel?.(0);
   }
 
-  /** Immediately invalidate audio and any reset that could otherwise unmute it. */
+  /** Immediately invalidate audio, final callbacks, and a pending microphone start. */
   invalidateCapture(): void {
     this.muted = true;
+    this.streamGeneration += 1;
     this.captureGeneration += 1;
     this.callbacks.onAudioLevel?.(0);
   }
 
-  /** Discard streaming/VAD context without reacquiring the microphone. */
-  async resetStream(): Promise<void> {
-    if (!this.running) return;
-    const captureGeneration = this.captureGeneration;
+  /** Stop audio first, then accept the worker's final transcript before closing. */
+  async finish(): Promise<string> {
+    if (!this.running) return "";
     this.muted = true;
-    await this.host.stop(STREAM_ID);
-    await this.host.closeStream(STREAM_ID);
-    await this.host.createStream(TRANSCRIBER_ID, STREAM_ID);
-    this.setStreamListener();
-    await this.host.start(STREAM_ID);
-    if (this.running && captureGeneration === this.captureGeneration) {
-      this.muted = false;
+    const generation = this.streamGeneration;
+    this.captureGeneration += 1;
+    await this.releaseCapture();
+    try {
+      await this.host.stop(STREAM_ID);
+      if (generation !== this.streamGeneration) return "";
+      return [...this.lines.values()].sort((a, b) => a.startTime - b.startTime)
+        .map((line) => line.text.trim()).filter(Boolean).join(" ");
+    } finally {
+      this.running = false;
+      this.streamGeneration += 1;
+      await this.host.closeStream(STREAM_ID);
+      this.lines.clear();
     }
   }
 
@@ -252,10 +268,16 @@ export class WorkerMicTranscriber {
     const generation = ++this.streamGeneration;
     this.host.setListener(STREAM_ID, {
       onLineTextChanged: ({ line }) => {
-        if (this.running && generation === this.streamGeneration) this.callbacks.onText(line.text);
+        if (this.running && generation === this.streamGeneration) {
+          this.lines.set(line.id, line);
+          this.callbacks.onText([...this.lines.values()].sort((a, b) => a.startTime - b.startTime).map((item) => item.text).join(" "));
+        }
       },
       onLineCompleted: ({ line }) => {
-        if (this.running && generation === this.streamGeneration) this.callbacks.onLine(line);
+        if (this.running && generation === this.streamGeneration) {
+          this.lines.set(line.id, line);
+          this.callbacks.onLine(line);
+        }
       },
       onError: ({ error }) => {
         if (this.running && generation === this.streamGeneration) this.callbacks.onError(error);

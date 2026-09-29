@@ -19,6 +19,12 @@ as the physical-device paths.
 
 ## Before submitting
 
+Prefer tests of observable behavior at crate and IPC boundaries over tests of
+private structs. Rust crate tests belong in the crate's `tests/` directory when
+they can use its public API. Keep narrow inline tests for private protocol or
+coordination invariants that have no practical public test path; do not expose
+production internals solely to move a test.
+
 Run focused tests while developing. For changes spanning Rust and TypeScript,
 finish with:
 

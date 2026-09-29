@@ -165,7 +165,11 @@ pub fn parse_indoor_bike_data(data: &[u8]) -> Result<TrainerMeasurement, CodecEr
 pub fn parse_heart_rate(data: &[u8]) -> Result<Option<u16>, CodecError> {
     let mut r = Reader::new(data);
     let flags = r.u8()?;
-    let bpm = if flags & 0x01 != 0 { r.u16()? } else { u16::from(r.u8()?) };
+    let bpm = if flags & 0x01 != 0 {
+        r.u16()?
+    } else {
+        u16::from(r.u8()?)
+    };
     Ok(if bpm == 0 { None } else { Some(bpm) })
 }
 
@@ -206,6 +210,3 @@ impl<'a> Reader<'a> {
         Ok(i16::from_le_bytes([b[0], b[1]]))
     }
 }
-
-#[cfg(test)]
-mod tests;

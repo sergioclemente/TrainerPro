@@ -1,5 +1,8 @@
 //! FTMS trainer driver over btleplug.
 
+use crate::controller::{ButtonEdges, INPUT_CAPACITY};
+use crate::wahoo_virtual_bike_protocol;
+use crate::{ControllerInputEvent, ControllerInputStream, ControllerProfile};
 use btleplug::api::bleuuid::uuid_from_u16;
 use btleplug::api::{
     Central as _, CentralEvent, CharPropFlags, Characteristic, Peripheral as _, WriteType,
@@ -9,6 +12,7 @@ use futures::StreamExt;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
+use uuid::Uuid;
 
 use tp_core::consts::{CP_RETRIES, CP_TIMEOUT_MS};
 
@@ -24,6 +28,7 @@ const CONTROL_RESPONSE_CHANNEL_CAPACITY: usize = 8;
 /// FTMS control and measurements for one connection. The instance can outlive its
 /// link; connectivity comes from `subscribe_status()`. Reconnect creates a new instance.
 pub struct FtmsTrainerConnection {
+    controls: Option<broadcast::Sender<ControllerInputEvent>>,
     peripheral: Peripheral,
     cp: Characteristic,
     name: String,
@@ -69,7 +74,10 @@ impl FtmsTrainerConnection {
         debug!("ftms connect: services discovered");
         let chars = peripheral.characteristics();
         let find = |u16id: u16| -> Option<Characteristic> {
-            chars.iter().find(|c| c.uuid == uuid_from_u16(u16id)).cloned()
+            chars
+                .iter()
+                .find(|c| c.uuid == uuid_from_u16(u16id))
+                .cloned()
         };
         let ibd = find(codec::CHR_INDOOR_BIKE_DATA)
             .ok_or_else(|| BleError::Incompatible("no Indoor Bike Data (FTMS)".into()))?;
@@ -115,6 +123,18 @@ impl FtmsTrainerConnection {
             }
         }
 
+        // Optional input is part of this peripheral, never a second connection.
+        let mut controls = None;
+        if let Some(input) = chars.iter().find(|c| {
+            c.uuid == Uuid::from_u128(wahoo_virtual_bike_protocol::BUTTONS_CHARACTERISTIC_UUID)
+                && c.service_uuid == Uuid::from_u128(wahoo_virtual_bike_protocol::SERVICE_UUID)
+        }) {
+            match peripheral.subscribe(input).await {
+                Ok(()) => controls = Some(broadcast::channel(INPUT_CAPACITY).0),
+                Err(error) => warn!("Wahoo controls unavailable; FTMS remains usable: {error}"),
+            }
+        }
+
         let (measurements_tx, _) = broadcast::channel(MEASUREMENT_CHANNEL_CAPACITY);
         let (status_tx, _) = watch::channel(ConnectionStatus::Connecting);
         let (cp_tx, cp_rx) = mpsc::channel(CONTROL_RESPONSE_CHANNEL_CAPACITY);
@@ -126,11 +146,13 @@ impl FtmsTrainerConnection {
             .await
             .map_err(|e| BleError::Transport(format!("notification stream: {e}")))?;
         {
+            let controls = controls.clone();
             let measurements_tx = measurements_tx.clone();
             let status_tx = status_tx.clone();
             let mut status_rx = status_tx.subscribe();
             tasks.push(tokio::spawn(async move {
                 let mut malformed = 0u32;
+                let mut buttons = ButtonEdges::default();
                 let mut stream = stream;
                 loop {
                     let n = tokio::select! {
@@ -166,6 +188,20 @@ impl FtmsTrainerConnection {
                             let _ = cp_tx.send(resp).await;
                         }
                     }
+                    if n.uuid
+                        == Uuid::from_u128(wahoo_virtual_bike_protocol::BUTTONS_CHARACTERISTIC_UUID)
+                    {
+                        if let (Some(controls), Some(states)) = (
+                            &controls,
+                            wahoo_virtual_bike_protocol::decode_button_report(&n.value),
+                        ) {
+                            for (button, pressed) in states {
+                                if let Some(event) = buttons.update(button, pressed) {
+                                    let _ = controls.send(event);
+                                }
+                            }
+                        }
+                    }
                     // FTMS Status (0x2ADA) is informational; ignored in v1.
                 }
                 status_tx.send_replace(ConnectionStatus::Disconnected);
@@ -173,6 +209,7 @@ impl FtmsTrainerConnection {
         }
 
         let mut trainer = FtmsTrainerConnection {
+            controls,
             peripheral,
             cp,
             name,
@@ -246,6 +283,12 @@ impl FtmsTrainerConnection {
 
 #[async_trait::async_trait]
 impl TrainerConnection for FtmsTrainerConnection {
+    fn controller_input(&self) -> Option<ControllerInputStream> {
+        self.controls.as_ref().map(|events| ControllerInputStream {
+            profile: ControllerProfile::WahooVirtualBike,
+            events: events.subscribe(),
+        })
+    }
     async fn disconnect(&mut self) -> Result<(), BleError> {
         self.status_tx.send_replace(ConnectionStatus::Disconnected);
         let result = self

@@ -67,7 +67,7 @@ views show relative targets together with watts resolved from the current FTP.
 
 ## Devices
 
-Devices has independent Trainer and Heart Rate Monitor slots. A slot can scan,
+Devices has Trainer, Heart Rate Monitor, and Controller slots. A slot can scan,
 connect, disconnect, and forget a saved device. Discovery results are deduplicated
 and ordered by signal strength.
 
@@ -82,6 +82,25 @@ compete for the same scan. CoreBluetooth disconnect events are authoritative.
 The simulated trainer and HRM implement the production connection contracts and
 support fault injection. Simulator success does not replace physical Bluetooth
 disconnect/reconnect validation.
+
+### Handlebar controls
+
+The Controller source defaults to Trainer controls, following the selected
+trainer. Wahoo BIKE SHIFT input shares the trainer connection; disabling its
+input never disconnects the trainer. Alternatively, select a paired controller;
+currently this is the left Zwift Ride controller, which carries both handles
+over one bonded link. Selecting the paired controller overrides trainer input
+without automatic fallback. Forgetting an active paired controller disables
+input until another source is selected. Removing a saved controller while using
+trainer controls leaves trainer input active. Disconnecting the paired controller
+turns input off but keeps the saved pairing.
+
+Wahoo left steering and Ride A pause/resume; hold Wahoo right steering or Ride Y
+to talk. Other handlebar buttons are unassigned. Controller loss cancels a held
+utterance without pausing the workout. Input recovery requires a fresh press.
+Protocol support targets BIKE SHIFT and Ride firmware 1.2.0; physical hardware and
+firmware compatibility remain manual validation gates. Bridged controllers,
+separate-side Ride connections, music control, and virtual shifting are excluded.
 
 ## Workout execution
 
@@ -101,8 +120,8 @@ The player supports:
 - interval countdown, elapsed and remaining time, power, cadence, heart rate,
   work, average power, normalized power, intensity factor, and training stress.
 
-Keyboard controls are Space for pause/resume, `S` for skip, and Up/Down for
-intensity. Display power uses a three-second rolling average; recording retains
+Keyboard controls are hold Space for push-to-talk, `S` for skip, and Up/Down
+for intensity. Space does not start, pause, or resume a workout. Display power uses a three-second rolling average; recording retains
 the unsmoothed measurement stream. The player graph draws the ridden power from
 the same one-second samples the journal records, and shows each interval's
 cadence target against an rpm scale on its right edge.
@@ -170,18 +189,24 @@ the affected subsystem changes.
 
 ## Workout voice and timeline
 
-Voice is disabled by default and requires both explicit Settings enablement and
-microphone permission. Voice uses bundled models without downloads or cloud
-inference. Capture runs only while the workout Player is visible and the
-application is active. Processing stays on-device; audio and transcripts
-are not stored or sent. Start, pause, resume, skip, intensity, and ERG commands
+Voice is enabled by default. At startup it checks microphone permission and
+requests it if needed, immediately releasing the permission-check stream.
+Settings can disable voice. Bundled models run on-device without downloads;
+audio and transcripts are not stored or sent.
+Holding Space in a focused Player, or a handlebar button in a visible Player,
+captures one utterance. Hidden or minimized windows cannot capture. Releasing
+submits at most one validated command; silence and pauses within a hold do
+nothing. Capture cancels after 15 seconds, on Player exit, Settings disable,
+input loss, or release during microphone startup. Pending interpretation is
+discarded, and recovery requires a new press.
+
+Start, pause, resume, skip, intensity, and ERG commands
 use the same actions as UI controls. End-like voice commands pause; ending the
 ride remains manual. Skip also advances the interval while paused without
 restarting the trainer.
 
-“Stop listening” suspends workout commands while keeping recognition active for
-“Resume listening”. Settings disable releases the voice runtimes. Voice errors
-must not prevent pointer or keyboard control.
+Settings disable releases the voice runtimes. Voice errors must not prevent
+pointer or keyboard control.
 Repeated capture or model failures expose Retry and the Settings disable path;
 missing bundled models report a source-specific error without blocking the Player.
 

@@ -6,6 +6,7 @@
 mod app_error;
 mod app_state;
 mod commands;
+mod controller;
 mod database;
 mod device_hub;
 mod device_owner;
@@ -35,7 +36,7 @@ fn main() {
             std::fs::create_dir_all(&data_dir)?;
             logging::init(&log_dir)?;
             let conn = database::open(&data_dir.join("trainerpro.sqlite3"))?;
-            let hub = device_hub::DeviceHub::default();
+            let hub = device_hub::DeviceHub::new(database::devices::controller_source(&conn));
             hub.start_event_forwarders(app.handle().clone());
             app.manage(AppState {
                 db: std::sync::Mutex::new(conn),
@@ -63,6 +64,7 @@ fn main() {
             commands::device::disconnect_device,
             commands::device::forget_device,
             commands::device::get_device_state,
+            commands::device::set_controller_source,
             commands::player::load_workout,
             commands::player::start_ride,
             commands::player::pause_ride,
@@ -75,6 +77,7 @@ fn main() {
             commands::player::end_ride,
             commands::player::clear_ride,
             commands::player::get_player_state,
+            commands::player::get_player_workout_profile,
             commands::activity_history::list_activities,
             commands::activity_history::delete_activity,
             commands::activity_history::save_fit_as,

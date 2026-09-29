@@ -46,6 +46,9 @@ pub enum ConnectionStatus {
 /// serialize control-point access internally with one operation in flight.
 #[async_trait]
 pub trait TrainerConnection: Send + Sync {
+    fn controller_input(&self) -> Option<crate::ControllerInputStream> {
+        None
+    }
     /// Close the link and stop this connection's background tasks.
     async fn disconnect(&mut self) -> Result<(), BleError>;
     /// One-off transport check used to gate ride start. Ongoing connection

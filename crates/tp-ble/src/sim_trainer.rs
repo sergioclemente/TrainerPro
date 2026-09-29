@@ -7,6 +7,7 @@ use tokio::sync::{broadcast, watch};
 use tokio::time::Duration;
 
 use crate::connection_tasks::ConnectionTasks;
+use crate::controller::{ButtonEdges, INPUT_CAPACITY};
 use crate::traits::{BleError, ConnectionStatus, TrainerConnection, TrainerMeasurement};
 
 const TICK_MS: u64 = 250;
@@ -49,6 +50,8 @@ impl SimState {
 }
 
 pub struct SimTrainer {
+    controls: Option<broadcast::Sender<crate::ControllerInputEvent>>,
+    control_buttons: Mutex<ButtonEdges>,
     tasks: ConnectionTasks,
     state: Arc<Mutex<SimState>>,
     measurements_tx: broadcast::Sender<TrainerMeasurement>,
@@ -64,6 +67,20 @@ impl Default for SimTrainer {
 impl SimTrainer {
     pub const ID: &'static str = "sim-trainer";
 
+    pub fn with_controls() -> Self {
+        let mut trainer = Self::new();
+        trainer.controls = Some(broadcast::channel(INPUT_CAPACITY).0);
+        trainer
+    }
+    pub fn inject_button(&self, button: crate::ControllerButton, pressed: bool) {
+        if !self.state.lock().unwrap().dropped {
+            if let Some(controls) = &self.controls {
+                if let Some(event) = self.control_buttons.lock().unwrap().update(button, pressed) {
+                    let _ = controls.send(event);
+                }
+            }
+        }
+    }
     pub fn new() -> Self {
         let mut tasks = ConnectionTasks::default();
         let state = Arc::new(Mutex::new(SimState {
@@ -117,6 +134,8 @@ impl SimTrainer {
             }));
         }
         SimTrainer {
+            controls: None,
+            control_buttons: Mutex::new(ButtonEdges::default()),
             tasks,
             state,
             measurements_tx,
@@ -140,6 +159,10 @@ impl SimTrainer {
     pub fn inject_disconnect(&self) {
         self.state.lock().unwrap().dropped = true;
         self.status_tx.send_replace(ConnectionStatus::Disconnected);
+        *self.control_buttons.lock().unwrap() = ButtonEdges::default();
+        if let Some(controls) = &self.controls {
+            let _ = controls.send(crate::ControllerInputEvent::Cancel);
+        }
     }
     pub fn restore_connection(&self) {
         self.state.lock().unwrap().dropped = false;
@@ -152,6 +175,14 @@ impl SimTrainer {
 
 #[async_trait::async_trait]
 impl TrainerConnection for SimTrainer {
+    fn controller_input(&self) -> Option<crate::ControllerInputStream> {
+        self.controls
+            .as_ref()
+            .map(|events| crate::ControllerInputStream {
+                profile: crate::ControllerProfile::WahooVirtualBike,
+                events: events.subscribe(),
+            })
+    }
     async fn disconnect(&mut self) -> Result<(), BleError> {
         self.inject_disconnect();
         self.tasks.shutdown().await;

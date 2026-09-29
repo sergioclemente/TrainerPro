@@ -1,16 +1,40 @@
 //! Player IPC commands and the shared load-into-player flow.
 
+use serde::Serialize;
 use tauri::{AppHandle, State};
+use tp_core::model::ExecutableWorkout;
 
 use crate::app_error::AppError;
 use crate::app_state::AppState;
-use crate::commands::workout::load_workout_definition;
+use crate::commands::workout::{graph_points, load_workout_definition, segment_rows, SegmentRow};
 use crate::database::scheduled_workouts as scheduled_db;
 use crate::player_runtime::{
     self as runtime, ActivitySummary, PlayerCommand, PlayerState, RideTracePoint,
 };
 
 type R<T> = Result<T, AppError>;
+
+#[derive(Serialize)]
+pub struct PlayerWorkoutProfile {
+    pub workout_session_id: String,
+    pub graph: Vec<(u32, f64)>,
+    pub segments: Vec<SegmentRow>,
+    pub ftp_w: u16,
+}
+
+fn profile_for_session(
+    captured_session_id: &str,
+    requested_session_id: &str,
+    workout: &ExecutableWorkout,
+    ftp_w: u16,
+) -> Option<PlayerWorkoutProfile> {
+    (captured_session_id == requested_session_id).then(|| PlayerWorkoutProfile {
+        workout_session_id: captured_session_id.to_owned(),
+        graph: graph_points(workout, ftp_w),
+        segments: segment_rows(workout, ftp_w),
+        ftp_w,
+    })
+}
 
 #[tauri::command]
 pub async fn load_workout(
@@ -116,13 +140,13 @@ pub async fn go_to_segment(state: State<'_, AppState>, index: usize) -> R<()> {
         let handle = player
             .as_ref()
             .ok_or_else(|| AppError::new("no_ride", "no ride loaded"))?;
-        if index >= handle.segment_count {
+        let segment_count = handle.workout.segments.len();
+        if index >= segment_count {
             return Err(AppError::new(
                 "bad_segment",
                 format!(
-                    "interval {} does not exist (workout has {})",
-                    index + 1,
-                    handle.segment_count
+                    "interval {} does not exist (workout has {segment_count})",
+                    index + 1
                 ),
             ));
         }
@@ -169,4 +193,114 @@ pub async fn clear_ride(state: State<'_, AppState>) -> R<()> {
 pub async fn get_player_state(state: State<'_, AppState>) -> R<Option<PlayerState>> {
     let player = state.player.lock().await;
     Ok(player.as_ref().map(|h| h.state_rx.borrow().clone()))
+}
+
+/// One-time view of the workout captured by the active player, not the
+/// mutable library row identified by `workout_definition_id`.
+#[tauri::command]
+pub async fn get_player_workout_profile(
+    state: State<'_, AppState>,
+    workout_session_id: String,
+) -> R<Option<PlayerWorkoutProfile>> {
+    let player = state.player.lock().await;
+    Ok(player.as_ref().and_then(|handle| {
+        profile_for_session(
+            &handle.state_rx.borrow().workout_session_id,
+            &workout_session_id,
+            &handle.workout,
+            handle.ftp_w,
+        )
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
+    use tp_core::workout_definition::WorkoutDefinition;
+
+    use super::profile_for_session;
+    use crate::database::workout_definitions::{self, ProviderWorkoutDefinition};
+
+    #[test]
+    fn player_profile_stays_on_loaded_workout_after_provider_update() {
+        let conn = crate::database::open(Path::new(":memory:")).unwrap();
+        let definition_id = "provider-workout";
+        let old = WorkoutDefinition::from_executable(ExecutableWorkout {
+            name: "Original".into(),
+            description: String::new(),
+            segments: vec![Segment::Steady {
+                duration_s: 60,
+                power: PowerTarget::Watts(100),
+                cadence_rpm: None,
+            }],
+            text_events: vec![],
+        })
+        .unwrap();
+        let updated = WorkoutDefinition::from_executable(ExecutableWorkout {
+            name: "Updated".into(),
+            description: String::new(),
+            segments: vec![Segment::Steady {
+                duration_s: 120,
+                power: PowerTarget::Watts(200),
+                cadence_rpm: None,
+            }],
+            text_events: vec![],
+        })
+        .unwrap();
+        let old_json = old.to_json_pretty().unwrap();
+        workout_definitions::insert_provider_copy(
+            &conn,
+            &ProviderWorkoutDefinition {
+                id: definition_id,
+                tpw_json: &old_json,
+                origin: "intervals_icu",
+                origin_id: Some(42),
+                origin_ref: "event-42",
+                synced_at_unix_ms: 1,
+            },
+        )
+        .unwrap();
+
+        // Loading the ride captures the compiled workout, while the stable
+        // library ID may later point to a newer provider definition.
+        let loaded_row = workout_definitions::get(&conn, definition_id)
+            .unwrap()
+            .unwrap();
+        let captured = WorkoutDefinition::from_json(&loaded_row.tpw_json)
+            .unwrap()
+            .compile()
+            .unwrap();
+        let updated_json = updated.to_json_pretty().unwrap();
+        assert!(workout_definitions::update_provider_copy(
+            &conn,
+            &ProviderWorkoutDefinition {
+                id: definition_id,
+                tpw_json: &updated_json,
+                origin: "intervals_icu",
+                origin_id: Some(42),
+                origin_ref: "event-42",
+                synced_at_unix_ms: 2,
+            }
+        )
+        .unwrap());
+        let current_row = workout_definitions::get(&conn, definition_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            WorkoutDefinition::from_json(&current_row.tpw_json)
+                .unwrap()
+                .compile()
+                .unwrap()
+                .duration_s(),
+            120
+        );
+
+        let profile = profile_for_session("session-1", "session-1", &captured, 250).unwrap();
+        assert_eq!(profile.graph, vec![(0, 40.0), (60, 40.0)]);
+        assert_eq!(profile.segments[0].duration_s, 60);
+        assert_eq!(profile.ftp_w, 250);
+        assert!(profile_for_session("session-1", "session-2", &captured, 250).is_none());
+    }
 }
