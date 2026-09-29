@@ -146,8 +146,12 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                 let Some(duration_s) = duration_or_skip(el, "Duration", &mut warnings)? else {
                     continue;
                 };
-                warn_unknown_attrs(el, &["Duration"], &mut warnings);
-                segments.push(Segment::FreeRide { duration_s });
+                let cadence_rpm = optional_cadence(el, "Cadence", &mut warnings);
+                warn_unknown_attrs(el, &["Duration", "Cadence"], &mut warnings);
+                segments.push(Segment::FreeRide {
+                    duration_s,
+                    cadence_rpm,
+                });
                 elapsed_s = elapsed_s.saturating_add(duration_s);
                 collect_textevents(el, seg_start_s, &mut text_events, &mut warnings);
             }
@@ -510,11 +514,30 @@ mod tests {
     }
 
     #[test]
+    fn freeride_keeps_cadence_and_round_trips() {
+        let xml = r#"<workout_file><workout><FreeRide Duration="300" Cadence="90"/></workout></workout_file>"#;
+        let p = parse_zwo(xml).unwrap();
+        assert_eq!(
+            p.workout.segments,
+            vec![Segment::FreeRide {
+                duration_s: 300,
+                cadence_rpm: Some(90),
+            }]
+        );
+        assert!(p.warnings.is_empty(), "{:?}", p.warnings);
+        let written = to_zwo(&p.workout);
+        assert!(written.contains(r#"<FreeRide Duration="300" Cadence="90"/>"#), "{written}");
+    }
+
+    #[test]
     fn freeride_maps_to_freeride() {
         let parsed = parse_zwo(FULL).unwrap();
         assert_eq!(
             parsed.workout.segments[9],
-            Segment::FreeRide { duration_s: 300 }
+            Segment::FreeRide {
+                duration_s: 300,
+                cadence_rpm: None,
+            }
         );
     }
 
@@ -884,7 +907,10 @@ mod writer_tests {
                     power: PowerTarget::PercentFtp(0.50),
                     cadence_rpm: Some(90),
                 },
-                Segment::FreeRide { duration_s: 60 },
+                Segment::FreeRide {
+                    duration_s: 60,
+                    cadence_rpm: None,
+                },
                 Segment::Ramp {
                     duration_s: 300,
                     start: PowerTarget::PercentFtp(0.70),
@@ -968,9 +994,10 @@ pub fn to_zwo(w: &ExecutableWorkout) -> String {
                     close("Ramp", &texts)
                 ));
             }
-            Segment::FreeRide { duration_s } => {
+            Segment::FreeRide { duration_s, cadence_rpm } => {
+                let cad = cadence_rpm.map(|c| format!(" Cadence=\"{c}\"")).unwrap_or_default();
                 out.push_str(&format!(
-                    "        <FreeRide Duration=\"{duration_s}\"{}\n",
+                    "        <FreeRide Duration=\"{duration_s}\"{cad}{}\n",
                     close("FreeRide", &texts)
                 ));
             }

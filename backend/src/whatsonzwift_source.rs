@@ -194,7 +194,10 @@ fn parse_step(step: &str) -> Option<Segment> {
         .and_then(|c| c[1].parse::<u16>().ok());
 
     if lower.contains("free ride") || lower.contains("freeride") {
-        return Some(Segment::FreeRide { duration_s: dur });
+        return Some(Segment::FreeRide {
+            duration_s: dur,
+            cadence_rpm: None,
+        });
     }
     if let Some(cap) = regex::Regex::new(r"from\s+(\d+(?:\.\d+)?)\s*(?:%\s*)?to\s+(\d+(?:\.\d+)?)\s*%\s*ftp")
         .unwrap()
@@ -517,7 +520,10 @@ mod tests {
         }
         assert!(matches!(
             parse_textbar("10min free ride").unwrap()[0],
-            Segment::FreeRide { duration_s: 600 }
+            Segment::FreeRide {
+                duration_s: 600,
+                cadence_rpm: None,
+            }
         ));
         let segs = parse_textbar("30sec MAX").unwrap();
         match &segs[0] {

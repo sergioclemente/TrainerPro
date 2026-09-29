@@ -433,7 +433,10 @@ mod tests {
     }
 
     fn free(duration_s: u32) -> Segment {
-        Segment::FreeRide { duration_s }
+        Segment::FreeRide {
+            duration_s,
+            cadence_rpm: None,
+        }
     }
 
     fn text(offset_s: u32, msg: &str) -> TextEvent {

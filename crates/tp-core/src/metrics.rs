@@ -666,7 +666,10 @@ mod tests {
                 power: PowerTarget::Watts(200),
                 cadence_rpm: None,
             },
-            Segment::FreeRide { duration_s: 60 },
+            Segment::FreeRide {
+                duration_s: 60,
+                cadence_rpm: None,
+            },
         ]);
         let ftp = 200;
         let series: Vec<u16> = std::iter::repeat_n(200u16, 60)
@@ -712,7 +715,10 @@ mod tests {
         }]);
         assert_eq!(estimate_if_tss(&w, 0), (0.0, 0.0));
         // All-FreeRide workout: series is all zeros → IF 0, TSS 0.
-        let fr = workout(vec![Segment::FreeRide { duration_s: 120 }]);
+        let fr = workout(vec![Segment::FreeRide {
+            duration_s: 120,
+            cadence_rpm: None,
+        }]);
         assert_eq!(estimate_if_tss(&fr, 250), (0.0, 0.0));
     }
 }
