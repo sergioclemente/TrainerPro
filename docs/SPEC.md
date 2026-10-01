@@ -144,15 +144,35 @@ Ending a ride replays the journal, calculates summaries and interval laps,
 encodes a Garmin-compatible FIT file, and inserts one Activity. If FIT encoding
 fails, TrainerPro reports the error and preserves the journal for recovery.
 
+The completion screen offers Save FIT, upload to a connected Activity provider,
+and Done. It has no manual browser import or file-reveal action.
+
 Activities lists completed rides with their date, workout, duration, power,
-training metrics, and available heart-rate data. Users can reveal or save the
-FIT file, open Garmin Connect for manual upload, and delete an Activity. A
+training metrics, and available heart-rate data. Users can reveal the FIT file,
+upload it to a connected Garmin account, and delete an Activity. Confirmed Garmin
+uploads are remembered per Activity and account. Upload errors never automatically resend the file. A
 configured export directory receives an additional FIT copy.
 
 ## Settings and connections
 
 Settings manages athlete FTP and weight, distance recording, FIT export,
-optional workout libraries, and provider connections.
+optional workout libraries, and provider connections. A connection exposes
+plan-source and/or Activity-destination actions. Authentication status reflects
+local credential availability, not a live connectivity probe; unavailable
+credentials on one connection do not hide other connections.
+
+Next Up refreshes connected plan sources independently and keeps cached results
+available on failure. Refresh windows use each source's account time zone;
+schedule cutoffs and labels use placement time zone, then account time zone,
+then the machine's local zone. Activity uploads target a specific connected
+account, with upload markers remembered for that Activity/account pair.
+The local builder does not publish plans or modify external calendars.
+
+Garmin Connect sign-in supports verification codes and stores session tokens in
+the OS credential manager. Expired or revoked sessions require sign-in again.
+Uploads are manual and may flow onward to services linked to Garmin. The
+unofficial integration and live validation gate are described in
+[feature-garmin.md](feature-garmin.md).
 
 Intervals.icu connection uses a personal API key stored in the OS credential
 manager. The application stores only non-secret account identity, time zone,

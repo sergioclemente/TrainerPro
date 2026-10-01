@@ -186,16 +186,42 @@ export interface Settings {
   sources: Record<string, SourceConfig>;
 }
 
-export interface IntervalsConnectionStatus {
-  connected: boolean;
-  external_account_id: string | null;
-  display_name: string | null;
-  time_zone: string | null;
-  last_sync_succeeded_at_unix_ms: number | null;
-  last_sync_error: string | null;
+export type ProviderCapability = "planning" | "activities";
+
+export interface ProviderDefinition {
+  id: string;
+  name: string;
+  description: string;
+  notice: string | null;
+  manual_import_url: string | null;
+  capabilities: ProviderCapability[];
 }
 
-export interface IntervalsSyncReport {
+export interface ActivityUpload {
+  connection_id: string;
+  activity_id: string;
+  remote_activity_id: string;
+  uploaded_at_unix_ms: number;
+}
+
+export interface ProviderConnection {
+  provider: ProviderDefinition;
+  connection_id: string | null;
+  state: "disconnected" | "connected" | "needs_sign_in" | "unavailable";
+  external_account_id: string | null;
+  display_name: string | null;
+  error: AppError | null;
+  plan_source: {
+    time_zone: string | null;
+    last_sync_succeeded_at_unix_ms: number | null;
+    last_sync_error: string | null;
+  } | null;
+  activity_destination: { uploads: ActivityUpload[] } | null;
+}
+
+export type GarminSignInResult = { status: "connected" | "needs_mfa" };
+
+export interface PlanSyncReport {
   inserted: number;
   updated: number;
   unchanged: number;
@@ -339,11 +365,21 @@ export const ipc = {
   getPlayerWorkoutProfile: (workoutSessionId: string) =>
     invoke<PlayerWorkoutProfile | null>("get_player_workout_profile", { workoutSessionId }),
 
+  listProviderConnections: () => invoke<ProviderConnection[]>("list_provider_connections"),
+  refreshProviderPlans: (connectionId: string) =>
+    invoke<PlanSyncReport>("refresh_provider_plans", { connectionId }),
+  disconnectProvider: (connectionId: string) => invoke<void>("disconnect_provider", { connectionId }),
+  uploadActivity: (connectionId: string, activityId: string) =>
+    invoke<ActivityUpload>("upload_activity", { connectionId, activityId }),
+  openActivityImport: (providerId: string) => invoke<void>("open_activity_import", { providerId }),
+  connectGarmin: (email: string, password: string) =>
+    invoke<GarminSignInResult>("connect_garmin", { email, password }),
+  completeGarminMfa: (code: string) => invoke<void>("complete_garmin_mfa", { code }),
+  cancelGarminSignIn: () => invoke<void>("cancel_garmin_sign_in"),
   listActivities: () => invoke<ActivityRow[]>("list_activities"),
   deleteActivity: (id: string) => invoke<void>("delete_activity", { id }),
   saveFitAs: (id: string, destPath: string) => invoke<void>("save_fit_as", { id, destPath }),
   revealFit: (id: string) => invoke<void>("reveal_fit", { id }),
-  openGarminImport: () => invoke<void>("open_garmin_import"),
 
   sourceTest: (id: string, values: Record<string, string>) =>
     invoke<{ ok: boolean; detail: string }>("source_test", { id, values }),
@@ -363,14 +399,7 @@ export const ipc = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Settings) => invoke<Settings>("update_settings", { settings }),
 
-  getIntervalsIcuConnection: () =>
-    invoke<IntervalsConnectionStatus>("get_intervals_icu_connection"),
-  connectIntervalsIcu: (apiKey: string) =>
-    invoke<IntervalsConnectionStatus>("connect_intervals_icu", { apiKey }),
-  refreshIntervalsIcu: (todayDateLocal: string) =>
-    invoke<IntervalsSyncReport>("refresh_intervals_icu", { todayDateLocal }),
-  disconnectIntervalsIcu: () =>
-    invoke<IntervalsConnectionStatus>("disconnect_intervals_icu"),
+  connectIntervalsIcu: (apiKey: string) => invoke<string>("connect_intervals_icu", { apiKey }),
 
   traceFrontend: (message: string) => invoke<void>("trace_frontend", { message }),
 };

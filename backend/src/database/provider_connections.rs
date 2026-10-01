@@ -8,7 +8,7 @@ pub struct ProviderConnectionRow {
     pub provider: String,
     pub external_account_id: String,
     pub display_name: Option<String>,
-    pub time_zone: String,
+    pub time_zone: Option<String>,
     pub last_sync_succeeded_at_unix_ms: Option<i64>,
     pub last_sync_error: Option<String>,
     pub disconnected_at_unix_ms: Option<i64>,
@@ -19,7 +19,7 @@ pub struct ConnectedProvider<'a> {
     pub provider: &'a str,
     pub external_account_id: &'a str,
     pub display_name: Option<&'a str>,
-    pub time_zone: &'a str,
+    pub time_zone: Option<&'a str>,
     pub connected_at_unix_ms: i64,
 }
 
@@ -158,7 +158,7 @@ mod tests {
             provider: "intervals_icu",
             external_account_id: "i123",
             display_name: name,
-            time_zone: "Europe/Zurich",
+            time_zone: Some("Europe/Zurich"),
             connected_at_unix_ms: at,
         }
     }
@@ -178,7 +178,7 @@ mod tests {
         let row = get(&conn, "first").unwrap().unwrap();
         assert_eq!(row.external_account_id, "i123");
         assert_eq!(row.display_name.as_deref(), Some("A. Rider"));
-        assert_eq!(row.time_zone, "Europe/Zurich");
+        assert_eq!(row.time_zone.as_deref(), Some("Europe/Zurich"));
         assert_eq!(row.disconnected_at_unix_ms, None);
         assert_eq!(get(&conn, "replacement").unwrap(), None);
     }

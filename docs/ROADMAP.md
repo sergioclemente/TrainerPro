@@ -39,17 +39,17 @@ These are follow-ups, not additional release gates.
 
 - Select another planning or activity provider only when API access and user
   demand justify it.
-- Treat TrainingPeaks and Garmin as access-gated integrations.
+- Treat TrainingPeaks and official Garmin API access as gated integrations.
 - Consider Strava only for capabilities its public API actually exposes.
 - Prove each concrete capability before extracting shared connector
   abstractions.
 
 ## Later — adaptive coaching
 
-- Expose the minimum useful athlete, schedule, Activity, and workout context to
-  a private coaching service.
-- Let the coach propose validated recommendations or plan changes through
-  narrow tools with explicit confirmation for durable mutations.
+- Develop a separate AI planning service that owns training context, proposed
+  plans, user review, and publication to its planning authority.
+- Integrate that service as a plan source and, when supported, an Activity
+  destination. External history reads belong to the planning service.
 - Evaluate recommendation quality, privacy, continuity, and operating cost
   before broader distribution.
 
@@ -59,8 +59,11 @@ These are follow-ups, not additional release gates.
   conflict resolution, and outbound retry queues are not currently planned.
 - Production Intervals.icu OAuth is required only if TrainerPro moves beyond
   the personal/local distribution model.
-- Direct Garmin synchronization depends on Garmin Developer Program access;
-  manual FIT upload remains the supported path.
+- Finish live validation of unofficial Garmin Web P0: MFA, token
+  refresh/revocation, account reconnection, and onward sync. Sign-in,
+  completed-Activity upload, restart persistence, and duplicate errors have
+  passed in QA. See [feature-garmin.md](feature-garmin.md).
+- Official Garmin synchronization depends on Garmin Developer Program access.
 - The future display horizon for Next Up remains an open product decision.
 
 Every future change must preserve deterministic `tp-core` execution, offline

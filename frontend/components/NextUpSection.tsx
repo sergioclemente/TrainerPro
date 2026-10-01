@@ -3,6 +3,7 @@ import { AppError, NextUpItem, SchedulePlacement, fmtDuration, ipc } from "../ip
 import WorkoutGraph from "./WorkoutGraph";
 import { useStore } from "../state";
 import { dateKeyInZone } from "../date";
+import { refreshPlanConnections } from "../providers";
 
 let automaticProviderSyncStarted = false;
 
@@ -59,27 +60,20 @@ export default function NextUpSection() {
   async function refreshProvider(showSuccess: boolean) {
     setSyncing(true);
     try {
-      const connection = await ipc.getIntervalsIcuConnection();
-      if (!connection.connected) {
-        await refreshNextUp();
-        return;
-      }
-      const report = await ipc.refreshIntervalsIcu(
-        dateKeyInZone(new Date(), connection.time_zone),
-      );
-      await Promise.all([refreshNextUp(), refreshWorkouts()]);
-      if (showSuccess) {
-        pushToast(
-          report.issues.length > 0 ? "warn" : "info",
-          report.issues.length > 0
-            ? `Synced with ${report.issues.length} workout issue(s)`
-            : "Intervals.icu is up to date",
-        );
+      const connections = await useStore.getState().refreshProviderConnections();
+      const outcomes = await refreshPlanConnections(connections, ipc.refreshProviderPlans);
+      for (const outcome of outcomes) {
+        const name = outcome.connection.provider.name;
+        if (outcome.error) pushToast("warn", `${name} sync failed: ${outcome.error.message}`);
+        else if (showSuccess || outcome.report.issues.length > 0) {
+          pushToast(outcome.report.issues.length ? "warn" : "info", outcome.report.issues.length
+            ? `${name} synced with ${outcome.report.issues.length} workout issue(s)` : `${name} is up to date`);
+        }
       }
     } catch (error) {
-      const message = (error as AppError).message ?? String(error);
-      pushToast("warn", `Intervals.icu sync failed: ${message}`);
+      pushToast("warn", (error as AppError).message ?? String(error));
     } finally {
+      await Promise.allSettled([refreshNextUp(), refreshWorkouts(), useStore.getState().refreshProviderConnections()]);
       setSyncing(false);
     }
   }

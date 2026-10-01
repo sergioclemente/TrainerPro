@@ -56,7 +56,12 @@ impl From<activity_db::ActivityListRow> for ActivityRow {
 /// journal files. Any copy you exported elsewhere (export folder, Save
 /// As…) is left alone.
 #[tauri::command]
-pub async fn delete_activity(state: State<'_, AppState>, id: String) -> R<()> {
+pub async fn delete_activity(
+    state: State<'_, AppState>,
+    operations: State<'_, super::providers::ActivityTransfers>,
+    id: String,
+) -> R<()> {
+    let _operation = operations.acquire()?;
     let paths = {
         let conn = state.db.lock().unwrap();
         activity_db::delete(&conn, &id)?
@@ -88,12 +93,5 @@ pub async fn reveal_fit(app: AppHandle, state: State<'_, AppState>, id: String) 
     };
     app.opener()
         .reveal_item_in_dir(&fit)
-        .map_err(|e| AppError::new("io", e.to_string()))
-}
-
-#[tauri::command]
-pub async fn open_garmin_import(app: AppHandle) -> R<()> {
-    app.opener()
-        .open_url("https://connect.garmin.com/modern/import-data", None::<String>)
         .map_err(|e| AppError::new("io", e.to_string()))
 }

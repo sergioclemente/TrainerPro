@@ -23,8 +23,9 @@ is not primarily a calendar, file manager, or large workout-catalog product.
    effort than managing workouts.
 2. **Next Up is not a calendar.** Dates provide context, but external planning
    services remain the normal scheduling authority.
-3. **Local planning is secondary.** TrainerPro supports authoring and
-   clone-and-adjust workflows without competing with full planning products.
+3. **Local authoring is secondary.** The builder supports basic workouts and
+   clone-and-adjust workflows for riders without a planning integration.
+   External services own plan generation, calendar editing, and publication.
 4. **Files are boundary formats.** ZWO, ERG, MRC, and FIT are useful for
    interchange and export, not as internal workout identity.
 5. **Offline execution matters.** Synced workouts remain locally executable
@@ -86,17 +87,22 @@ but they are not a second editable source of truth.
 
 ## Provider direction
 
-Providers may supply schedules, definitions, catalogs, Activities, profile
-context, or recommendations. TrainerPro implements only the capabilities a
-provider actually supports.
+Connected accounts expose the capabilities TrainerPro actually implements:
+**plan sources** supply scheduled workouts; **Activity destinations** receive
+completed rides. One connection may support both. Library catalogs and local
+authoring retain their separate workflows.
 
 - **Intervals.icu** is currently an inbound planning authority. Activity upload
   and calendar writes are outside the current direction.
 - **WorkoutPlanner** is a self-hosted definition source and editor.
 - **What's on Zwift** is a read-only workout catalog.
-- **Garmin, TrainingPeaks, and Strava** remain access- and evidence-dependent.
-- A future **TrainerPro AI coach** may produce recommendations and proposed plan
-  changes through the same domain model and explicit confirmation boundaries.
+- **Garmin Connect** supports explicit completed-Activity uploads through an
+  unofficial Web connection. Live account validation gates release; the
+  contract is in [feature-garmin.md](feature-garmin.md).
+- **TrainingPeaks and Strava** remain access- and evidence-dependent.
+- A future **AI planner** is an external planning service. It owns training
+  context, plan generation, review, and publication. TrainerPro can consume its
+  scheduled workouts and send it completed Activities through these capabilities.
 
 ## Non-goals
 
@@ -104,7 +110,8 @@ provider actually supports.
 - Silent last-writer-wins synchronization.
 - Treating a workout file as canonical identity.
 - A generic connector abstraction without multiple concrete consumers.
-- Intervals.icu Activity upload or schedule write-back in the current scope.
+- Plan publication or calendar write-back from TrainerPro.
+- Intervals.icu Activity upload or external activity-history reads in the current scope.
 - Production OAuth before broad multi-user distribution requires it.
 
 ## Open product questions

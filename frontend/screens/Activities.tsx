@@ -1,8 +1,15 @@
+import { useEffect } from "react";
+import ActivityDestinations from "../components/ActivityDestinations";
 import { AppError, fmtDuration, ipc, revealLabel } from "../ipc";
 import { useStore } from "../state";
 
 export default function Activities() {
   const { activities, refreshActivities, pushToast } = useStore();
+
+  useEffect(() => {
+    void useStore.getState().refreshProviderConnections().catch((error) =>
+      pushToast("error", error.message ?? String(error)));
+  }, [pushToast]);
 
   async function del(id: string, name: string, date: string) {
     if (
@@ -58,6 +65,7 @@ export default function Activities() {
                 </td>
                 <td>{r.average_heart_rate_bpm ?? "–"}</td>
                 <td className="row gap">
+                  <ActivityDestinations activityId={r.id} />
                   <button className="ghost" onClick={() => ipc.revealFit(r.id)}>
                     {revealLabel}
                   </button>
