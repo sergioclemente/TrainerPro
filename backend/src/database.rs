@@ -4,6 +4,7 @@ use rusqlite::Connection;
 use std::path::Path;
 
 pub mod activities;
+pub mod activity_uploads;
 pub mod devices;
 pub mod provider_connections;
 pub mod scheduled_workouts;
@@ -62,8 +63,10 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE rides ADD COLUMN icu_activity_id TEXT;
     ",
-    // v6: TPW becomes workout truth. Legacy workout rows are deliberately
-    // not converted; activity history remains, detached from reset workouts.
+    // v6: TPW definitions, session Activities, schedules, provider connections,
+    // upload receipts, and controller pairing. Legacy workouts are reset;
+    // recorded rides retain their measurements and artifacts. Their IDs are
+    // the best available session IDs; workout snapshots cannot be recovered.
     "
     CREATE TABLE workout_definitions (
       id TEXT PRIMARY KEY,
@@ -72,66 +75,28 @@ const MIGRATIONS: &[&str] = &[
       updated_at INTEGER NOT NULL,
       origin TEXT,
       origin_id INTEGER,
-      origin_ref TEXT
+      origin_ref TEXT,
+      retired_at_unix_ms INTEGER
     );
 
-    CREATE TABLE activities (
+    CREATE TABLE provider_connections (
       id TEXT PRIMARY KEY,
-      workout_definition_id TEXT REFERENCES workout_definitions(id) ON DELETE SET NULL,
-      workout_name TEXT NOT NULL, started_at INTEGER NOT NULL,
-      elapsed_s INTEGER NOT NULL, timer_s INTEGER NOT NULL,
-      avg_power INTEGER, max_power INTEGER, np INTEGER, if_ REAL, tss REAL,
-      avg_hr INTEGER, max_hr INTEGER, avg_cadence INTEGER, kj INTEGER,
-      ftp_used INTEGER NOT NULL, intensity_final REAL NOT NULL,
-      fit_path TEXT NOT NULL, journal_path TEXT NOT NULL, completed_pct REAL NOT NULL,
-      icu_activity_id TEXT
+      provider TEXT NOT NULL CHECK(length(provider) > 0),
+      external_account_id TEXT NOT NULL CHECK(length(external_account_id) > 0),
+      display_name TEXT,
+      time_zone TEXT CHECK(time_zone IS NULL OR length(time_zone) > 0),
+      last_sync_succeeded_at_unix_ms INTEGER,
+      last_sync_error TEXT,
+      created_at_unix_ms INTEGER NOT NULL,
+      updated_at_unix_ms INTEGER NOT NULL,
+      disconnected_at_unix_ms INTEGER,
+      UNIQUE(provider, external_account_id)
     );
 
-    INSERT INTO activities (
-      id, workout_definition_id, workout_name, started_at, elapsed_s, timer_s,
-      avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence, kj,
-      ftp_used, intensity_final, fit_path, journal_path, completed_pct,
-      icu_activity_id
-    )
-    SELECT
-      id, NULL, workout_name, started_at, elapsed_s, timer_s,
-      avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence, kj,
-      ftp_used, intensity_final, fit_path, journal_path, completed_pct,
-      icu_activity_id
-    FROM rides;
+    CREATE UNIQUE INDEX provider_connections_one_active_account
+      ON provider_connections(provider)
+      WHERE disconnected_at_unix_ms IS NULL;
 
-    DROP TABLE rides;
-    DROP TABLE workouts;
-    ",
-    // v7: an activity is the immutable result of a workout session. Existing
-    // activities predate session identity and use their activity id as the
-    // best available session id; they have no recoverable workout snapshot.
-    "
-    ALTER TABLE activities ADD COLUMN workout_session_id TEXT;
-    ALTER TABLE activities ADD COLUMN workout_definition_snapshot_json TEXT;
-    UPDATE activities SET workout_session_id = id;
-    CREATE UNIQUE INDEX activities_workout_session_id
-      ON activities(workout_session_id);
-    ",
-    // v8: persisted activity measurements name their meaning and units.
-    "
-    ALTER TABLE activities RENAME COLUMN started_at TO started_at_unix_ms;
-    ALTER TABLE activities RENAME COLUMN avg_power TO average_power_w;
-    ALTER TABLE activities RENAME COLUMN max_power TO max_power_w;
-    ALTER TABLE activities RENAME COLUMN np TO normalized_power_w;
-    ALTER TABLE activities RENAME COLUMN if_ TO intensity_factor;
-    ALTER TABLE activities RENAME COLUMN tss TO training_stress_score;
-    ALTER TABLE activities RENAME COLUMN avg_hr TO average_heart_rate_bpm;
-    ALTER TABLE activities RENAME COLUMN max_hr TO max_heart_rate_bpm;
-    ALTER TABLE activities RENAME COLUMN avg_cadence TO average_cadence_rpm;
-    ALTER TABLE activities RENAME COLUMN kj TO work_kj;
-    ALTER TABLE activities RENAME COLUMN ftp_used TO ftp_used_w;
-    ALTER TABLE activities RENAME COLUMN intensity_final TO final_intensity_multiplier;
-    ",
-    // v9: a scheduled workout is a local calendar placement that references a
-    // workout definition. It remains available for activity traceability when
-    // removed from Next Up.
-    "
     CREATE TABLE scheduled_workouts (
       id TEXT PRIMARY KEY,
       workout_definition_id TEXT NOT NULL
@@ -142,66 +107,74 @@ const MIGRATIONS: &[&str] = &[
       removed_at_unix_ms INTEGER,
       created_at_unix_ms INTEGER NOT NULL,
       updated_at_unix_ms INTEGER NOT NULL,
+      provider_connection_id TEXT REFERENCES provider_connections(id) ON DELETE RESTRICT,
+      external_event_id TEXT,
+      external_revision TEXT,
+      last_synced_at_unix_ms INTEGER,
       CHECK (
         (scheduled_time_local IS NULL AND scheduled_time_zone IS NULL) OR
         (scheduled_time_local IS NOT NULL AND scheduled_time_zone IS NOT NULL)
-      )
+      ),
+      CHECK (
+        (provider_connection_id IS NULL AND external_event_id IS NULL) OR
+        (provider_connection_id IS NOT NULL AND external_event_id IS NOT NULL)
+      ),
+      CHECK (external_revision IS NULL OR external_event_id IS NOT NULL),
+      CHECK (last_synced_at_unix_ms IS NULL OR external_event_id IS NOT NULL)
     );
 
     CREATE INDEX scheduled_workouts_next_up
       ON scheduled_workouts(removed_at_unix_ms, scheduled_date_local,
                             scheduled_time_local);
-
-    ALTER TABLE activities ADD COLUMN scheduled_workout_id TEXT
-      REFERENCES scheduled_workouts(id) ON DELETE SET NULL;
-    ",
-    // v10: provider-scoped identity for connected calendar sync. Credentials
-    // remain outside this table; it stores only non-secret account identity,
-    // placement context, and observable sync status.
-    "
-    CREATE TABLE provider_connections (
-      id TEXT PRIMARY KEY,
-      provider TEXT NOT NULL CHECK(length(provider) > 0),
-      external_account_id TEXT NOT NULL CHECK(length(external_account_id) > 0),
-      display_name TEXT,
-      time_zone TEXT NOT NULL CHECK(length(time_zone) > 0),
-      last_sync_succeeded_at_unix_ms INTEGER,
-      last_sync_error TEXT,
-      created_at_unix_ms INTEGER NOT NULL,
-      updated_at_unix_ms INTEGER NOT NULL,
-      UNIQUE(provider, external_account_id)
-    );
-
-    ALTER TABLE workout_definitions ADD COLUMN retired_at_unix_ms INTEGER;
-
-    ALTER TABLE scheduled_workouts ADD COLUMN provider_connection_id TEXT
-      REFERENCES provider_connections(id) ON DELETE RESTRICT;
-    ALTER TABLE scheduled_workouts ADD COLUMN external_event_id TEXT
-      CHECK (
-        (provider_connection_id IS NULL AND external_event_id IS NULL) OR
-        (provider_connection_id IS NOT NULL AND external_event_id IS NOT NULL)
-      );
-    ALTER TABLE scheduled_workouts ADD COLUMN external_revision TEXT
-      CHECK (external_revision IS NULL OR external_event_id IS NOT NULL);
-    ALTER TABLE scheduled_workouts ADD COLUMN last_synced_at_unix_ms INTEGER
-      CHECK (last_synced_at_unix_ms IS NULL OR external_event_id IS NOT NULL);
-
     CREATE UNIQUE INDEX scheduled_workouts_provider_event
       ON scheduled_workouts(provider_connection_id, external_event_id)
       WHERE provider_connection_id IS NOT NULL;
-    ",
-    // v11: provider connection lifecycle. Only one account for a given
-    // provider can actively supply schedules at a time; disconnected rows and
-    // their linked history remain available for traceability.
-    "
-    ALTER TABLE provider_connections ADD COLUMN disconnected_at_unix_ms INTEGER;
 
-    CREATE UNIQUE INDEX provider_connections_one_active_account
-      ON provider_connections(provider)
-      WHERE disconnected_at_unix_ms IS NULL;
-    ",
-    // v12: standalone handlebar controller selection, preserving saved sensors.
-    "
+    CREATE TABLE activities (
+      id TEXT PRIMARY KEY,
+      workout_definition_id TEXT REFERENCES workout_definitions(id) ON DELETE SET NULL,
+      workout_name TEXT NOT NULL, started_at_unix_ms INTEGER NOT NULL,
+      elapsed_s INTEGER NOT NULL, timer_s INTEGER NOT NULL,
+      average_power_w INTEGER, max_power_w INTEGER, normalized_power_w INTEGER,
+      intensity_factor REAL, training_stress_score REAL,
+      average_heart_rate_bpm INTEGER, max_heart_rate_bpm INTEGER,
+      average_cadence_rpm INTEGER, work_kj INTEGER,
+      ftp_used_w INTEGER NOT NULL, final_intensity_multiplier REAL NOT NULL,
+      fit_path TEXT NOT NULL, journal_path TEXT NOT NULL, completed_pct REAL NOT NULL,
+      icu_activity_id TEXT,
+      workout_session_id TEXT,
+      workout_definition_snapshot_json TEXT,
+      scheduled_workout_id TEXT REFERENCES scheduled_workouts(id) ON DELETE SET NULL
+    );
+
+    INSERT INTO activities (
+      id, workout_definition_id, workout_name, started_at_unix_ms, elapsed_s, timer_s,
+      average_power_w, max_power_w, normalized_power_w, intensity_factor,
+      training_stress_score, average_heart_rate_bpm, max_heart_rate_bpm,
+      average_cadence_rpm, work_kj, ftp_used_w, final_intensity_multiplier,
+      fit_path, journal_path, completed_pct, icu_activity_id, workout_session_id
+    )
+    SELECT
+      id, NULL, workout_name, started_at, elapsed_s, timer_s,
+      avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence, kj,
+      ftp_used, intensity_final, fit_path, journal_path, completed_pct,
+      icu_activity_id, id
+    FROM rides;
+
+    CREATE UNIQUE INDEX activities_workout_session_id
+      ON activities(workout_session_id);
+
+    DROP TABLE rides;
+    DROP TABLE workouts;
+
+    CREATE TABLE activity_uploads (
+      activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+      provider_connection_id TEXT NOT NULL REFERENCES provider_connections(id) ON DELETE RESTRICT,
+      remote_activity_id TEXT NOT NULL CHECK(length(remote_activity_id) > 0),
+      uploaded_at_unix_ms INTEGER NOT NULL,
+      PRIMARY KEY(activity_id, provider_connection_id)
+    );
+
     CREATE TABLE devices_with_controller (
       role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm','controller')),
       platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
@@ -241,12 +214,85 @@ pub(super) fn test_connection() -> Connection {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn activity_upload_receipts_enforce_identity_and_foreign_keys() {
+        let conn = test_connection();
+        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, created_at_unix_ms, updated_at_unix_ms) VALUES ('account', 'garmin', '123', 1, 1);
+            INSERT INTO activities(id, workout_name, started_at_unix_ms, elapsed_s, timer_s, ftp_used_w, final_intensity_multiplier, fit_path, journal_path, completed_pct) VALUES ('ride', 'Test', 1, 30, 30, 200, 1, '/missing.fit', '/missing.jsonl', 100);
+            INSERT INTO activity_uploads VALUES ('ride', 'account', '456', 2);").unwrap();
+        let conn = prepare(conn).unwrap();
+        let receipt = activity_uploads::get(&conn, "account", "ride")
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.remote_activity_id, "456");
+        assert_eq!(receipt.connection_id, "account");
+        assert_eq!(receipt.uploaded_at_unix_ms, 2);
+        assert!(activity_uploads::record(&conn, &receipt).is_err());
+        assert!(conn
+            .execute("DELETE FROM provider_connections WHERE id='account'", [])
+            .is_err());
+        assert!(conn.prepare("SELECT * FROM garmin_uploads").is_err());
+        activities::delete(&conn, "ride").unwrap();
+        assert!(activity_uploads::list(&conn, "account").unwrap().is_empty());
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn providers_support_schedules_and_accounts_without_time_zones() {
+        let conn = test_connection();
+        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, time_zone, created_at_unix_ms, updated_at_unix_ms) VALUES ('icu', 'intervals_icu', 'i123', 'Europe/Zurich', 1, 1);
+            INSERT INTO workout_definitions(id, tpw_json, created_at, updated_at) VALUES ('definition', '{}', 1, 1);
+            INSERT INTO scheduled_workouts(id, workout_definition_id, scheduled_date_local, created_at_unix_ms, updated_at_unix_ms, provider_connection_id, external_event_id) VALUES ('scheduled', 'definition', '2030-01-01', 1, 1, 'icu', 'event');").unwrap();
+        let conn = super::prepare(conn).unwrap();
+        let connection = super::provider_connections::get(&conn, "icu")
+            .unwrap()
+            .unwrap();
+        assert_eq!(connection.time_zone.as_deref(), Some("Europe/Zurich"));
+        let linked: String = conn
+            .query_row(
+                "SELECT provider_connection_id FROM scheduled_workouts WHERE id = 'scheduled'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, "icu");
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+        super::provider_connections::connect(
+            &conn,
+            &super::provider_connections::ConnectedProvider {
+                id: "garmin",
+                provider: "garmin",
+                external_account_id: "123",
+                display_name: None,
+                time_zone: None,
+                connected_at_unix_ms: 1,
+            },
+        )
+        .unwrap();
+        assert!(super::provider_connections::get(&conn, "garmin")
+            .unwrap()
+            .unwrap()
+            .time_zone
+            .is_none());
+    }
+
+    #[test]
     fn controller_migration_preserves_pairings_and_accepts_controller() {
-        const PRE_CONTROLLER_MIGRATION_COUNT: usize = 11;
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         for (index, sql) in super::MIGRATIONS
             .iter()
-            .take(PRE_CONTROLLER_MIGRATION_COUNT)
+            .take(RELEASED_MIGRATION_COUNT)
             .enumerate()
         {
             conn.execute_batch(sql).unwrap();
@@ -279,14 +325,13 @@ mod tests {
 
     use super::*;
 
-    const PRE_PROVIDER_SYNC_MIGRATION_COUNT: usize = 9;
-    const PRE_CONNECTION_LIFECYCLE_MIGRATION_COUNT: usize = 10;
+    const RELEASED_MIGRATION_COUNT: usize = 5;
 
     #[test]
     fn tpw_migration_resets_workouts_but_preserves_activities_and_settings() {
         let conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        for (index, sql) in MIGRATIONS.iter().take(5).enumerate() {
+        for (index, sql) in MIGRATIONS.iter().take(RELEASED_MIGRATION_COUNT).enumerate() {
             conn.execute_batch(sql).unwrap();
             conn.pragma_update(None, "user_version", (index + 1) as i64)
                 .unwrap();
@@ -303,9 +348,12 @@ mod tests {
         conn.execute(
             "INSERT INTO rides (
                id, workout_id, workout_name, started_at, elapsed_s, timer_s,
-               ftp_used, intensity_final, fit_path, journal_path, completed_pct
+               ftp_used, intensity_final, fit_path, journal_path, completed_pct,
+               avg_power, max_power, np, if_, tss, avg_hr, max_hr, avg_cadence, kj,
+               icu_activity_id
              ) VALUES ('activity', 'legacy', 'Legacy', 1, 60, 60, 200, 1.0,
-                       '/tmp/activity.fit', '/tmp/activity.jsonl', 100.0)",
+                       '/tmp/activity.fit', '/tmp/activity.jsonl', 100.0,
+                       180, 300, 195, 0.975, 1.5, 130, 150, 90, 11, 'remote-ride')",
             [],
         )
         .unwrap();
@@ -361,6 +409,22 @@ mod tests {
                 "/tmp/activity.jsonl".into(),
             )
         );
+        let preserved_measurements: bool = conn
+            .query_row(
+                "SELECT average_power_w = 180 AND max_power_w = 300
+                    AND normalized_power_w = 195 AND intensity_factor = 0.975
+                    AND training_stress_score = 1.5 AND average_heart_rate_bpm = 130
+                    AND max_heart_rate_bpm = 150 AND average_cadence_rpm = 90
+                    AND work_kj = 11 AND ftp_used_w = 200
+                    AND final_intensity_multiplier = 1.0 AND elapsed_s = 60
+                    AND timer_s = 60 AND completed_pct = 100.0
+                    AND icu_activity_id = 'remote-ride'
+                 FROM activities WHERE id = 'activity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(preserved_measurements);
         let setting: String = conn
             .query_row("SELECT value FROM settings WHERE key = 'profile'", [], |row| {
                 row.get(0)
@@ -394,18 +458,8 @@ mod tests {
     }
 
     #[test]
-    fn provider_sync_migration_preserves_existing_local_schedules() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        for (index, sql) in MIGRATIONS
-            .iter()
-            .take(PRE_PROVIDER_SYNC_MIGRATION_COUNT)
-            .enumerate()
-        {
-            conn.execute_batch(sql).unwrap();
-            conn.pragma_update(None, "user_version", (index + 1) as i64)
-                .unwrap();
-        }
+    fn local_schedules_do_not_require_a_provider() {
+        let conn = test_connection();
         conn.execute(
             "INSERT INTO workout_definitions (
                id, tpw_json, created_at, updated_at)
@@ -445,18 +499,8 @@ mod tests {
     }
 
     #[test]
-    fn connection_lifecycle_migration_preserves_existing_account() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        for (index, sql) in MIGRATIONS
-            .iter()
-            .take(PRE_CONNECTION_LIFECYCLE_MIGRATION_COUNT)
-            .enumerate()
-        {
-            conn.execute_batch(sql).unwrap();
-            conn.pragma_update(None, "user_version", (index + 1) as i64)
-                .unwrap();
-        }
+    fn provider_connections_allow_only_one_active_account() {
+        let conn = test_connection();
         conn.execute(
             "INSERT INTO provider_connections (
                id, provider, external_account_id, time_zone,

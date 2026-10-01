@@ -10,6 +10,7 @@ mod controller;
 mod database;
 mod device_hub;
 mod device_owner;
+mod garmin;
 mod heart_rate_monitor;
 mod intervals_icu;
 mod intervals_icu_sync;
@@ -38,6 +39,9 @@ fn main() {
             let conn = database::open(&data_dir.join("trainerpro.sqlite3"))?;
             let hub = device_hub::DeviceHub::new(database::devices::controller_source(&conn));
             hub.start_event_forwarders(app.handle().clone());
+            app.manage(commands::garmin::GarminSignInState::default());
+            app.manage(commands::providers::ProviderOperations::default());
+            app.manage(commands::providers::ActivityTransfers::default());
             app.manage(AppState {
                 db: std::sync::Mutex::new(conn),
                 data_dir,
@@ -78,17 +82,21 @@ fn main() {
             commands::player::clear_ride,
             commands::player::get_player_state,
             commands::player::get_player_workout_profile,
+            commands::providers::list_provider_connections,
+            commands::providers::refresh_provider_plans,
+            commands::providers::disconnect_provider,
+            commands::providers::upload_activity,
+            commands::providers::open_activity_import,
+            commands::garmin::connect_garmin,
+            commands::garmin::complete_garmin_mfa,
+            commands::garmin::cancel_garmin_sign_in,
             commands::activity_history::list_activities,
             commands::activity_history::delete_activity,
             commands::activity_history::save_fit_as,
             commands::activity_history::reveal_fit,
-            commands::activity_history::open_garmin_import,
             commands::settings::get_settings,
             commands::settings::update_settings,
-            commands::intervals_icu::get_intervals_icu_connection,
             commands::intervals_icu::connect_intervals_icu,
-            commands::intervals_icu::refresh_intervals_icu,
-            commands::intervals_icu::disconnect_intervals_icu,
             logging::trace_frontend,
             workout_planner_source::source_test,
             workout_planner_source::planner_cached,

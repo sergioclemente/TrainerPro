@@ -14,7 +14,8 @@ flowchart TD
     UI[React screens + Zustand] -->|typed Tauri IPC| APP[Backend application layer]
     APP --> DB[(SQLite)]
     APP --> FILES[Session journals + FIT files]
-    APP --> PROVIDERS[Concrete provider clients]
+    APP --> CAPABILITIES[Plan sources / Activity destinations]
+    CAPABILITIES --> PROVIDERS[Concrete provider adapters]
     APP --> CORE[tp-core]
     APP --> HUB[Device hub]
     HUB --> MANAGER[tp-ble DeviceManager]
@@ -112,11 +113,34 @@ UI/configuration consumer. Scheduled-workout sync does not use that registry:
 it has provider connection identity, bounded reconciliation, remote revisions,
 and disconnect semantics that library browsing does not.
 
+## Provider capabilities
+
+The backend capability dispatcher owns the provider catalog, connection views,
+capability validation, and application operations. Connections can supply plans,
+receive Activities, or both. The frontend consumes that catalog; only the
+sign-in forms bind to provider-specific authentication commands. Library sources
+retain their separate descriptor registry.
+
+Authentication, remote payload mapping, and transport behavior remain in
+concrete adapters. Account mutations and capability operations share one guard
+per provider, so different providers remain independent. Garmin's pending MFA
+state has its own transient owner, while SQLite and the OS vault own durable
+account metadata and credentials. Authentication state is not a network probe.
+
+The Activity transfer flow resolves the immutable FIT artifact, checks for an
+existing account-scoped receipt, invokes the destination adapter, and records
+only a confirmed remote Activity ID. Uploads and local deletion share a transfer
+guard, acquired before a provider guard. Receipt persistence survives account
+reconnection; local Activity deletion cascades only local receipts.
+
 ## Next Up and provider sync
 
 Next Up is computed, never persisted. The backend combines active scheduled
 workouts with recommendations derived from Activity history. SQLite supplies
-cached results before any provider refresh.
+cached results before any provider refresh. Each source refresh reports its own
+outcome. Date windows are computed in the backend from that source's time zone;
+Next Up projects each schedule using its placement zone, owning account zone,
+or machine-local fallback.
 
 Intervals.icu uses a concrete inbound pipeline:
 
@@ -210,3 +234,16 @@ utterance once. Cancel invalidates the generation before closing the stream and
 discards late callbacks. Controller holds permit an unfocused visible Player;
 keyboard holds cancel on blur. Neither capture nor pending interpretation survives
 leaving the Player, hiding the window, or loss of its initiating input.
+
+## Garmin Activity upload
+
+The backend Garmin client owns mobile SSO, MFA, token refresh, and the Connect
+upload protocol. Pending MFA cookies are transient; tokens live in the
+bundle-scoped OS credential vault. The shared capability layer coordinates
+account operations and Activity transfers.
+
+The Garmin adapter refreshes and persists credentials when needed, sends one
+multipart upload, and checks asynchronous completion without resending the FIT.
+It returns a confirmed remote Activity ID to the shared transfer flow. Uncertain responses remain visible
+failures requiring the user to check Garmin before retrying. Recording and
+ride finalization do not depend on Garmin availability.

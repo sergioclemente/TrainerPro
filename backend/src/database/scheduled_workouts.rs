@@ -459,7 +459,7 @@ mod tests {
                 provider: "intervals_icu",
                 external_account_id: "i123",
                 display_name: None,
-                time_zone: "Europe/Zurich",
+                time_zone: Some("Europe/Zurich"),
                 connected_at_unix_ms: 1,
             },
         )
@@ -497,7 +497,7 @@ mod tests {
                 provider: "intervals_icu",
                 external_account_id: "i123",
                 display_name: None,
-                time_zone: "Europe/Zurich",
+                time_zone: Some("Europe/Zurich"),
                 connected_at_unix_ms: 1,
             },
         )

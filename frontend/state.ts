@@ -4,6 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
   ActivityRow,
+  AppError,
+  ProviderConnection,
   ActivitySummary,
   DeviceMeasurement,
   DeviceSlot,
@@ -95,6 +97,10 @@ interface Store {
   summary: ActivitySummary | null;
   detail: WorkoutDetailView | null;
   activities: ActivityRow[];
+  providerConnections: ProviderConnection[] | null;
+  providerConnectionsError: string;
+  activityTransfer: { connectionId: string; activityId: string } | null;
+  refreshProviderConnections: () => Promise<ProviderConnection[]>;
   // Planner state lives here (not in the tab component) so navigating to the
   // detail view and back does NOT re-sync or re-fetch previews.
   plannerRows: PlannerWorkout[];
@@ -155,6 +161,19 @@ export const useStore = create<Store>((set, get) => ({
   summary: null,
   detail: null,
   activities: [],
+  providerConnections: null,
+  providerConnectionsError: "",
+  activityTransfer: null,
+  refreshProviderConnections: async () => {
+    try {
+      const connections = await ipc.listProviderConnections();
+      set({ providerConnections: connections, providerConnectionsError: "" });
+      return connections;
+    } catch (error) {
+      set({ providerConnectionsError: (error as AppError).message ?? String(error) });
+      throw error;
+    }
+  },
   plannerRows: [],
   plannerPreviews: {},
   plannerStatus: "idle",

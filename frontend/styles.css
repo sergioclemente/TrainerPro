@@ -858,6 +858,7 @@ button.big {
 }
 .form input[type="text"],
 .form input[type="url"],
+.form input[type="email"],
 .form input[type="password"],
 .form input:not([type]) {
   background: var(--bg2);

@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test:frontend": "node --test frontend/voice/*.test.mjs frontend/screens/*.voice.test.mjs",
+    "test:frontend": "node --test frontend/*.test.mjs frontend/voice/*.test.mjs frontend/screens/*.voice.test.mjs",
     "voice:conformance": "node tools/voice-conformance.mjs",
     "voice:models": "node tools/fetch-voice-models.mjs",
     "voice:models:verify": "node tools/fetch-voice-models.mjs --verify-only",

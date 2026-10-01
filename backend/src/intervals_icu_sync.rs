@@ -43,6 +43,8 @@ pub(crate) enum IntervalsSyncError {
         oldest_date_local: String,
         newest_date_local: String,
     },
+    #[error("Intervals.icu account has no planning time zone; reconnect in Settings")]
+    MissingTimeZone,
     #[error(transparent)]
     Database(#[from] rusqlite::Error),
 }
@@ -95,6 +97,11 @@ pub(crate) fn persist_calendar_window(
         });
     }
 
+    let time_zone = connection
+        .time_zone
+        .as_deref()
+        .ok_or(IntervalsSyncError::MissingTimeZone)?;
+
     let mut present_external_event_ids = HashSet::new();
     let mut prepared = Vec::new();
     let mut summary = IntervalsSyncSummary {
@@ -127,7 +134,7 @@ pub(crate) fn persist_calendar_window(
             }
         };
         let (scheduled_date_local, scheduled_time_local, scheduled_time_zone) =
-            match schedule_placement(&event.start_date_local, &connection.time_zone) {
+            match schedule_placement(&event.start_date_local, time_zone) {
                 Some(placement) => placement,
                 None => {
                     present_external_event_ids.insert(external_event_id.clone());
@@ -275,7 +282,7 @@ mod tests {
                 provider: PROVIDER_ID,
                 external_account_id,
                 display_name: Some("Fixture Athlete"),
-                time_zone: "Europe/Zurich",
+                time_zone: Some("Europe/Zurich"),
                 connected_at_unix_ms: 1,
             },
         )

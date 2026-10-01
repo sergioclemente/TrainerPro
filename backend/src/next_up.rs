@@ -1,6 +1,6 @@
 //! Next Up read model: scheduled workouts followed by local recommendations.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -10,7 +10,6 @@ use crate::app_error::AppError;
 use crate::app_state::AppState;
 use crate::commands::workout::{self, WorkoutSummary};
 use crate::database::{provider_connections, scheduled_workouts, workout_definitions};
-use crate::intervals_icu::PROVIDER_ID;
 use crate::local_date;
 
 const LOCAL_FAVORITES_RECOMMENDER: &str = "local_favorites";
@@ -18,6 +17,9 @@ const LOCAL_FAVORITES_LOOKBACK_DAYS: i64 = 180;
 const MILLISECONDS_PER_DAY: i64 = 86_400_000;
 const RECOMMENDATION_LIMIT: usize = 3;
 const SCHEDULE_OVERDUE_RETENTION_DAYS: i64 = 7;
+// Every local calendar date is at most one day behind UTC. Fetch a broad
+// candidate window, then apply each schedule's effective-zone cutoff.
+const TIME_ZONE_DATE_MARGIN_DAYS: i64 = 1;
 const STRUCTURED_RIDE_TRAINING_FOCUS: &str = "Structured Ride";
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,16 +67,45 @@ fn list_at(
         .saturating_sub(LOCAL_FAVORITES_LOOKBACK_DAYS * MILLISECONDS_PER_DAY);
     let (scheduled, favorites) = {
         let conn = state.db.lock().unwrap();
-        let planning_time_zone = provider_connections::get_active_by_provider(&conn, PROVIDER_ID)?
-            .map(|connection| connection.time_zone);
-        let today_date_local = local_date::today_at(now_utc, planning_time_zone.as_deref());
-        let oldest_scheduled_date_local = oldest_scheduled_date_local(&today_date_local)?;
         (
-            scheduled_workouts::list_for_next_up(&conn, &oldest_scheduled_date_local)?,
+            scheduled_at(&conn, now_utc)?,
             workout_definitions::list_by_activity_frequency_since(&conn, favorite_cutoff_unix_ms)?,
         )
     };
     assemble(scheduled, favorites, ftp_w)
+}
+
+fn scheduled_at(
+    conn: &rusqlite::Connection,
+    now_utc: DateTime<Utc>,
+) -> Result<Vec<scheduled_workouts::ScheduledWorkoutWithDefinitionRow>, AppError> {
+    let earliest = local_date::shift(
+        &now_utc.date_naive().to_string(),
+        -SCHEDULE_OVERDUE_RETENTION_DAYS - TIME_ZONE_DATE_MARGIN_DAYS,
+    )
+    .ok_or_else(|| AppError::new("next_up_date", "Could not calculate the schedule window."))?;
+    let candidates = scheduled_workouts::list_for_next_up(conn, &earliest)?;
+    let mut account_zones = HashMap::new();
+    let mut scheduled = Vec::new();
+    for mut row in candidates {
+        if row.schedule.scheduled_time_zone.is_none() {
+            if let Some(connection_id) = &row.schedule.provider_connection_id {
+                if !account_zones.contains_key(connection_id) {
+                    let zone = provider_connections::get(conn, connection_id)?
+                        .and_then(|connection| connection.time_zone);
+                    account_zones.insert(connection_id.clone(), zone);
+                }
+                // This read projection supplies the effective zone to the UI,
+                // including all-day dates, without changing stored placement.
+                row.schedule.scheduled_time_zone = account_zones[connection_id].clone();
+            }
+        }
+        let today = local_date::today_at(now_utc, row.schedule.scheduled_time_zone.as_deref());
+        if row.schedule.scheduled_date_local >= oldest_scheduled_date_local(&today)? {
+            scheduled.push(row);
+        }
+    }
+    Ok(scheduled)
 }
 
 fn assemble(
@@ -134,6 +165,41 @@ mod tests {
             tpw_json: tpw_json.into(),
             origin: None,
         }
+    }
+
+    #[test]
+    fn schedule_cutoffs_and_labels_use_each_placements_effective_zone() {
+        use chrono::TimeZone;
+        let conn = crate::database::test_connection();
+        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, time_zone, created_at_unix_ms, updated_at_unix_ms)
+            VALUES ('east','east-source','1','Europe/Zurich',1,1), ('west','west-source','2','America/New_York',1,1);
+            INSERT INTO workout_definitions(id,tpw_json,created_at,updated_at) VALUES ('definition','{}',1,1);
+            INSERT INTO scheduled_workouts(id,workout_definition_id,scheduled_date_local,provider_connection_id,external_event_id,created_at_unix_ms,updated_at_unix_ms)
+            VALUES ('east-day','definition','2026-09-13','east','1',1,1), ('west-day','definition','2026-09-13','west','1',1,1);
+            INSERT INTO scheduled_workouts(id,workout_definition_id,scheduled_date_local,scheduled_time_local,scheduled_time_zone,provider_connection_id,external_event_id,created_at_unix_ms,updated_at_unix_ms)
+            VALUES ('explicit-west','definition','2026-09-13','07:00:00','America/New_York','east','2',1,1);").unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 20, 22, 30, 0).unwrap();
+        let rows = scheduled_at(&conn, now).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.schedule.id.as_str())
+                .collect::<Vec<_>>(),
+            ["west-day", "explicit-west"]
+        );
+        assert!(rows
+            .iter()
+            .all(|row| row.schedule.scheduled_time_zone.as_deref() == Some("America/New_York")));
+        // Effective-zone projection does not mutate the original all-day placement.
+        assert!(scheduled_workouts::get(&conn, "west-day")
+            .unwrap()
+            .unwrap()
+            .scheduled_time_zone
+            .is_none());
+        let local_cutoff = oldest_scheduled_date_local(&local_date::today_at(now, None)).unwrap();
+        conn.execute("INSERT INTO scheduled_workouts(id,workout_definition_id,scheduled_date_local,created_at_unix_ms,updated_at_unix_ms) VALUES ('local','definition',?1,1,1)", [&local_cutoff]).unwrap();
+        let rows = scheduled_at(&conn, now).unwrap();
+        let local = rows.iter().find(|row| row.schedule.id == "local").unwrap();
+        assert!(local.schedule.scheduled_time_zone.is_none());
     }
 
     #[test]

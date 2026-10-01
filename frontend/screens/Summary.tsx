@@ -1,9 +1,16 @@
+import { useEffect } from "react";
+import ActivityDestinations from "../components/ActivityDestinations";
 import { save } from "@tauri-apps/plugin-dialog";
-import { fmtDuration, ipc, revealLabel } from "../ipc";
+import { fmtDuration, ipc } from "../ipc";
 import { useStore } from "../state";
 
 export default function Summary() {
   const { summary, go, pushToast } = useStore();
+
+  useEffect(() => {
+    void useStore.getState().refreshProviderConnections().catch((error) =>
+      pushToast("error", error.message ?? String(error)));
+  }, [pushToast]);
 
   if (!summary) {
     return (
@@ -101,16 +108,11 @@ export default function Summary() {
         <button className="primary" onClick={saveFit}>
           Save .FIT…
         </button>
-        <button onClick={() => ipc.revealFit(summary.activity_id)}>{revealLabel}</button>
-        <button onClick={() => ipc.openGarminImport()}>Open Garmin Connect</button>
+        <ActivityDestinations activityId={summary.activity_id} />
         <button className="ghost" onClick={() => go("library")}>
           Done
         </button>
       </div>
-      <p className="muted footnote">
-        Upload to Garmin: drag the saved .FIT file into the Garmin Connect import
-        page that opens.
-      </p>
     </div>
   );
 }
