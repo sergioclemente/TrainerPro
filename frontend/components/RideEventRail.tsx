@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { SegmentResult, SegmentRow } from "../ipc";
+import type { PlayerState, SegmentResult, SegmentRow } from "../ipc";
+import { fmtDuration } from "../ipc";
 import type { RideTimelineItem } from "../rideTimeline";
 import { useStore } from "../state";
 import { zoneColor } from "./WorkoutGraph";
@@ -7,6 +8,8 @@ import ConnectionStatus from "./ConnectionStatus";
 import VoiceComposer from "./VoiceComposer";
 
 const TIMELINE_BOTTOM_TOLERANCE_PX = 32;
+/** The rail's open/closed choice sticks across rides, like the stats strip. */
+const RAIL_COLLAPSED_KEY = "trainerpro.player.rail-collapsed";
 
 function formatTimelineDuration(durationS: number): string {
   const seconds = Math.max(0, Math.round(durationS));
@@ -43,18 +46,20 @@ function segmentSummary(result: SegmentResult, segment?: SegmentRow): string {
     : `${duration} @ ${result.average_power_w} W`;
 }
 
-function SegmentCard({ result, segment }: { result: SegmentResult; segment?: SegmentRow }) {
+function zoneStyle(segment?: SegmentRow): CSSProperties {
   const startColor = segment ? zoneColor(segment.start_pct) : "#30363d";
   const endColor = segment ? zoneColor(segment.end_pct) : startColor;
-  const style = {
+  return {
     "--timeline-zone-start": startColor,
     "--timeline-zone-end": endColor,
   } as CSSProperties;
+}
 
+function SegmentCard({ result, segment }: { result: SegmentResult; segment?: SegmentRow }) {
   return (
     <div
       className={`timeline-bubble timeline-segment ${result.skipped ? "skipped" : ""}`}
-      style={style}
+      style={zoneStyle(segment)}
     >
       <div className="timeline-segment-head">
         <span>
@@ -68,6 +73,37 @@ function SegmentCard({ result, segment }: { result: SegmentResult; segment?: Seg
         <div className="timeline-segment-cadence">
           {result.average_cadence_rpm} rpm
         </div>
+      )}
+    </div>
+  );
+}
+
+/** The interval being ridden, in the same shape as the finished cards above
+    it but reading the plan (targets) rather than a result, so the history
+    ends at "now" instead of one step behind the metrics. */
+function CurrentSegmentCard({ player, segment }: { player: PlayerState; segment?: SegmentRow }) {
+  const index = player.seg_idx!;
+  const duration = segment
+    ? formatTimelineDuration(segment.duration_s)
+    : null;
+  const target =
+    segment?.kind === "freeride" || player.target_power_w === null
+      ? "open"
+      : `@ ${player.target_power_w} W`;
+  return (
+    <div className="timeline-bubble timeline-segment timeline-segment-current" style={zoneStyle(segment)}>
+      <div className="timeline-segment-head">
+        <span>
+          <span className="timeline-now-dot" aria-hidden="true" />
+          Now · {segment?.label || `Interval ${index + 1}`}
+        </span>
+        <span>{fmtDuration(player.seg_remaining_s)} left</span>
+      </div>
+      <div className="timeline-segment-result">
+        {duration ? `${duration} ${target}` : target}
+      </div>
+      {player.target_cadence_rpm !== null && (
+        <div className="timeline-segment-cadence">target {player.target_cadence_rpm} rpm</div>
       )}
     </div>
   );
@@ -102,11 +138,32 @@ function TimelineEntry({ item, segments }: {
   );
 }
 
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(RAIL_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export default function RideEventRail({ segments }: { segments: SegmentRow[] }) {
   const items = useStore((state) => state.rideTimeline.items);
+  const player = useStore((state) => state.player);
   const feedRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const [showLatest, setShowLatest] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+
+  const toggleCollapsed = () => {
+    setCollapsed((value) => {
+      try {
+        localStorage.setItem(RAIL_COLLAPSED_KEY, value ? "0" : "1");
+      } catch {
+        // A blocked store only costs the preference, not the toggle.
+      }
+      return !value;
+    });
+  };
 
   const scrollToLatest = (behavior: ScrollBehavior = "smooth") => {
     const feed = feedRef.current;
@@ -116,12 +173,38 @@ export default function RideEventRail({ segments }: { segments: SegmentRow[] }) 
     setShowLatest(false);
   };
 
+  // The current card changes with the interval, so follow it like a new item.
+  const currentIndex = player && player.phase !== "finished" ? player.seg_idx : null;
   useEffect(() => {
+    if (collapsed) return;
     if (pinnedRef.current) scrollToLatest(items.length <= 1 ? "auto" : "smooth");
-  }, [items.length]);
+  }, [items.length, currentIndex, collapsed]);
+
+  // A handle on the rail's edge, halfway down, in both states.
+  const toggle = (
+    <button
+      type="button"
+      className="ride-rail-toggle"
+      onClick={toggleCollapsed}
+      title={collapsed ? "Show the ride timeline" : "Hide the ride timeline"}
+      aria-label={collapsed ? "Show the ride timeline" : "Hide the ride timeline"}
+      aria-expanded={!collapsed}
+    >
+      {collapsed ? "›" : "‹"}
+    </button>
+  );
+
+  if (collapsed) {
+    return (
+      <aside className="ride-event-rail ride-event-rail-collapsed" aria-label="Ride timeline and status">
+        {toggle}
+      </aside>
+    );
+  }
 
   return (
     <aside className="ride-event-rail" aria-label="Ride timeline and status">
+      {toggle}
       <ConnectionStatus className="ride-connections" />
       <div className="ride-event-feed-wrap">
         <div
@@ -141,6 +224,11 @@ export default function RideEventRail({ segments }: { segments: SegmentRow[] }) 
           {items.map((item) => (
             <TimelineEntry key={item.id} item={item} segments={segments} />
           ))}
+          {player && currentIndex !== null && (
+            <div className="timeline-row timeline-row-app">
+              <CurrentSegmentCard player={player} segment={segments[currentIndex]} />
+            </div>
+          )}
         </div>
         {showLatest && (
           <button className="timeline-latest" onClick={() => scrollToLatest()}>
