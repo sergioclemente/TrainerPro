@@ -672,7 +672,9 @@ fn compile_cadence(target: &CyclingCadenceTarget) -> u16 {
     }
 }
 
-fn midpoint(min: u16, max: u16) -> u16 {
+/// Single value a `min..=max` range compiles to (rounding up). Shared with the
+/// ZWO reader so a `CadenceLow`/`CadenceHigh` pair lands on the same rpm.
+pub(crate) fn midpoint(min: u16, max: u16) -> u16 {
     (u32::from(min) + u32::from(max)).div_ceil(2) as u16
 }
 
