@@ -507,6 +507,41 @@ button.big {
 .ride-connections {
   flex: none;
 }
+.ride-event-rail {
+  position: relative;
+}
+/* Collapsed, the rail is a slim strip whose only content is the way back. */
+.ride-event-rail-collapsed {
+  width: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+}
+/* The collapse handle sits on the rail's edge, halfway down, so it is in the
+   same place whether the rail is open or shut. */
+.ride-rail-toggle {
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  z-index: 1;
+  width: 18px;
+  height: 56px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--bg2);
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+}
+.ride-event-rail-collapsed .ride-rail-toggle {
+  right: 0;
+  border-right: none;
+}
+.ride-rail-toggle:hover {
+  color: var(--fg);
+}
 .timeline-row {
   display: flex;
   width: 100%;
@@ -573,6 +608,24 @@ button.big {
 .timeline-segment.skipped {
   color: #b1b8c0;
   filter: saturate(0.45);
+}
+/* The interval being ridden: brighter than the finished results above it,
+   outlined rather than tinted so it reads as live, not done. */
+.timeline-segment-current {
+  border-color: var(--timeline-zone-start);
+  box-shadow: inset 0 0 0 1px var(--timeline-zone-start);
+}
+.timeline-segment-current::before {
+  opacity: 0.3;
+}
+.timeline-now-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  vertical-align: 1px;
 }
 .timeline-segment-head {
   display: flex;
