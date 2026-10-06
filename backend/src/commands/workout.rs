@@ -277,7 +277,11 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<WorkoutSegmentRow> {
                 .filter(|t| t.offset_s >= start_t && t.offset_s < end_t)
                 .map(|t| t.message.as_str())
                 .collect();
-            if texts.is_empty() { None } else { Some(texts.join(" · ")) }
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join(" · "))
+            }
         };
         let row = match s {
             WorkoutSegment::Steady {
@@ -363,7 +367,10 @@ pub async fn get_workout_detail(state: State<'_, AppState>, id: String) -> R<Wor
     let summary = get_workout_summary(&state, &id)?;
     let workout = load_workout_definition(&state, &id)?.compile()?;
     let ftp = state.settings().profile.ftp;
-    Ok(WorkoutDetail { summary, segments: segment_rows(&workout, ftp) })
+    Ok(WorkoutDetail {
+        summary,
+        segments: segment_rows(&workout, ftp),
+    })
 }
 
 /// Load and validate the canonical TPW definition from SQLite. Session setup

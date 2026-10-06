@@ -466,7 +466,10 @@ mod tests {
         h.trainer = None;
         h.hrm = None;
         let text = String::from_utf8(written(&h, &[], &[])).unwrap();
-        assert!(!text.contains("trainer"), "trainer key must be absent: {text}");
+        assert!(
+            !text.contains("trainer"),
+            "trainer key must be absent: {text}"
+        );
         assert!(!text.contains("hrm"), "hrm key must be absent: {text}");
         assert_eq!(
             text,
@@ -495,11 +498,7 @@ mod tests {
     fn sample_line_exact_format_full() {
         let mut sample = sample(1_234_567, Some(215), Some(92), Some(148), Some(220));
         sample.target_cadence_rpm = Some(95);
-        let bytes = written(
-            &header(),
-            &[sample],
-            &[],
-        );
+        let bytes = written(&header(), &[sample], &[]);
         let text = String::from_utf8(bytes).unwrap();
         let line = text.lines().nth(1).unwrap();
         assert_eq!(
@@ -521,10 +520,17 @@ mod tests {
 
     #[test]
     fn sample_line_partial_keys() {
-        let bytes = written(&header(), &[sample(2000, Some(180), None, Some(140), None)], &[]);
+        let bytes = written(
+            &header(),
+            &[sample(2000, Some(180), None, Some(140), None)],
+            &[],
+        );
         let text = String::from_utf8(bytes).unwrap();
         let line = text.lines().nth(1).unwrap();
-        assert_eq!(line, r#"{"s":{"t_ms":2000,"power_w":180,"heart_rate_bpm":140}}"#);
+        assert_eq!(
+            line,
+            r#"{"s":{"t_ms":2000,"power_w":180,"heart_rate_bpm":140}}"#
+        );
     }
 
     #[test]
@@ -550,10 +556,7 @@ mod tests {
             lines[3],
             r#"{"e":{"t_ms":600000,"kind":"workout_segment_end","segment_index":4}}"#
         );
-        assert_eq!(
-            lines[4],
-            r#"{"e":{"t_ms":700000,"kind":"freeride_enter"}}"#
-        );
+        assert_eq!(lines[4], r#"{"e":{"t_ms":700000,"kind":"freeride_enter"}}"#);
         assert_eq!(lines[5], r#"{"e":{"t_ms":900000,"kind":"end"}}"#);
     }
 
@@ -605,7 +608,10 @@ mod tests {
     fn truncated_final_line_tolerated() {
         let mut bytes = written(
             &header(),
-            &[sample(0, Some(100), None, None, None), sample(1000, Some(110), None, None, None)],
+            &[
+                sample(0, Some(100), None, None, None),
+                sample(1000, Some(110), None, None, None),
+            ],
             &[],
         );
         bytes.extend_from_slice(br#"{"s":{"t_ms":2000,"power_w":1"#); // crash mid-write
@@ -654,7 +660,9 @@ mod tests {
 
     #[test]
     fn missing_header_samples_only() {
-        let bytes = b"{\"s\":{\"t_ms\":0,\"power_w\":100}}\n{\"s\":{\"t_ms\":1000,\"power_w\":110}}\n".to_vec();
+        let bytes =
+            b"{\"s\":{\"t_ms\":0,\"power_w\":100}}\n{\"s\":{\"t_ms\":1000,\"power_w\":110}}\n"
+                .to_vec();
         let err = replay(Cursor::new(bytes)).unwrap_err();
         assert!(matches!(err, JournalError::MissingHeader));
     }
@@ -791,7 +799,10 @@ mod tests {
             sample(1000, Some(100), None, None, None),
             sample(2000, Some(100), None, None, None),
         ];
-        let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::Pause)];
+        let events = vec![
+            event(0, SessionEventKind::Start),
+            event(3000, SessionEventKind::Pause),
+        ];
         let activity_segments = compute_activity_segments(&recording(samples, events));
         assert_eq!(activity_segments.len(), 1);
         assert_eq!(activity_segments[0].end_ms, 3000); // last event is the latest timestamp
@@ -805,7 +816,10 @@ mod tests {
             sample(1000, None, None, Some(160), None),
             sample(2000, Some(201), Some(80), None, None),
         ];
-        let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::End)];
+        let events = vec![
+            event(0, SessionEventKind::Start),
+            event(3000, SessionEventKind::End),
+        ];
         let activity_segments = compute_activity_segments(&recording(samples, events));
         assert_eq!(activity_segments.len(), 1);
         let activity_segment = activity_segments[0];
@@ -822,7 +836,10 @@ mod tests {
             sample(0, None, None, None, None),
             sample(1000, None, None, None, None),
         ];
-        let events = vec![event(0, SessionEventKind::Start), event(2000, SessionEventKind::End)];
+        let events = vec![
+            event(0, SessionEventKind::Start),
+            event(2000, SessionEventKind::End),
+        ];
         let activity_segments = compute_activity_segments(&recording(samples, events));
         assert_eq!(activity_segments.len(), 1);
         let activity_segment = activity_segments[0];
@@ -840,7 +857,10 @@ mod tests {
         let samples: Vec<Sample> = (0..300)
             .map(|k| sample(k * 1000, Some(250), None, None, None))
             .collect();
-        let events = vec![event(0, SessionEventKind::Start), event(300_000, SessionEventKind::End)];
+        let events = vec![
+            event(0, SessionEventKind::Start),
+            event(300_000, SessionEventKind::End),
+        ];
         let activity_segments = compute_activity_segments(&recording(samples, events));
         assert_eq!(activity_segments[0].calories_kcal, 75);
 
@@ -848,13 +868,19 @@ mod tests {
         let samples: Vec<Sample> = (0..3)
             .map(|k| sample(k * 1000, Some(250), None, None, None))
             .collect();
-        let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::End)];
+        let events = vec![
+            event(0, SessionEventKind::Start),
+            event(3000, SessionEventKind::End),
+        ];
         let activity_segments = compute_activity_segments(&recording(samples, events));
         assert_eq!(activity_segments[0].calories_kcal, 1);
 
         // 1 s at 250 W = 0.25 kJ → 0 kcal.
         let samples = vec![sample(0, Some(250), None, None, None)];
-        let events = vec![event(0, SessionEventKind::Start), event(1000, SessionEventKind::End)];
+        let events = vec![
+            event(0, SessionEventKind::Start),
+            event(1000, SessionEventKind::End),
+        ];
         let activity_segments = compute_activity_segments(&recording(samples, events));
         assert_eq!(activity_segments[0].calories_kcal, 0);
     }
@@ -928,7 +954,10 @@ mod tests {
             sample(500, Some(100), None, None, None),
             sample(1500, Some(200), None, None, None),
         ];
-        let events = vec![event(500, SessionEventKind::Start), event(2000, SessionEventKind::End)];
+        let events = vec![
+            event(500, SessionEventKind::Start),
+            event(2000, SessionEventKind::End),
+        ];
         let activity_segments = compute_activity_segments(&recording(samples, events));
         assert_eq!(activity_segments.len(), 1);
         assert_eq!(activity_segments[0].start_ms, 500);

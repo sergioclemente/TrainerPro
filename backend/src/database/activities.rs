@@ -131,9 +131,11 @@ pub fn artifacts(conn: &Connection, id: &str) -> rusqlite::Result<Option<Activit
 }
 
 pub fn fit_path(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row("SELECT fit_path FROM activities WHERE id = ?1", [id], |row| {
-        row.get(0)
-    })
+    conn.query_row(
+        "SELECT fit_path FROM activities WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )
     .optional()
 }
 

@@ -32,7 +32,11 @@ const START_UNIX_MS: u64 = 1_750_000_000_000;
 fn zwo_to_fit_end_to_end() {
     // Parse: 30s warmup + 2×(20s on + 10s off) + 30s steady = 120 s, 6 segments.
     let parsed = parse_zwo(ZWO).expect("zwo parses");
-    assert!(parsed.warnings.is_empty(), "unexpected: {:?}", parsed.warnings);
+    assert!(
+        parsed.warnings.is_empty(),
+        "unexpected: {:?}",
+        parsed.warnings
+    );
     let workout = parsed.workout;
     assert_eq!(workout.segments.len(), 6);
     assert_eq!(workout.duration_s(), 120);
@@ -132,9 +136,7 @@ fn zwo_to_fit_end_to_end() {
         (100..=250).contains(&average_power_w),
         "average_power_w={average_power_w}"
     );
-    assert!(
-        totals.normalized_power_w.is_some() && totals.training_stress_score.is_some()
-    );
+    assert!(totals.normalized_power_w.is_some() && totals.training_stress_score.is_some());
 
     // Encode FIT and structurally validate container + trailing CRC.
     let fit = encode_activity(&FitActivity {
@@ -149,7 +151,11 @@ fn zwo_to_fit_end_to_end() {
     assert_eq!(fit[0], 14, "header size");
     assert_eq!(&fit[8..12], b".FIT");
     let data_size = u32::from_le_bytes(fit[4..8].try_into().unwrap()) as usize;
-    assert_eq!(fit.len(), 14 + data_size + 2, "header + data + trailing CRC");
+    assert_eq!(
+        fit.len(),
+        14 + data_size + 2,
+        "header + data + trailing CRC"
+    );
     // FIT property: CRC over (everything incl. stored CRC) == 0 is equivalent
     // to checking the stored value; recompute explicitly instead.
     let stored = u16::from_le_bytes(fit[fit.len() - 2..].try_into().unwrap());

@@ -11,8 +11,8 @@ use tauri_plugin_opener::OpenerExt;
 use std::collections::HashMap;
 
 use crate::app_error::AppError;
-use crate::player_runtime::PlayerState;
 use crate::app_state::{AppState, PlannerSettings, SourceConfig};
+use crate::player_runtime::PlayerState;
 
 const TIMEOUT_S: u64 = 30;
 
@@ -107,7 +107,11 @@ pub async fn fetch_workouts(cfg: &PlannerSettings) -> Result<Vec<PlannerWorkout>
 
 fn snippet(body: &str) -> String {
     let s: String = body.chars().take(200).collect();
-    if body.len() > 200 { format!("{s}…") } else { s }
+    if body.len() > 200 {
+        format!("{s}…")
+    } else {
+        s
+    }
 }
 
 fn parse_workouts_body(body: &str) -> Result<Vec<PlannerWorkout>, AppError> {
@@ -134,22 +138,29 @@ fn parse_workouts_body(body: &str) -> Result<Vec<PlannerWorkout>, AppError> {
     };
 
     fn as_i64(v: &serde_json::Value) -> Option<i64> {
-        v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
     }
     fn as_f64(v: &serde_json::Value) -> Option<f64> {
-        v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
     }
 
     let mut out = Vec::new();
     for w in &arr {
-        let Some(wid) = w.get("id").and_then(as_i64) else { continue };
+        let Some(wid) = w.get("id").and_then(as_i64) else {
+            continue;
+        };
         let sport = w.get("sport_type").and_then(as_i64).unwrap_or(1);
         if sport != 1 {
             continue;
         }
         out.push(PlannerWorkout {
             wid,
-            created: w.get("creation_ts").and_then(|v| v.as_str()).map(String::from),
+            created: w
+                .get("creation_ts")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             title: w
                 .get("title")
                 .and_then(|t| t.as_str())
@@ -177,7 +188,11 @@ fn parse_workouts_body(body: &str) -> Result<Vec<PlannerWorkout>, AppError> {
 
 /// GET /workout_file → ZWO text (spec Part A1).
 pub async fn fetch_zwo(cfg: &PlannerSettings, wid: i64, ftp: u16) -> Result<String, AppError> {
-    let resp = get_with_retry(cfg, &format!("/workout_file?wid={wid}&format=zwo&ftp={ftp}")).await?;
+    let resp = get_with_retry(
+        cfg,
+        &format!("/workout_file?wid={wid}&format=zwo&ftp={ftp}"),
+    )
+    .await?;
     resp.text()
         .await
         .map_err(|e| AppError::new("planner_unreachable", e.to_string()))
@@ -186,7 +201,10 @@ pub async fn fetch_zwo(cfg: &PlannerSettings, wid: i64, ftp: u16) -> Result<Stri
 fn cfg_checked(state: &State<'_, AppState>) -> Result<PlannerSettings, AppError> {
     let cfg = state.settings().planner();
     if !cfg.enabled || cfg.url.is_empty() {
-        return Err(AppError::new("planner_disabled", "WorkoutPlanner is not configured"));
+        return Err(AppError::new(
+            "planner_disabled",
+            "WorkoutPlanner is not configured",
+        ));
     }
     Ok(cfg)
 }
@@ -211,9 +229,15 @@ pub async fn source_test(
 ) -> Result<SourceTestResult, AppError> {
     match id.as_str() {
         "planner" => {
-            let cfg = PlannerSettings::from_source(&SourceConfig { enabled: true, values });
+            let cfg = PlannerSettings::from_source(&SourceConfig {
+                enabled: true,
+                values,
+            });
             let list = fetch_workouts(&cfg).await?;
-            Ok(SourceTestResult { ok: true, detail: format!("{} workouts found", list.len()) })
+            Ok(SourceTestResult {
+                ok: true,
+                detail: format!("{} workouts found", list.len()),
+            })
         }
         other => Err(AppError::new(
             "not_testable",
@@ -235,7 +259,11 @@ fn read_cached_list(state: &State<'_, AppState>) -> Option<PlannerListResult> {
         .ok()
         .flatten()?;
     let rows: Vec<PlannerWorkout> = serde_json::from_str(&c.value).ok()?;
-    Some(PlannerListResult { rows, from_cache: true, fetched_at_ms: c.fetched_at_ms })
+    Some(PlannerListResult {
+        rows,
+        from_cache: true,
+        fetched_at_ms: c.fetched_at_ms,
+    })
 }
 
 /// Startup hydration: cached list only, no network.
@@ -268,7 +296,11 @@ pub async fn planner_list(state: State<'_, AppState>) -> Result<PlannerListResul
                 &serde_json::to_string(&list).unwrap_or_default(),
                 now,
             );
-            Ok(PlannerListResult { rows: list, from_cache: false, fetched_at_ms: now })
+            Ok(PlannerListResult {
+                rows: list,
+                from_cache: false,
+                fetched_at_ms: now,
+            })
         }
         Err(e) => match read_cached_list(&state) {
             Some(r) => {
@@ -296,21 +328,21 @@ pub async fn planner_ride(
             // workout — possibly stale, so say so.
             let cached = {
                 let conn = state.db.lock().unwrap();
-                crate::database::source_cache::get(
-                    &conn,
-                    "planner",
-                    &format!("preview:{wid}"),
-                )
-                .ok()
-                .flatten()
+                crate::database::source_cache::get(&conn, "planner", &format!("preview:{wid}"))
+                    .ok()
+                    .flatten()
             }
             .and_then(|c| serde_json::from_str::<StoredPreview>(&c.value).ok());
             match cached {
                 Some(s) if !s.zwo.is_empty() => {
-                    let _ = tauri::Emitter::emit(&app, "toast", serde_json::json!({
-                        "level": "warn",
-                        "message": "WorkoutPlanner unreachable — riding the cached copy",
-                    }));
+                    let _ = tauri::Emitter::emit(
+                        &app,
+                        "toast",
+                        serde_json::json!({
+                            "level": "warn",
+                            "message": "WorkoutPlanner unreachable — riding the cached copy",
+                        }),
+                    );
                     s.zwo
                 }
                 _ => return Err(e),
@@ -361,13 +393,9 @@ pub async fn planner_preview(
         // L2: persistent cache (survives restarts; enables offline).
         let db_hit = {
             let conn = state.db.lock().unwrap();
-            crate::database::source_cache::get(
-                &conn,
-                "planner",
-                &format!("preview:{wid}"),
-            )
-            .ok()
-            .flatten()
+            crate::database::source_cache::get(&conn, "planner", &format!("preview:{wid}"))
+                .ok()
+                .flatten()
         };
         if let Some(c) = db_hit {
             if c.content_hash.as_deref() == Some(key.as_str()) {
@@ -384,8 +412,7 @@ pub async fn planner_preview(
     }
 
     let zwo = fetch_zwo(&cfg, wid, ftp).await?;
-    let sha = dsl_key
-        .unwrap_or_else(|| format!("{:x}", sha2::Sha256::digest(zwo.as_bytes())));
+    let sha = dsl_key.unwrap_or_else(|| format!("{:x}", sha2::Sha256::digest(zwo.as_bytes())));
     if let Some((cached_sha, p)) = state.planner_previews.lock().unwrap().get(&wid) {
         if *cached_sha == sha {
             return Ok(p.clone());
@@ -404,7 +431,11 @@ pub async fn planner_preview(
         est_tss,
         segments: crate::commands::workout::segment_rows(w, ftp),
     };
-    state.planner_previews.lock().unwrap().insert(wid, (sha.clone(), preview.clone()));
+    state
+        .planner_previews
+        .lock()
+        .unwrap()
+        .insert(wid, (sha.clone(), preview.clone()));
     {
         let conn = state.db.lock().unwrap();
         let _ = crate::database::source_cache::put(
@@ -412,8 +443,11 @@ pub async fn planner_preview(
             "planner",
             &format!("preview:{wid}"),
             Some(&sha),
-            &serde_json::to_string(&StoredPreview { preview: preview.clone(), zwo })
-                .unwrap_or_default(),
+            &serde_json::to_string(&StoredPreview {
+                preview: preview.clone(),
+                zwo,
+            })
+            .unwrap_or_default(),
             crate::app_state::now_unix_ms() as i64,
         );
     }
@@ -505,7 +539,12 @@ mod tests {
     }
 
     fn cfg(url: &str, user: &str) -> PlannerSettings {
-        PlannerSettings { url: url.into(), user: user.into(), pass: "pw".into(), enabled: true }
+        PlannerSettings {
+            url: url.into(),
+            user: user.into(),
+            pass: "pw".into(),
+            enabled: true,
+        }
     }
 
     #[tokio::test]
@@ -521,7 +560,10 @@ mod tests {
         assert_eq!(out[0].duration_s, 3720);
         let req = h.join().unwrap();
         assert!(req.starts_with("GET /workouts"));
-        assert!(!req.contains("Authorization"), "no auth header when user empty");
+        assert!(
+            !req.contains("Authorization"),
+            "no auth header when user empty"
+        );
     }
 
     #[tokio::test]
@@ -550,7 +592,9 @@ mod tests {
     #[tokio::test]
     async fn unreachable_maps_to_planner_unreachable() {
         // Nothing listening on this port.
-        let err = fetch_workouts(&cfg("http://127.0.0.1:1", "")).await.unwrap_err();
+        let err = fetch_workouts(&cfg("http://127.0.0.1:1", ""))
+            .await
+            .unwrap_err();
         assert_eq!(err.code, "planner_unreachable");
     }
 

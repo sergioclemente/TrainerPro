@@ -18,9 +18,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::consts::{
-    POWER_FRACTION_MAX, POWER_FRACTION_MIN, WORKOUT_REPEAT_COUNT_MAX,
-};
+use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN, WORKOUT_REPEAT_COUNT_MAX};
 use crate::workout_definition::{
     CyclingCadenceTarget, CyclingPowerTarget, CyclingStep, WorkoutDefinition, WorkoutFormat,
     WorkoutPrescription, TPW_VERSION,
@@ -55,14 +53,19 @@ pub enum BuildNode {
     },
     /// Container. `children` may not contain another Repeat — the builder's
     /// drop rules prevent it and `validate` enforces it.
-    Repeat { count: u32, children: Vec<BuildNode> },
+    Repeat {
+        count: u32,
+        children: Vec<BuildNode>,
+    },
 }
 
 impl BuildNode {
     /// Ridden length in seconds, repeats expanded.
     pub fn duration_s(&self) -> u32 {
         match self {
-            BuildNode::Simple { duration_s, .. } | BuildNode::Ramp { duration_s, .. } => *duration_s,
+            BuildNode::Simple { duration_s, .. } | BuildNode::Ramp { duration_s, .. } => {
+                *duration_s
+            }
             BuildNode::Repeat { count, children } => {
                 let inner: u32 = children.iter().map(BuildNode::duration_s).sum();
                 inner.saturating_mul(*count)
@@ -152,7 +155,9 @@ impl std::fmt::Display for BuildError {
 impl std::error::Error for BuildError {}
 
 fn err<T>(message: impl Into<String>) -> Result<T, BuildError> {
-    Err(BuildError { message: message.into() })
+    Err(BuildError {
+        message: message.into(),
+    })
 }
 
 /// What emission had to give up, if anything. Surfaced to the user as an
@@ -182,11 +187,20 @@ pub fn validate(draft: &WorkoutDraft) -> Result<(), BuildError> {
 
 fn validate_node(node: &BuildNode, inside_repeat: bool) -> Result<(), BuildError> {
     match node {
-        BuildNode::Simple { duration_s, power_pct, .. } => {
+        BuildNode::Simple {
+            duration_s,
+            power_pct,
+            ..
+        } => {
             check_duration(*duration_s)?;
             check_power(*power_pct)
         }
-        BuildNode::Ramp { duration_s, start_pct, end_pct, .. } => {
+        BuildNode::Ramp {
+            duration_s,
+            start_pct,
+            end_pct,
+            ..
+        } => {
             check_duration(*duration_s)?;
             check_power(*start_pct)?;
             check_power(*end_pct)
@@ -216,7 +230,9 @@ fn check_duration(duration_s: u32) -> Result<(), BuildError> {
         return err("interval duration must be at least 1 s");
     }
     if duration_s > MAX_SEGMENT_S {
-        return err(format!("interval duration must be at most {MAX_SEGMENT_S} s"));
+        return err(format!(
+            "interval duration must be at most {MAX_SEGMENT_S} s"
+        ));
     }
     Ok(())
 }
@@ -271,7 +287,11 @@ fn cadence_attr(cadence_rpm: Option<u16>, attr: &str) -> String {
 /// descending ramp round-trips without needing `<Cooldown>`'s swap rule.
 fn emit_leaf(node: &BuildNode, out: &mut String) {
     match node {
-        BuildNode::Simple { duration_s, power_pct, cadence_rpm } => {
+        BuildNode::Simple {
+            duration_s,
+            power_pct,
+            cadence_rpm,
+        } => {
             out.push_str(&format!(
                 "    <SteadyState Duration=\"{}\" Power=\"{}\"{}/>\n",
                 duration_s,
@@ -279,7 +299,12 @@ fn emit_leaf(node: &BuildNode, out: &mut String) {
                 cadence_attr(*cadence_rpm, "Cadence"),
             ));
         }
-        BuildNode::Ramp { duration_s, start_pct, end_pct, cadence_rpm } => {
+        BuildNode::Ramp {
+            duration_s,
+            start_pct,
+            end_pct,
+            cadence_rpm,
+        } => {
             out.push_str(&format!(
                 "    <Ramp Duration=\"{}\" PowerLow=\"{}\" PowerHigh=\"{}\"{}/>\n",
                 duration_s,
@@ -297,8 +322,15 @@ fn emit_leaf(node: &BuildNode, out: &mut String) {
 /// A Repeat writes as `IntervalsT` only in the shape that element can express:
 /// exactly two Simple children, read as (work, recovery).
 fn as_intervals_t(count: u32, children: &[BuildNode]) -> Option<String> {
-    let [BuildNode::Simple { duration_s: on_s, power_pct: on_p, cadence_rpm: on_c }, BuildNode::Simple { duration_s: off_s, power_pct: off_p, cadence_rpm: off_c }] =
-        children
+    let [BuildNode::Simple {
+        duration_s: on_s,
+        power_pct: on_p,
+        cadence_rpm: on_c,
+    }, BuildNode::Simple {
+        duration_s: off_s,
+        power_pct: off_p,
+        cadence_rpm: off_c,
+    }] = children
     else {
         return None;
     };
@@ -360,7 +392,10 @@ pub fn to_zwo(draft: &WorkoutDraft) -> Result<Emitted, BuildError> {
         body,
     );
 
-    Ok(Emitted { xml, expanded_repeats })
+    Ok(Emitted {
+        xml,
+        expanded_repeats,
+    })
 }
 
 #[cfg(test)]
@@ -370,11 +405,19 @@ mod tests {
     use crate::parse::parse_zwo;
 
     fn simple(duration_s: u32, power_pct: f64) -> BuildNode {
-        BuildNode::Simple { duration_s, power_pct, cadence_rpm: None }
+        BuildNode::Simple {
+            duration_s,
+            power_pct,
+            cadence_rpm: None,
+        }
     }
 
     fn draft(nodes: Vec<BuildNode>) -> WorkoutDraft {
-        WorkoutDraft { name: "Test".into(), description: String::new(), nodes }
+        WorkoutDraft {
+            name: "Test".into(),
+            description: String::new(),
+            nodes,
+        }
     }
 
     fn round_trip(nodes: Vec<BuildNode>) -> Vec<WorkoutSegment> {
@@ -415,8 +458,18 @@ mod tests {
     #[test]
     fn ascending_and_descending_ramps_keep_their_direction() {
         let segs = round_trip(vec![
-            BuildNode::Ramp { duration_s: 600, start_pct: 55.0, end_pct: 75.0, cadence_rpm: None },
-            BuildNode::Ramp { duration_s: 300, start_pct: 75.0, end_pct: 55.0, cadence_rpm: None },
+            BuildNode::Ramp {
+                duration_s: 600,
+                start_pct: 55.0,
+                end_pct: 75.0,
+                cadence_rpm: None,
+            },
+            BuildNode::Ramp {
+                duration_s: 300,
+                start_pct: 75.0,
+                end_pct: 55.0,
+                cadence_rpm: None,
+            },
         ]);
         assert_eq!(
             segs,
@@ -510,8 +563,16 @@ mod tests {
     fn the_worked_example_round_trips_whole() {
         // 10 min ramp 55→75, 3 × (1:00 @ 100 %, 0:30 @ 55 %), 5 min @ 55 %.
         let nodes = vec![
-            BuildNode::Ramp { duration_s: 600, start_pct: 55.0, end_pct: 75.0, cadence_rpm: None },
-            BuildNode::Repeat { count: 3, children: vec![simple(60, 100.0), simple(30, 55.0)] },
+            BuildNode::Ramp {
+                duration_s: 600,
+                start_pct: 55.0,
+                end_pct: 75.0,
+                cadence_rpm: None,
+            },
+            BuildNode::Repeat {
+                count: 3,
+                children: vec![simple(60, 100.0), simple(30, 55.0)],
+            },
             simple(300, 55.0),
         ];
         let d = draft(nodes.clone());
@@ -568,16 +629,30 @@ mod tests {
     fn rejects_nested_repeats_and_degenerate_repeats() {
         let nested = BuildNode::Repeat {
             count: 2,
-            children: vec![BuildNode::Repeat { count: 2, children: vec![simple(60, 100.0)] }],
+            children: vec![BuildNode::Repeat {
+                count: 2,
+                children: vec![simple(60, 100.0)],
+            }],
         };
         assert!(to_zwo(&draft(vec![nested])).is_err());
-        assert!(to_zwo(&draft(vec![BuildNode::Repeat { count: 0, children: vec![simple(60, 100.0)] }])).is_err());
-        assert!(to_zwo(&draft(vec![BuildNode::Repeat { count: 2, children: vec![] }])).is_err());
+        assert!(to_zwo(&draft(vec![BuildNode::Repeat {
+            count: 0,
+            children: vec![simple(60, 100.0)]
+        }]))
+        .is_err());
+        assert!(to_zwo(&draft(vec![BuildNode::Repeat {
+            count: 2,
+            children: vec![]
+        }]))
+        .is_err());
     }
 
     #[test]
     fn duration_of_a_repeat_counts_every_lap() {
-        let n = BuildNode::Repeat { count: 4, children: vec![simple(60, 100.0), simple(30, 55.0)] };
+        let n = BuildNode::Repeat {
+            count: 4,
+            children: vec![simple(60, 100.0), simple(30, 55.0)],
+        };
         assert_eq!(n.duration_s(), 360);
     }
 }
