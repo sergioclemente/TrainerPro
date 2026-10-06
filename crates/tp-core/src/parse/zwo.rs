@@ -485,7 +485,11 @@ mod tests {
             "Warmup, sweet spot, VO2 bursts, free ride, cooldown."
         );
         assert_eq!(parsed.source_format, SourceFormat::Zwo);
-        assert!(parsed.warnings.is_empty(), "unexpected: {:?}", parsed.warnings);
+        assert!(
+            parsed.warnings.is_empty(),
+            "unexpected: {:?}",
+            parsed.warnings
+        );
 
         // 1 warmup + 1 steady + 3×(on,off) + 1 ramp + 1 freeride + 1 cooldown
         assert_eq!(w.segments.len(), 11);
@@ -560,7 +564,10 @@ mod tests {
         );
         assert!(p.warnings.is_empty(), "{:?}", p.warnings);
         let written = to_zwo(&p.workout);
-        assert!(written.contains(r#"<FreeRide Duration="300" Cadence="90"/>"#), "{written}");
+        assert!(
+            written.contains(r#"<FreeRide Duration="300" Cadence="90"/>"#),
+            "{written}"
+        );
     }
 
     #[test]
@@ -591,14 +598,7 @@ mod tests {
         // segments[2..8] = on,off × 3, in order
         assert_eq!(
             &parsed.workout.segments[2..8],
-            &[
-                on.clone(),
-                off.clone(),
-                on.clone(),
-                off.clone(),
-                on,
-                off
-            ]
+            &[on.clone(), off.clone(), on.clone(), off.clone(), on, off]
         );
     }
 
@@ -869,7 +869,11 @@ mod tests {
         </workout></workout_file>"#;
         let p = parse_zwo(xml).unwrap();
         assert_eq!(p.workout.segments.len(), 1);
-        assert!(p.warnings.iter().any(|w| w.message.contains("skipped")), "{:?}", p.warnings);
+        assert!(
+            p.warnings.iter().any(|w| w.message.contains("skipped")),
+            "{:?}",
+            p.warnings
+        );
     }
 
     #[test]
@@ -985,7 +989,11 @@ mod writer_tests {
                     cadence_rpm: None,
                 },
             ],
-            text_events: vec![TextEvent { offset_s: 310, message: "go!".into(), duration_s: 10 }],
+            text_events: vec![TextEvent {
+                offset_s: 310,
+                message: "go!".into(),
+                duration_s: 10,
+            }],
         };
         let xml = to_zwo(&w);
         let parsed = parse_zwo(&xml).expect("roundtrip parses");
@@ -1018,12 +1026,18 @@ pub fn to_zwo(w: &ExecutableWorkout) -> String {
         }
     }
     fn esc(s: &str) -> String {
-        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
     }
     let mut out = String::new();
     out.push_str("<workout_file>\n");
     out.push_str(&format!("    <name>{}</name>\n", esc(&w.name)));
-    out.push_str(&format!("    <description>{}</description>\n", esc(&w.description)));
+    out.push_str(&format!(
+        "    <description>{}</description>\n",
+        esc(&w.description)
+    ));
     out.push_str("    <sportType>bike</sportType>\n    <workout>\n");
     let mut t = 0u32;
     for seg in &w.segments {
@@ -1041,7 +1055,11 @@ pub fn to_zwo(w: &ExecutableWorkout) -> String {
             })
             .collect();
         let close = |tag: &str, inner: &str| {
-            if inner.is_empty() { "/>".to_string() } else { format!(">{inner}\n        </{tag}>") }
+            if inner.is_empty() {
+                "/>".to_string()
+            } else {
+                format!(">{inner}\n        </{tag}>")
+            }
         };
         match seg {
             WorkoutSegment::Steady {
@@ -1106,7 +1124,9 @@ fn escape_bare_ampersands(input: &str) -> (std::borrow::Cow<'_, str>, usize) {
         if let Some(num) = rest.strip_prefix('#') {
             let digits = num.strip_prefix(['x', 'X']).unwrap_or(num);
             if let Some(semi) = digits.find(';') {
-                return semi > 0 && semi <= 6 && digits[..semi].chars().all(|c| c.is_ascii_hexdigit());
+                return semi > 0
+                    && semi <= 6
+                    && digits[..semi].chars().all(|c| c.is_ascii_hexdigit());
             }
         }
         false
@@ -1144,7 +1164,10 @@ mod entity_tests {
         let p = parse_zwo(xml).expect("parses after escaping");
         assert_eq!(p.workout.name, "Bridge & Surge");
         assert_eq!(p.workout.text_events[0].message, "surge & recover");
-        assert!(p.warnings.iter().any(|w| w.message.contains("auto-escaped")));
+        assert!(p
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("auto-escaped")));
     }
 
     #[test]
@@ -1154,6 +1177,9 @@ mod entity_tests {
         </workout></workout_file>"#;
         let p = parse_zwo(xml).unwrap();
         assert_eq!(p.workout.name, "A & B & C");
-        assert!(!p.warnings.iter().any(|w| w.message.contains("auto-escaped")));
+        assert!(!p
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("auto-escaped")));
     }
 }

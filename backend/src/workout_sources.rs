@@ -61,7 +61,10 @@ async fn tag_and_load(
         )?;
     }
     for w in import.warnings.iter().take(3) {
-        let _ = app.emit("toast", serde_json::json!({ "level": "warn", "message": w }));
+        let _ = app.emit(
+            "toast",
+            serde_json::json!({ "level": "warn", "message": w }),
+        );
     }
     player::load_workout_into_player(app.clone(), state, &import.summary.id, None).await
 }

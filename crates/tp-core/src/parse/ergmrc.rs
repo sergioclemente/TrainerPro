@@ -49,7 +49,11 @@ enum SectionState {
 fn parse_num(tok: &str) -> Option<f64> {
     let s = tok.replace(',', ".");
     let v: f64 = s.parse().ok()?;
-    if v.is_finite() { Some(v) } else { None }
+    if v.is_finite() {
+        Some(v)
+    } else {
+        None
+    }
 }
 
 /// Normalize a `[...]` section header line: strip brackets, uppercase,
@@ -72,10 +76,7 @@ fn section_marker(line: &str) -> Option<String> {
 
 /// Detect the `MINUTES WATTS|PERCENT` column-spec line (case-insensitive).
 fn column_spec(line: &str) -> Option<Units> {
-    let toks: Vec<String> = line
-        .split_whitespace()
-        .map(|t| t.to_uppercase())
-        .collect();
+    let toks: Vec<String> = line.split_whitespace().map(|t| t.to_uppercase()).collect();
     if toks.len() == 2 && toks[0] == "MINUTES" {
         match toks[1].as_str() {
             "WATTS" => Some(Units::Watts),
@@ -97,7 +98,12 @@ fn ext_hint_units(ext_hint: Option<&str>) -> Option<Units> {
 
 /// Convert a raw power value into a `PowerTarget` under the resolved units,
 /// clamping to sanity bounds with a warning.
-fn make_target(raw: f64, units: Units, line_no: usize, warnings: &mut Vec<ParseWarning>) -> PowerTarget {
+fn make_target(
+    raw: f64,
+    units: Units,
+    line_no: usize,
+    warnings: &mut Vec<ParseWarning>,
+) -> PowerTarget {
     match units {
         Units::Percent => {
             let frac = raw / 100.0;
@@ -195,9 +201,7 @@ pub fn parse_ergmrc(input: &str, ext_hint: Option<&str>) -> Result<Parsed, Parse
                 }
                 if toks.len() > 2 {
                     warnings.push(ParseWarning {
-                        message: format!(
-                            "line {line_no}: extra columns in data row ignored"
-                        ),
+                        message: format!("line {line_no}: extra columns in data row ignored"),
                     });
                 }
                 let t = parse_num(toks[0]).ok_or_else(|| {
@@ -472,8 +476,9 @@ MINUTES WATTS
             }
         );
         assert!(
-            p.warnings.iter().any(|w| w.message.contains("WATTS")
-                && w.message.contains("PERCENT")),
+            p.warnings
+                .iter()
+                .any(|w| w.message.contains("WATTS") && w.message.contains("PERCENT")),
             "expected mismatch warning, got {:?}",
             p.warnings
         );
@@ -526,7 +531,9 @@ DESCRIPTION = No Columns
         let p = ok(input, None);
         assert_eq!(p.source_format, SourceFormat::Mrc);
         assert!(
-            p.warnings.iter().any(|w| w.message.contains("assuming PERCENT")),
+            p.warnings
+                .iter()
+                .any(|w| w.message.contains("assuming PERCENT")),
             "warnings: {:?}",
             p.warnings
         );
@@ -874,7 +881,9 @@ MINUTES PERCENT
         let p = ok(input, None);
         assert_eq!(p.workout.segments.len(), 1);
         assert!(
-            p.warnings.iter().any(|w| w.message.contains("unknown section")),
+            p.warnings
+                .iter()
+                .any(|w| w.message.contains("unknown section")),
             "warnings: {:?}",
             p.warnings
         );

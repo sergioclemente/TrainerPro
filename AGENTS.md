@@ -69,9 +69,8 @@ Do not duplicate those documents here.
   root.
 - Device fault tests should obtain the status receiver before injecting the
   fault and prove that the existing stream observes the transition.
-- Check repository-wide formatting before applying it. If the baseline fails
-  outside the diff, do not create unrelated churn; report it and validate the
-  changed scope.
+- Run `cargo fmt --all -- --check` before and after Rust edits. Fix introduced
+  formatting issues; report unrelated baseline failures without changing them.
 - Automated macOS UI testing uses the isolated TrainerPro QA identity only.
   Use `npm run tauri:qa` (debug) for routine iteration. Use
   `npm run tauri:qa:build -- --bundles app` (release) for packaging-sensitive

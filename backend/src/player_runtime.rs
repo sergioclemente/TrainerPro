@@ -790,8 +790,7 @@ impl Runtime {
         // the 1 Hz series, TSS off moving time, kJ = Σ power × 1 s. NP is only
         // meaningful once some power has arrived.
         let ftp_w = self.ftp_w;
-        let normalized_power_w =
-            (self.power_n > 0).then(|| normalized_power(&self.live_power));
+        let normalized_power_w = (self.power_n > 0).then(|| normalized_power(&self.live_power));
         let average_heart_rate_bpm =
             (self.hr_n > 0).then(|| (self.hr_sum / u64::from(self.hr_n)) as u16);
         let ps = PlayerState {
@@ -910,9 +909,7 @@ impl Runtime {
                     workout_session_id: &data.header.workout_session_id,
                     scheduled_workout_id: data.header.scheduled_workout_id.as_deref(),
                     workout_definition_id: Some(&data.header.workout_definition_id),
-                    workout_definition_snapshot_json: &data
-                        .header
-                        .workout_definition_snapshot_json,
+                    workout_definition_snapshot_json: &data.header.workout_definition_snapshot_json,
                     workout_name: &data.header.workout_name,
                     started_at_unix_ms: data.header.started_unix_ms as i64,
                     elapsed_s: totals.elapsed_s,

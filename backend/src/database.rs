@@ -377,7 +377,15 @@ mod tests {
             })
             .unwrap();
         assert_eq!(definitions, 0);
-        let activity: (Option<String>, String, Option<String>, String, i64, String, String) = conn
+        let activity: (
+            Option<String>,
+            String,
+            Option<String>,
+            String,
+            i64,
+            String,
+            String,
+        ) = conn
             .query_row(
                 "SELECT workout_definition_id, workout_session_id,
                         workout_definition_snapshot_json, workout_name,
@@ -426,9 +434,11 @@ mod tests {
             .unwrap();
         assert!(preserved_measurements);
         let setting: String = conn
-            .query_row("SELECT value FROM settings WHERE key = 'profile'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'profile'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(setting, "saved");
         let device: String = conn

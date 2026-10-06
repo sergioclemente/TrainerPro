@@ -156,12 +156,10 @@ pub fn session_totals(data: &SessionRecording, ftp: u16) -> SessionTotals {
     let elapsed_s = ms_to_s(end_ms);
     let timer_s = ms_to_s(end_ms.saturating_sub(paused_ms));
 
-    let (average_power_w, max_power_w) =
-        avg_max(data.samples.iter().filter_map(|s| s.power_w));
+    let (average_power_w, max_power_w) = avg_max(data.samples.iter().filter_map(|s| s.power_w));
     let (average_heart_rate_bpm, max_heart_rate_bpm) =
         avg_max(data.samples.iter().filter_map(|s| s.heart_rate_bpm));
-    let (average_cadence_rpm, _) =
-        avg_max(data.samples.iter().filter_map(|s| s.cadence_rpm));
+    let (average_cadence_rpm, _) = avg_max(data.samples.iter().filter_map(|s| s.cadence_rpm));
 
     // kJ: each 1 Hz sample contributes power × 1 s joules; absent power = 0 J.
     let joules: u64 = data
@@ -175,15 +173,17 @@ pub fn session_totals(data: &SessionRecording, ftp: u16) -> SessionTotals {
     // NP over the full 1 Hz series (absent power = 0 W), only meaningful if
     // any power data exists at all.
     let normalized_power_w = if average_power_w.is_some() {
-        let series: Vec<u16> = data.samples.iter().map(|s| s.power_w.unwrap_or(0)).collect();
+        let series: Vec<u16> = data
+            .samples
+            .iter()
+            .map(|s| s.power_w.unwrap_or(0))
+            .collect();
         Some(normalized_power(&series))
     } else {
         None
     };
     let session_intensity_factor = match normalized_power_w {
-        Some(normalized_power_w) if ftp > 0 => {
-            Some(intensity_factor(normalized_power_w, ftp))
-        }
+        Some(normalized_power_w) if ftp > 0 => Some(intensity_factor(normalized_power_w, ftp)),
         _ => None,
     };
     let training_stress_score = match normalized_power_w {
@@ -283,10 +283,10 @@ mod tests {
         assert_eq!(zone_for(0, ftp), 1);
         assert_eq!(zone_for(109, ftp), 1); // 54.5 %
         assert_eq!(zone_for(110, ftp), 2); // 55.0 %
-        // Z2 ends at 75 % = 150 W.
+                                           // Z2 ends at 75 % = 150 W.
         assert_eq!(zone_for(150, ftp), 2); // 75.0 %
         assert_eq!(zone_for(151, ftp), 3); // 75.5 %
-        // Z3 ends at 90 % = 180 W.
+                                           // Z3 ends at 90 % = 180 W.
         assert_eq!(zone_for(180, ftp), 3);
         assert_eq!(zone_for(181, ftp), 4);
         // Z4 ends at 105 % = 210 W.

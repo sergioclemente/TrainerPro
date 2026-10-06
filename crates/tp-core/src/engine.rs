@@ -43,7 +43,9 @@ pub enum EngineEvent {
     /// Move to the start of the given segment, in either direction.
     GoToSegment(usize),
     SetIntensity(f64),
-    Tick { dt_ms: u64 },
+    Tick {
+        dt_ms: u64,
+    },
     End,
 }
 
@@ -134,7 +136,9 @@ impl Engine {
     }
     /// Index of the current segment (None once finished).
     pub fn segment_index(&self) -> Option<usize> {
-        self.workout.segment_at((self.active_ms / 1000) as u32).map(|(i, _)| i)
+        self.workout
+            .segment_at((self.active_ms / 1000) as u32)
+            .map(|(i, _)| i)
     }
 
     pub fn step(&mut self, event: EngineEvent) -> Vec<EngineAction> {
@@ -482,7 +486,11 @@ mod tests {
     #[test]
     fn start_fires_offset_zero_text_event() {
         let ev = text(0, "hello");
-        let mut e = Engine::new(wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]), 250, 1.0);
+        let mut e = Engine::new(
+            wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]),
+            250,
+            1.0,
+        );
         let actions = e.step(EngineEvent::Start);
         assert_eq!(
             actions,
@@ -817,7 +825,10 @@ mod tests {
         let skipped = text(5, "skipped");
         let later = text(12, "later");
         let mut e = Engine::new(
-            wk_with_texts(vec![steady(10, 100), steady(10, 200)], vec![skipped, later.clone()]),
+            wk_with_texts(
+                vec![steady(10, 100), steady(10, 200)],
+                vec![skipped, later.clone()],
+            ),
             250,
             1.0,
         );
@@ -1089,7 +1100,11 @@ mod tests {
     #[test]
     fn text_event_fires_exactly_once_at_offset() {
         let ev = text(1, "go");
-        let mut e = Engine::new(wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]), 250, 1.0);
+        let mut e = Engine::new(
+            wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]),
+            250,
+            1.0,
+        );
         e.step(EngineEvent::Start);
         assert_eq!(tick(&mut e), vec![]); // 250
         assert_eq!(tick(&mut e), vec![]); // 500
@@ -1103,7 +1118,11 @@ mod tests {
     #[test]
     fn text_event_does_not_fire_during_pause() {
         let ev = text(1, "go");
-        let mut e = Engine::new(wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]), 250, 1.0);
+        let mut e = Engine::new(
+            wk_with_texts(vec![steady(60, 100)], vec![ev.clone()]),
+            250,
+            1.0,
+        );
         e.step(EngineEvent::Start);
         tick(&mut e); // 250
         tick(&mut e); // 500

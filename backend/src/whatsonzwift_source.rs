@@ -12,9 +12,9 @@ use tauri_plugin_opener::OpenerExt;
 use tp_core::model::{ExecutableWorkout, PowerTarget, WorkoutSegment};
 
 use crate::app_error::AppError;
+use crate::app_state::AppState;
 use crate::player_runtime::PlayerState;
 use crate::workout_sources as sources;
-use crate::app_state::AppState;
 
 const BASE: &str = "https://whatsonzwift.com";
 const UA: &str = "TrainerPro/0.1 (+https://github.com/sergioclemente/TrainerPro)";
@@ -56,7 +56,9 @@ async fn fetch(path: &str) -> Result<String, AppError> {
             format!("whatsonzwift returned {}", resp.status()),
         ));
     }
-    resp.text().await.map_err(|e| AppError::new("woz_unreachable", e.to_string()))
+    resp.text()
+        .await
+        .map_err(|e| AppError::new("woz_unreachable", e.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -90,12 +92,10 @@ fn strip_tags(s: &str) -> String {
 /// bike glyph. Fallback: humanized slug, so a site redesign degrades to
 /// usable names instead of an empty list.
 pub fn parse_collections(html: &str) -> Vec<WozCollection> {
-    let a_re = regex::Regex::new(
-        r#"<a[^>]*href="https://whatsonzwift\.com/workouts/([a-z0-9-]+)""#,
-    )
-    .unwrap();
-    let title_re =
-        regex::Regex::new(r#"(?s)<p class="m-0 self-center[^"]*">(.*?)</p>"#).unwrap();
+    let a_re =
+        regex::Regex::new(r#"<a[^>]*href="https://whatsonzwift\.com/workouts/([a-z0-9-]+)""#)
+            .unwrap();
+    let title_re = regex::Regex::new(r#"(?s)<p class="m-0 self-center[^"]*">(.*?)</p>"#).unwrap();
 
     let anchors: Vec<(usize, String)> = a_re
         .captures_iter(html)
@@ -153,7 +153,11 @@ fn parse_duration(s: &str) -> Option<u32> {
         };
         any = true;
     }
-    if any { Some(total) } else { None }
+    if any {
+        Some(total)
+    } else {
+        None
+    }
 }
 
 /// Split a textbar body into steps: commas separate steps, but a comma can
@@ -161,7 +165,9 @@ fn parse_duration(s: &str) -> Option<u32> {
 /// FTP") — pieces that don't begin with a duration merge into the previous.
 fn split_steps(body: &str) -> Vec<String> {
     let starts_with_duration = |p: &str| {
-        regex::Regex::new(r"^\d+\s*(hr|min|sec)").unwrap().is_match(p.trim_start())
+        regex::Regex::new(r"^\d+\s*(hr|min|sec)")
+            .unwrap()
+            .is_match(p.trim_start())
     };
     let mut steps: Vec<String> = Vec::new();
     for piece in body.split(',') {
@@ -199,9 +205,10 @@ fn parse_step(step: &str) -> Option<WorkoutSegment> {
             cadence_rpm: None,
         });
     }
-    if let Some(cap) = regex::Regex::new(r"from\s+(\d+(?:\.\d+)?)\s*(?:%\s*)?to\s+(\d+(?:\.\d+)?)\s*%\s*ftp")
-        .unwrap()
-        .captures(&lower)
+    if let Some(cap) =
+        regex::Regex::new(r"from\s+(\d+(?:\.\d+)?)\s*(?:%\s*)?to\s+(\d+(?:\.\d+)?)\s*%\s*ftp")
+            .unwrap()
+            .captures(&lower)
     {
         let a: f64 = cap[1].parse().ok()?;
         let b: f64 = cap[2].parse().ok()?;
@@ -236,8 +243,14 @@ fn parse_step(step: &str) -> Option<WorkoutSegment> {
 /// Parse one textbar line, expanding an optional "Nx " repeat prefix.
 pub fn parse_textbar(line: &str) -> Option<Vec<WorkoutSegment>> {
     let line = line.trim();
-    let (reps, body) = match regex::Regex::new(r"^(\d+)x\s+(.*)$").unwrap().captures(line) {
-        Some(cap) => (cap[1].parse::<u32>().ok()?.clamp(1, 100), cap[2].to_string()),
+    let (reps, body) = match regex::Regex::new(r"^(\d+)x\s+(.*)$")
+        .unwrap()
+        .captures(line)
+    {
+        Some(cap) => (
+            cap[1].parse::<u32>().ok()?.clamp(1, 100),
+            cap[2].to_string(),
+        ),
         None => (1, line.to_string()),
     };
     let steps: Option<Vec<WorkoutSegment>> =
@@ -363,7 +376,11 @@ pub async fn woz_collections(
     .await;
     match fetched {
         Ok(list) => {
-            db_put(&state, "collections", &serde_json::to_string(&list).unwrap_or_default());
+            db_put(
+                &state,
+                "collections",
+                &serde_json::to_string(&list).unwrap_or_default(),
+            );
             *state.woz_collections.lock().unwrap() = Some(list.clone());
             Ok(list)
         }
@@ -381,7 +398,10 @@ pub async fn woz_collections(
 
 type CollectionEntries = Vec<(ExecutableWorkout, WozWorkout)>;
 
-fn load_collection_from_db(state: &State<'_, AppState>, collection: &str) -> Option<CollectionEntries> {
+fn load_collection_from_db(
+    state: &State<'_, AppState>,
+    collection: &str,
+) -> Option<CollectionEntries> {
     db_get(state, &format!("collection:{collection}"))
         .and_then(|c| serde_json::from_str::<CollectionEntries>(&c.value).ok())
 }
@@ -477,22 +497,18 @@ pub async fn woz_ride(
                     .get(idx)
                     .map(|(w, _)| w.clone())
                     .ok_or_else(|| AppError::new("woz_stale", "workout not in cache"))?;
-                state.woz_cache.lock().unwrap().insert(collection.clone(), entries);
+                state
+                    .woz_cache
+                    .lock()
+                    .unwrap()
+                    .insert(collection.clone(), entries);
                 w
             }
         }
     };
     let definition = tp_core::workout_definition::WorkoutDefinition::from_executable(workout)?;
     let origin_ref = format!("{collection}#{idx}");
-    sources::ride_from_definition(
-        app,
-        &state,
-        &definition,
-        "whatsonzwift",
-        &origin_ref,
-        None,
-    )
-    .await
+    sources::ride_from_definition(app, &state, &definition, "whatsonzwift", &origin_ref, None).await
 }
 
 /// Attribution / browse-out: open the collection on whatsonzwift.com.
@@ -629,14 +645,23 @@ mod live_tests {
         let html = fetch("/workouts").await.expect("index fetch");
         let cols = parse_collections(&html);
         println!("collections: {}", cols.len());
-        assert!(!cols.is_empty(), "no collections parsed; html len {}", html.len());
-        let html = fetch("/workouts/threshold").await.expect("collection fetch");
+        assert!(
+            !cols.is_empty(),
+            "no collections parsed; html len {}",
+            html.len()
+        );
+        let html = fetch("/workouts/threshold")
+            .await
+            .expect("collection fetch");
         let parsed = parse_collection_page(&html);
         println!("threshold workouts: {}", parsed.len());
         for (t, w) in parsed.iter().take(3) {
             println!("  {t}: {} segs, {}s", w.segments.len(), w.duration_s());
         }
-        assert!(!parsed.is_empty(), "no workouts parsed; textbars in html: {}",
-            html.matches("textbar").count());
+        assert!(
+            !parsed.is_empty(),
+            "no workouts parsed; textbars in html: {}",
+            html.matches("textbar").count()
+        );
     }
 }

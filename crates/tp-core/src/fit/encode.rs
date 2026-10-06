@@ -58,7 +58,11 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         f(p::DEVICE_INFO_DEVICE_INDEX, 1, p::BASE_UINT8),
         f(p::DEVICE_INFO_MANUFACTURER, 2, p::BASE_UINT16),
         f(p::DEVICE_INFO_SOFTWARE_VERSION, 2, p::BASE_UINT16),
-        f(p::DEVICE_INFO_PRODUCT_NAME, p::PRODUCT_NAME_SIZE, p::BASE_STRING),
+        f(
+            p::DEVICE_INFO_PRODUCT_NAME,
+            p::PRODUCT_NAME_SIZE,
+            p::BASE_STRING,
+        ),
     ];
     write_definition(
         &mut body,
@@ -94,7 +98,11 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         .find(|e| e.kind == SessionEventKind::Start)
         .map(|e| e.t_ms)
         .unwrap_or(0);
-    write_timer_event(&mut body, fit_ts(start_ms + start_t_ms)?, p::EVENT_TYPE_START);
+    write_timer_event(
+        &mut body,
+        fit_ts(start_ms + start_t_ms)?,
+        p::EVENT_TYPE_START,
+    );
 
     // -- 4. records (1 Hz), pause stop/start pairs interleaved --------------
     let mut record_fields = vec![
@@ -264,10 +272,7 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
     put_u16(&mut body, t.max_power_w.unwrap_or(p::INVALID_UINT16));
     put_u16(&mut body, 0); // first_lap_index
     put_u16(&mut body, activity.laps.len() as u16);
-    put_u16(
-        &mut body,
-        t.normalized_power_w.unwrap_or(p::INVALID_UINT16),
-    );
+    put_u16(&mut body, t.normalized_power_w.unwrap_or(p::INVALID_UINT16));
     put_u16(
         &mut body,
         t.training_stress_score
@@ -310,7 +315,12 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         f(p::ACTIVITY_EVENT_TYPE, 1, p::BASE_ENUM),
         f(p::ACTIVITY_LOCAL_TIMESTAMP, 4, p::BASE_UINT32),
     ];
-    write_definition(&mut body, p::LOCAL_ACTIVITY, p::MSG_ACTIVITY, &activity_fields);
+    write_definition(
+        &mut body,
+        p::LOCAL_ACTIVITY,
+        p::MSG_ACTIVITY,
+        &activity_fields,
+    );
     body.push(p::LOCAL_ACTIVITY);
     put_u32(&mut body, ts_end);
     put_u32(&mut body, ms_u32(timer_ms)?);
@@ -438,8 +448,15 @@ fn software_version(app_ver: &str) -> u16 {
         None => return p::INVALID_UINT16,
     };
     let minor: u16 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = if minor < 10 { minor * 10 } else { minor.min(99) };
-    major.saturating_mul(100).saturating_add(minor).min(u16::MAX - 1)
+    let minor = if minor < 10 {
+        minor * 10
+    } else {
+        minor.min(99)
+    };
+    major
+        .saturating_mul(100)
+        .saturating_add(minor)
+        .min(u16::MAX - 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -496,8 +513,7 @@ mod tests {
         assert!(buf.len() >= 16, "file too small");
         let header_size = buf[0] as usize;
         assert_eq!(header_size, 14);
-        let data_size =
-            u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+        let data_size = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
         assert_eq!(data_size, buf.len() - header_size - 2, "data_size field");
         let body = &buf[header_size..buf.len() - 2];
 
@@ -688,7 +704,11 @@ mod tests {
         let profile = u16::from_le_bytes([buf[2], buf[3]]);
         assert_eq!(profile, p::PROFILE_VERSION);
         let data_size = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-        assert_eq!(data_size, buf.len() - 14 - 2, "data size excludes header+CRC");
+        assert_eq!(
+            data_size,
+            buf.len() - 14 - 2,
+            "data size excludes header+CRC"
+        );
         assert_eq!(&buf[8..12], b".FIT");
         let hdr_crc = u16::from_le_bytes([buf[12], buf[13]]);
         assert_eq!(hdr_crc, crc::checksum(&buf[..12]), "header CRC");
@@ -733,11 +753,17 @@ mod tests {
         assert_eq!(fid.uint(p::FILE_ID_TYPE), 4, "file type activity");
         assert_eq!(fid.uint(p::FILE_ID_MANUFACTURER), 255, "development");
         assert_eq!(fid.uint(p::FILE_ID_PRODUCT), 1);
-        assert_ne!(fid.uint(p::FILE_ID_SERIAL_NUMBER), 0, "uint32z serial nonzero");
+        assert_ne!(
+            fid.uint(p::FILE_ID_SERIAL_NUMBER),
+            0,
+            "uint32z serial nonzero"
+        );
         assert_eq!(fid.uint(p::FILE_ID_TIME_CREATED), TS0);
 
-        let devs: Vec<&DecMsg> =
-            msgs.iter().filter(|m| m.global == p::MSG_DEVICE_INFO).collect();
+        let devs: Vec<&DecMsg> = msgs
+            .iter()
+            .filter(|m| m.global == p::MSG_DEVICE_INFO)
+            .collect();
         assert_eq!(devs.len(), 3);
         assert_eq!(devs[0].string(p::DEVICE_INFO_PRODUCT_NAME), "TrainerPro");
         assert_eq!(devs[1].string(p::DEVICE_INFO_PRODUCT_NAME), "KICKR");
@@ -754,14 +780,17 @@ mod tests {
     #[test]
     fn records_1hz_with_fit_epoch_timestamps() {
         let msgs = decode(&encode(false));
-        let recs: Vec<&DecMsg> =
-            msgs.iter().filter(|m| m.global == p::MSG_RECORD).collect();
+        let recs: Vec<&DecMsg> = msgs.iter().filter(|m| m.global == p::MSG_RECORD).collect();
         assert_eq!(recs.len(), 15, "one record per sample");
         // unix → FIT epoch conversion on the very first record
         assert_eq!(recs[0].uint(p::RECORD_TIMESTAMP), TS0);
         // 1 Hz within each active span, 5 s hole at the pause
         for (i, r) in recs.iter().enumerate() {
-            let expect = if i < 10 { TS0 + i as u64 } else { TS0 + 5 + i as u64 };
+            let expect = if i < 10 {
+                TS0 + i as u64
+            } else {
+                TS0 + 5 + i as u64
+            };
             assert_eq!(r.uint(p::RECORD_TIMESTAMP), expect, "record {i}");
         }
         // content
@@ -774,8 +803,7 @@ mod tests {
     #[test]
     fn absent_hr_encodes_invalid_0xff() {
         let msgs = decode(&encode(false));
-        let recs: Vec<&DecMsg> =
-            msgs.iter().filter(|m| m.global == p::MSG_RECORD).collect();
+        let recs: Vec<&DecMsg> = msgs.iter().filter(|m| m.global == p::MSG_RECORD).collect();
         // The t=3 sample has no heart-rate value.
         assert_eq!(recs[3].uint(p::RECORD_TIMESTAMP), TS0 + 3);
         assert_eq!(recs[3].raw(p::RECORD_HEART_RATE).unwrap(), &[0xFF]);
@@ -803,7 +831,11 @@ mod tests {
 
         let (resume_i, resume) = events[2];
         assert_eq!(resume.uint(p::EVENT_EVENT_TYPE), 0, "start");
-        assert_eq!(resume.uint(p::EVENT_TIMESTAMP), TS0 + 14, "resume at 14.5 s");
+        assert_eq!(
+            resume.uint(p::EVENT_TIMESTAMP),
+            TS0 + 14,
+            "resume at 14.5 s"
+        );
 
         // Chronological interleave: start event before every record; the
         // stop/start pair sits between the last pre-pause record (ts TS0+9)
@@ -823,8 +855,7 @@ mod tests {
     #[test]
     fn lap_messages() {
         let msgs = decode(&encode(false));
-        let laps_dec: Vec<&DecMsg> =
-            msgs.iter().filter(|m| m.global == p::MSG_LAP).collect();
+        let laps_dec: Vec<&DecMsg> = msgs.iter().filter(|m| m.global == p::MSG_LAP).collect();
         assert_eq!(laps_dec.len(), 2);
 
         let l0 = laps_dec[0];
@@ -867,7 +898,11 @@ mod tests {
         assert_eq!(s.uint(p::SESSION_NUM_LAPS), 2);
         assert_eq!(s.uint(p::SESSION_FIRST_LAP_INDEX), 0);
         assert_eq!(s.uint(p::SESSION_NORMALIZED_POWER), 207);
-        assert_eq!(s.uint(p::SESSION_TRAINING_STRESS_SCORE), 29, "2.86 × 10 rounded");
+        assert_eq!(
+            s.uint(p::SESSION_TRAINING_STRESS_SCORE),
+            29,
+            "2.86 × 10 rounded"
+        );
         assert_eq!(s.uint(p::SESSION_INTENSITY_FACTOR), 828, "0.828 × 1000");
         assert_eq!(s.uint(p::SESSION_THRESHOLD_POWER), 250, "FTP");
     }
@@ -900,8 +935,7 @@ mod tests {
     #[test]
     fn record_distance_on_emits_monotonic_distance_and_speed() {
         let msgs = decode(&encode(true));
-        let recs: Vec<&DecMsg> =
-            msgs.iter().filter(|m| m.global == p::MSG_RECORD).collect();
+        let recs: Vec<&DecMsg> = msgs.iter().filter(|m| m.global == p::MSG_RECORD).collect();
         assert_eq!(recs.len(), 15);
         let mut prev = 0u64;
         for r in &recs {
@@ -1031,8 +1065,10 @@ mod tests {
         })
         .unwrap();
         let msgs = decode(&buf);
-        let devs: Vec<&DecMsg> =
-            msgs.iter().filter(|m| m.global == p::MSG_DEVICE_INFO).collect();
+        let devs: Vec<&DecMsg> = msgs
+            .iter()
+            .filter(|m| m.global == p::MSG_DEVICE_INFO)
+            .collect();
         // decoding asserts valid UTF-8; also must fit in the fixed field
         let name = devs[1].string(p::DEVICE_INFO_PRODUCT_NAME);
         assert!(name.len() < p::PRODUCT_NAME_SIZE as usize);

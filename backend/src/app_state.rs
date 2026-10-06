@@ -22,8 +22,9 @@ pub struct AppState {
     /// Last planner_list result; used for edit-URL construction.
     pub planner_cache: Mutex<Vec<crate::workout_planner_source::PlannerWorkout>>,
     /// Preview cache: wid → (zwo sha256, preview). Invalidated by hash.
-    pub planner_previews:
-        Mutex<std::collections::HashMap<i64, (String, crate::workout_planner_source::PlannerPreview)>>,
+    pub planner_previews: Mutex<
+        std::collections::HashMap<i64, (String, crate::workout_planner_source::PlannerPreview)>,
+    >,
     /// whatsonzwift caches (per app run).
     pub woz_collections: Mutex<Option<Vec<crate::whatsonzwift_source::WozCollection>>>,
     pub woz_cache: Mutex<
@@ -46,7 +47,11 @@ pub struct Profile {
 
 impl Default for Profile {
     fn default() -> Self {
-        Profile { name: String::new(), ftp: 200, weight_kg: 75.0 }
+        Profile {
+            name: String::new(),
+            ftp: 200,
+            weight_kg: 75.0,
+        }
     }
 }
 
@@ -95,8 +100,20 @@ impl PlannerSettings {
 /// them in Settings → Libraries.
 fn default_sources() -> HashMap<String, SourceConfig> {
     let mut m = HashMap::new();
-    m.insert("woz".to_string(), SourceConfig { enabled: false, values: HashMap::new() });
-    m.insert("planner".to_string(), SourceConfig { enabled: false, values: HashMap::new() });
+    m.insert(
+        "woz".to_string(),
+        SourceConfig {
+            enabled: false,
+            values: HashMap::new(),
+        },
+    );
+    m.insert(
+        "planner".to_string(),
+        SourceConfig {
+            enabled: false,
+            values: HashMap::new(),
+        },
+    );
     m
 }
 
@@ -104,7 +121,10 @@ fn default_sources() -> HashMap<String, SourceConfig> {
 /// built-in defaults so both known providers are always present. Prefer the
 /// new `sources` blob; else migrate the legacy typed `planner` key so existing
 /// installs keep their credentials. Pure (no DB) so the migration is testable.
-fn load_sources(saved_sources: Option<&str>, legacy_planner: Option<&str>) -> HashMap<String, SourceConfig> {
+fn load_sources(
+    saved_sources: Option<&str>,
+    legacy_planner: Option<&str>,
+) -> HashMap<String, SourceConfig> {
     let mut sources = default_sources();
     if let Some(v) = saved_sources {
         if let Ok(m) = serde_json::from_str::<HashMap<String, SourceConfig>>(v) {
@@ -284,7 +304,10 @@ mod tests {
         for field in ["voice_enabled", "sources"] {
             let mut payload = serde_json::to_value(Settings::default()).unwrap();
             payload.as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<Settings>(payload).is_err(), "{field}");
+            assert!(
+                serde_json::from_value::<Settings>(payload).is_err(),
+                "{field}"
+            );
         }
     }
 
@@ -346,7 +369,10 @@ mod tests {
                 ]),
             },
         );
-        let s = Settings { sources, ..Settings::default() };
+        let s = Settings {
+            sources,
+            ..Settings::default()
+        };
         let p = s.planner();
         assert!(p.enabled);
         assert_eq!(p.url, "https://x");
