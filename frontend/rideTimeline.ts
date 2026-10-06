@@ -1,4 +1,4 @@
-import type { DeviceStatusEvent, PlayerState, SegmentResult } from "./ipc";
+import type { DeviceStatusEvent, PlayerState, WorkoutSegmentResult } from "./ipc";
 
 const USER_ACTION_CORRELATION_WINDOW_MS = 2_000;
 
@@ -19,7 +19,7 @@ export type RideTimelineItem =
   | {
       id: number;
       kind: "segment";
-      result: SegmentResult;
+      result: WorkoutSegmentResult;
     };
 
 type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
@@ -146,9 +146,9 @@ export function appendAppMessage(
   return player ? append(next, { kind: "app-message", message, tone }) : next;
 }
 
-export function appendSegmentResult(
+export function appendWorkoutSegmentResult(
   state: RideTimelineState,
-  result: SegmentResult,
+  result: WorkoutSegmentResult,
 ): RideTimelineState {
   if (state.sessionId !== result.workout_session_id) return state;
   return append(state, { kind: "segment", result });

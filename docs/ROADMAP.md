@@ -10,6 +10,10 @@ in [SPEC.md](SPEC.md), not here. This roadmap has no date commitments.
 
 - Validate physical trainer and HRM disconnect/reconnect behavior whenever the
   device lifecycle changes; simulator coverage is necessary but not sufficient.
+- Verify the estimated speed/distance Settings option in packaged TrainerPro QA
+  once Computer Use onboarding is available.
+- Validate estimated indoor speed/distance with a disposable Garmin upload,
+  including speed graphs, lap totals, and pause timing.
 - Complete Windows BLE and packaged-app validation.
 - Establish macOS and Windows signing/notarization before presenting builds as
   broadly installable releases.
@@ -43,6 +47,14 @@ These are follow-ups, not additional release gates.
 - Consider Strava only for capabilities its public API actually exposes.
 - Prove each concrete capability before extracting shared connector
   abstractions.
+
+## Later — routes from outdoor rides
+
+- Reconstruct terrain from a previous outdoor ride and drive progress from current
+  power at simulated distance along that route, reusing the pure motion model.
+- Define terrain smoothing, positioning, braking, and trainer resistance control
+  as a separate feature. Journal enough motion and terrain data to reproduce an
+  activity. Routes and live speed/distance displays remain future work.
 
 ## Later — adaptive coaching
 

@@ -6,7 +6,9 @@ use tp_core::model::ExecutableWorkout;
 
 use crate::app_error::AppError;
 use crate::app_state::AppState;
-use crate::commands::workout::{graph_points, load_workout_definition, segment_rows, SegmentRow};
+use crate::commands::workout::{
+    graph_points, load_workout_definition, segment_rows, WorkoutSegmentRow,
+};
 use crate::database::scheduled_workouts as scheduled_db;
 use crate::player_runtime::{
     self as runtime, ActivitySummary, PlayerCommand, PlayerState, RideTracePoint,
@@ -18,7 +20,7 @@ type R<T> = Result<T, AppError>;
 pub struct PlayerWorkoutProfile {
     pub workout_session_id: String,
     pub graph: Vec<(u32, f64)>,
-    pub segments: Vec<SegmentRow>,
+    pub segments: Vec<WorkoutSegmentRow>,
     pub ftp_w: u16,
 }
 
@@ -217,7 +219,7 @@ pub async fn get_player_workout_profile(
 mod tests {
     use std::path::Path;
 
-    use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
+    use tp_core::model::{ExecutableWorkout, PowerTarget, WorkoutSegment};
     use tp_core::workout_definition::WorkoutDefinition;
 
     use super::profile_for_session;
@@ -230,7 +232,7 @@ mod tests {
         let old = WorkoutDefinition::from_executable(ExecutableWorkout {
             name: "Original".into(),
             description: String::new(),
-            segments: vec![Segment::Steady {
+            segments: vec![WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::Watts(100),
                 cadence_rpm: None,
@@ -241,7 +243,7 @@ mod tests {
         let updated = WorkoutDefinition::from_executable(ExecutableWorkout {
             name: "Updated".into(),
             description: String::new(),
-            segments: vec![Segment::Steady {
+            segments: vec![WorkoutSegment::Steady {
                 duration_s: 120,
                 power: PowerTarget::Watts(200),
                 cadence_rpm: None,

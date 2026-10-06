@@ -9,7 +9,7 @@
 // problem instead of a recursive one, and the Rust side enforces it again at
 // save time (crates/tp-core/src/build.rs).
 
-import type { SegmentRow } from "../ipc";
+import type { WorkoutSegmentRow } from "../ipc";
 
 export const ROOT = "root";
 
@@ -242,7 +242,7 @@ export function toGraph(segments: FlatSegment[]): [number, number][] {
 }
 
 /** Rows for the graph's hover tooltip, in WorkoutGraph's shape. */
-export function toSegmentRows(segments: FlatSegment[]): SegmentRow[] {
+export function toWorkoutSegmentRows(segments: FlatSegment[]): WorkoutSegmentRow[] {
   return segments.map((s) => ({
     kind: s.start_pct === s.end_pct ? "steady" : "ramp",
     label: s.label,

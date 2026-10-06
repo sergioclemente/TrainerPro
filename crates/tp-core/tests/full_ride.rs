@@ -6,7 +6,8 @@ use std::io::Cursor;
 use tp_core::engine::{Engine, EngineAction, EngineEvent, Phase};
 use tp_core::fit::{encode_activity, FitActivity};
 use tp_core::journal::{
-    compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
+    compute_activity_segments, replay, JournalHeader, JournalWriter, Sample, SessionEvent,
+    SessionEventKind,
 };
 use tp_core::metrics::session_totals;
 use tp_core::parse::parse_zwo;
@@ -36,7 +37,7 @@ fn zwo_to_fit_end_to_end() {
     assert_eq!(workout.segments.len(), 6);
     assert_eq!(workout.duration_s(), 120);
 
-    // Ride it: 250 ms ticks, journal samples at 1 Hz, and FIT lap events from
+    // Ride it: 250 ms ticks, journal samples at 1 Hz, and FIT segment events from
     // segment-end actions.
     let header = JournalHeader {
         workout_session_id: "session-itest-1".into(),
@@ -47,6 +48,7 @@ fn zwo_to_fit_end_to_end() {
         workout_name: workout.name.clone(),
         ftp_w: FTP,
         weight_kg: 72.0,
+        record_distance: false,
         trainer: Some("SimTrainer".into()),
         hrm: None,
         app_ver: "0.1.0".into(),
@@ -78,7 +80,7 @@ fn zwo_to_fit_end_to_end() {
                 EngineAction::FinalizeSegment { segment_index, .. } => journal
                     .write_event(&SessionEvent {
                         t_ms,
-                        kind: SessionEventKind::Lap,
+                        kind: SessionEventKind::WorkoutSegmentEnd,
                         segment_index: Some(segment_index),
                     })
                     .unwrap(),
@@ -110,13 +112,17 @@ fn zwo_to_fit_end_to_end() {
         .unwrap();
     assert_eq!(texts_shown, 1, "one textevent should have fired");
 
-    // Replay journal, compute laps + totals.
+    // Replay journal, compute activity segments + totals.
     let bytes = journal.into_inner();
     let data = replay(Cursor::new(bytes)).expect("journal replays");
-    let laps = compute_laps(&data);
+    let activity_segments = compute_activity_segments(&data);
     // 6 segments; the final FinalizeSegment action lands at ride end, so no extra
-    // partial lap beyond it.
-    assert_eq!(laps.len(), 6, "one lap per segment, laps: {laps:?}");
+    // partial segment beyond it.
+    assert_eq!(
+        activity_segments.len(),
+        6,
+        "one segment per segment, activity_segments: {activity_segments:?}"
+    );
     let totals = session_totals(&data, FTP);
     assert_eq!(totals.elapsed_s, 120);
     assert_eq!(totals.timer_s, 120, "no pauses in this ride");
@@ -135,9 +141,9 @@ fn zwo_to_fit_end_to_end() {
         header: &data.header,
         samples: &data.samples,
         events: &data.events,
-        laps: &laps,
+        laps: &activity_segments,
         totals: &totals,
-        record_distance: false,
+        motion: None,
     })
     .expect("fit encodes");
     assert_eq!(fit[0], 14, "header size");

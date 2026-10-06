@@ -366,7 +366,7 @@ pub fn to_zwo(draft: &WorkoutDraft) -> Result<Emitted, BuildError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PowerTarget, Segment};
+    use crate::model::{PowerTarget, WorkoutSegment};
     use crate::parse::parse_zwo;
 
     fn simple(duration_s: u32, power_pct: f64) -> BuildNode {
@@ -377,7 +377,7 @@ mod tests {
         WorkoutDraft { name: "Test".into(), description: String::new(), nodes }
     }
 
-    fn round_trip(nodes: Vec<BuildNode>) -> Vec<Segment> {
+    fn round_trip(nodes: Vec<BuildNode>) -> Vec<WorkoutSegment> {
         let out = to_zwo(&draft(nodes)).expect("emit");
         parse_zwo(&out.xml).expect("parse back").workout.segments
     }
@@ -387,7 +387,7 @@ mod tests {
         let segs = round_trip(vec![simple(600, 75.0)]);
         assert_eq!(
             segs,
-            vec![Segment::Steady {
+            vec![WorkoutSegment::Steady {
                 duration_s: 600,
                 power: PowerTarget::PercentFtp(0.75),
                 cadence_rpm: None,
@@ -404,7 +404,7 @@ mod tests {
         }]);
         assert_eq!(
             segs,
-            vec![Segment::Steady {
+            vec![WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::PercentFtp(1.0),
                 cadence_rpm: Some(95),
@@ -421,13 +421,13 @@ mod tests {
         assert_eq!(
             segs,
             vec![
-                Segment::Ramp {
+                WorkoutSegment::Ramp {
                     duration_s: 600,
                     start: PowerTarget::PercentFtp(0.55),
                     end: PowerTarget::PercentFtp(0.75),
                     cadence_rpm: None,
                 },
-                Segment::Ramp {
+                WorkoutSegment::Ramp {
                     duration_s: 300,
                     start: PowerTarget::PercentFtp(0.75),
                     end: PowerTarget::PercentFtp(0.55),

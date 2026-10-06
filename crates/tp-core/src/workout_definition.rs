@@ -10,7 +10,7 @@ use crate::consts::{
     WORKOUT_CADENCE_RPM_MAX, WORKOUT_EXECUTABLE_SEGMENTS_MAX, WORKOUT_REPEAT_COUNT_MAX,
     WORKOUT_REPEAT_DEPTH_MAX,
 };
-use crate::model::{ExecutableWorkout, PowerTarget, Segment, TextEvent};
+use crate::model::{ExecutableWorkout, PowerTarget, TextEvent, WorkoutSegment};
 
 pub const TPW_FORMAT_NAME: &str = "TPW";
 pub const TPW_VERSION: u32 = 1;
@@ -170,7 +170,7 @@ impl WorkoutDefinition {
             }
 
             let step = match segment {
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     power, cadence_rpm, ..
                 } => CyclingStep::Steady {
                     duration_seconds,
@@ -178,7 +178,7 @@ impl WorkoutDefinition {
                     cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
                     cues,
                 },
-                Segment::Ramp {
+                WorkoutSegment::Ramp {
                     start,
                     end,
                     cadence_rpm,
@@ -190,7 +190,7 @@ impl WorkoutDefinition {
                     cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
                     cues,
                 },
-                Segment::FreeRide { cadence_rpm, .. } => CyclingStep::FreeRide {
+                WorkoutSegment::FreeRide { cadence_rpm, .. } => CyclingStep::FreeRide {
                     duration_seconds,
                     cadence: cadence_rpm.map(|rpm| CyclingCadenceTarget::Exact { rpm }),
                     cues,
@@ -586,7 +586,7 @@ fn validate_cues(
 fn compile_steps(
     steps: &[CyclingStep],
     offset_seconds: &mut u32,
-    segments: &mut Vec<Segment>,
+    segments: &mut Vec<WorkoutSegment>,
     text_events: &mut Vec<TextEvent>,
 ) {
     for step in steps {
@@ -598,7 +598,7 @@ fn compile_steps(
                 cues,
             } => {
                 compile_cues(cues, *offset_seconds, text_events);
-                segments.push(Segment::Steady {
+                segments.push(WorkoutSegment::Steady {
                     duration_s: *duration_seconds,
                     power: compile_power(power),
                     cadence_rpm: cadence.as_ref().map(compile_cadence),
@@ -613,7 +613,7 @@ fn compile_steps(
                 cues,
             } => {
                 compile_cues(cues, *offset_seconds, text_events);
-                segments.push(Segment::Ramp {
+                segments.push(WorkoutSegment::Ramp {
                     duration_s: *duration_seconds,
                     start: compile_power(start_power),
                     end: compile_power(end_power),
@@ -627,7 +627,7 @@ fn compile_steps(
                 cues,
             } => {
                 compile_cues(cues, *offset_seconds, text_events);
-                segments.push(Segment::FreeRide {
+                segments.push(WorkoutSegment::FreeRide {
                     duration_s: *duration_seconds,
                     cadence_rpm: cadence.as_ref().map(compile_cadence),
                 });
@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(executable.segments.len(), 5);
         assert_eq!(
             executable.segments[1],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::Watts(300),
                 cadence_rpm: Some(90),
@@ -863,12 +863,12 @@ mod tests {
             name: "Imported workout".into(),
             description: "From a boundary parser".into(),
             segments: vec![
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     duration_s: 60,
                     power: PowerTarget::PercentFtp(0.75),
                     cadence_rpm: Some(90),
                 },
-                Segment::FreeRide {
+                WorkoutSegment::FreeRide {
                     duration_s: 30,
                     cadence_rpm: None,
                 },

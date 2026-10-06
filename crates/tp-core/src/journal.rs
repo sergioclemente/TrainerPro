@@ -10,7 +10,7 @@
 //!         "heart_rate_bpm":148,"target_power_w":220,
 //!         "target_cadence_rpm":95}} // absent key = no data
 //!   {"e":{"t_ms":...,"kind":"start","segment_index":4}}
-//!                                      // segment_index only for "lap"
+//!                                      // segment_index only for "workout_segment_end"
 //!
 //! Samples are NOT written while paused; pause/resume events bracket gaps.
 //! Replay tolerates a truncated final line (crash mid-write).
@@ -29,6 +29,9 @@ pub struct JournalHeader {
     pub workout_name: String,
     pub ftp_w: u16,
     pub weight_kg: f64,
+    /// Snapshotted export preference; legacy journals omit distance.
+    #[serde(default)]
+    pub record_distance: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trainer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,7 +67,7 @@ pub enum SessionEventKind {
     Start,
     Pause,
     Resume,
-    Lap,
+    WorkoutSegmentEnd,
     FreerideEnter,
     End,
 }
@@ -73,7 +76,7 @@ pub enum SessionEventKind {
 pub struct SessionEvent {
     pub t_ms: u64,
     pub kind: SessionEventKind,
-    /// Segment index just finished; present for `Lap` only.
+    /// Index of the workout segment just finished; present for `WorkoutSegmentEnd` only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub segment_index: Option<usize>,
 }
@@ -86,11 +89,12 @@ pub struct SessionRecording {
     pub events: Vec<SessionEvent>,
 }
 
-/// Per-lap aggregates computed from samples between lap boundaries
-/// (boundaries: Start → each Lap event → End/last sample; pauses excluded
-/// from `timer_ms`). Calories: kJ ≈ kcal convention for cycling work.
+/// A recorded portion of the ride between workout-segment boundaries.
+/// Revisiting a workout segment can produce another activity segment; zero-length
+/// boundaries produce none. FIT exports each activity segment as a lap.
+/// Pauses are excluded from `timer_ms`. Calories use cycling's kJ ≈ kcal convention.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Lap {
+pub struct ActivitySegment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub timer_ms: u64,
@@ -244,8 +248,8 @@ pub fn replay<R: io::BufRead>(mut reader: R) -> Result<SessionRecording, Journal
     })
 }
 
-/// Compute laps from replayed data (see `Lap` doc for boundary rules).
-pub fn compute_laps(data: &SessionRecording) -> Vec<Lap> {
+/// Compute activity segments from replayed data (see `ActivitySegment` doc for boundary rules).
+pub fn compute_activity_segments(data: &SessionRecording) -> Vec<ActivitySegment> {
     let start = data
         .events
         .iter()
@@ -270,12 +274,16 @@ pub fn compute_laps(data: &SessionRecording) -> Vec<Lap> {
             .max(start)
     });
 
-    // Boundaries: start, each interior Lap event, session end.
+    // Boundaries: start, each interior workout-segment-end event, session end.
     let mut boundaries = vec![start];
     boundaries.extend(
         data.events
             .iter()
-            .filter(|e| e.kind == SessionEventKind::Lap && e.t_ms > start && e.t_ms < session_end)
+            .filter(|e| {
+                e.kind == SessionEventKind::WorkoutSegmentEnd
+                    && e.t_ms > start
+                    && e.t_ms < session_end
+            })
             .map(|e| e.t_ms),
     );
     boundaries.sort_unstable();
@@ -304,17 +312,17 @@ pub fn compute_laps(data: &SessionRecording) -> Vec<Lap> {
         pauses.push((p, session_end.max(p)));
     }
 
-    let lap_count = boundaries.len() - 1;
-    let mut laps = Vec::new();
-    for i in 0..lap_count {
+    let activity_segment_count = boundaries.len() - 1;
+    let mut activity_segments = Vec::new();
+    for i in 0..activity_segment_count {
         let (s, e) = (boundaries[i], boundaries[i + 1]);
         if e <= s {
             continue;
         }
-        // Samples: [s, e) for interior laps; the final lap is end-inclusive so
-        // a sample coinciding with the session end (crash case) is not lost.
-        let is_final = i == lap_count - 1;
-        let lap_samples: Vec<&Sample> = data
+        // Samples: [s, e) for interior activity segments. The final segment is
+        // end-inclusive so a sample at session end (crash case) is not lost.
+        let is_final = i == activity_segment_count - 1;
+        let activity_segment_samples: Vec<&Sample> = data
             .samples
             .iter()
             .filter(|smp| smp.t_ms >= s && (smp.t_ms < e || (is_final && smp.t_ms == e)))
@@ -325,23 +333,26 @@ pub fn compute_laps(data: &SessionRecording) -> Vec<Lap> {
             .map(|&(ps, pe)| pe.min(e).saturating_sub(ps.max(s)))
             .sum();
 
-        let powers: Vec<u16> = lap_samples.iter().filter_map(|smp| smp.power_w).collect();
-        let heart_rates: Vec<u16> = lap_samples
+        let powers: Vec<u16> = activity_segment_samples
+            .iter()
+            .filter_map(|smp| smp.power_w)
+            .collect();
+        let heart_rates: Vec<u16> = activity_segment_samples
             .iter()
             .filter_map(|smp| smp.heart_rate_bpm)
             .collect();
-        let cadences: Vec<u16> = lap_samples
+        let cadences: Vec<u16> = activity_segment_samples
             .iter()
             .filter_map(|smp| smp.cadence_rpm)
             .collect();
 
-        // kJ of the lap (1 Hz samples ⇒ each sample is 1/SAMPLE_HZ joule-seconds
+        // kJ of the activity segment (1 Hz samples ⇒ each sample is 1/SAMPLE_HZ joule-seconds
         // per watt); calories = kJ, rounded (kJ ≈ kcal cycling convention).
         let work_kj: f64 = powers.iter().map(|&p| f64::from(p)).sum::<f64>()
             / f64::from(crate::consts::SAMPLE_HZ)
             / 1000.0;
 
-        laps.push(Lap {
+        activity_segments.push(ActivitySegment {
             start_ms: s,
             end_ms: e,
             timer_ms: (e - s).saturating_sub(paused_ms),
@@ -353,7 +364,7 @@ pub fn compute_laps(data: &SessionRecording) -> Vec<Lap> {
             calories_kcal: work_kj.round() as u16,
         });
     }
-    laps
+    activity_segments
 }
 
 fn mean_u16(vals: &[u16]) -> Option<u16> {
@@ -379,6 +390,7 @@ mod tests {
             workout_name: "Sweet Spot".into(),
             ftp_w: 250,
             weight_kg: 72.0,
+            record_distance: false,
             trainer: Some("KICKR CORE 1234".into()),
             hrm: Some("TICKR 5678".into()),
             app_ver: "0.1.0".into(),
@@ -410,10 +422,10 @@ mod tests {
         }
     }
 
-    fn lap_event(t_ms: u64, segment_index: usize) -> SessionEvent {
+    fn workout_segment_end_event(t_ms: u64, segment_index: usize) -> SessionEvent {
         SessionEvent {
             t_ms,
-            kind: SessionEventKind::Lap,
+            kind: SessionEventKind::WorkoutSegmentEnd,
             segment_index: Some(segment_index),
         }
     }
@@ -441,7 +453,7 @@ mod tests {
                 r#"{"h":{"workout_session_id":"session-abc-123","workout_definition_id":"definition-abc-123","#,
                 r#""workout_definition_snapshot_json":"{\"format\":\"TPW\",\"version\":1}","#,
                 r#""started_unix_ms":1700000000000,"#,
-                r#""workout_name":"Sweet Spot","ftp_w":250,"weight_kg":72.0,"#,
+                r#""workout_name":"Sweet Spot","ftp_w":250,"weight_kg":72.0,"record_distance":false,"#,
                 r#""trainer":"KICKR CORE 1234","hrm":"TICKR 5678","app_ver":"0.1.0"}}"#,
                 "\n"
             )
@@ -462,7 +474,7 @@ mod tests {
                 r#"{"h":{"workout_session_id":"session-abc-123","workout_definition_id":"definition-abc-123","#,
                 r#""workout_definition_snapshot_json":"{\"format\":\"TPW\",\"version\":1}","#,
                 r#""started_unix_ms":1700000000000,"#,
-                r#""workout_name":"Sweet Spot","ftp_w":250,"weight_kg":72.0,"app_ver":"0.1.0"}}"#,
+                r#""workout_name":"Sweet Spot","ftp_w":250,"weight_kg":72.0,"record_distance":false,"app_ver":"0.1.0"}}"#,
                 "\n"
             )
         );
@@ -524,7 +536,7 @@ mod tests {
                 event(0, SessionEventKind::Start),
                 event(60_000, SessionEventKind::Pause),
                 event(65_000, SessionEventKind::Resume),
-                lap_event(600_000, 4),
+                workout_segment_end_event(600_000, 4),
                 event(700_000, SessionEventKind::FreerideEnter),
                 event(900_000, SessionEventKind::End),
             ],
@@ -536,7 +548,7 @@ mod tests {
         assert_eq!(lines[2], r#"{"e":{"t_ms":65000,"kind":"resume"}}"#);
         assert_eq!(
             lines[3],
-            r#"{"e":{"t_ms":600000,"kind":"lap","segment_index":4}}"#
+            r#"{"e":{"t_ms":600000,"kind":"workout_segment_end","segment_index":4}}"#
         );
         assert_eq!(
             lines[4],
@@ -557,7 +569,7 @@ mod tests {
         ];
         let events = vec![
             event(0, SessionEventKind::Start),
-            lap_event(1500, 0),
+            workout_segment_end_event(1500, 0),
             event(3000, SessionEventKind::End),
         ];
         let mut w = JournalWriter::new(Vec::new(), &h).unwrap();
@@ -674,7 +686,7 @@ mod tests {
         assert_eq!(data.samples.len(), 2);
     }
 
-    // ---- compute_laps -------------------------------------------------------
+    // ---- compute_activity_segments -------------------------------------------------------
 
     fn recording(samples: Vec<Sample>, events: Vec<SessionEvent>) -> SessionRecording {
         SessionRecording {
@@ -685,34 +697,34 @@ mod tests {
     }
 
     #[test]
-    fn laps_from_start_lap_end_boundaries() {
-        // 10 samples at 1 Hz, powers 100..=190; lap boundary at 5000.
+    fn activity_segments_from_start_activity_segment_end_boundaries() {
+        // 10 samples at 1 Hz, powers 100..=190; activity segment boundary at 5000.
         let samples: Vec<Sample> = (0..10)
             .map(|k| sample(k * 1000, Some(100 + (k as u16) * 10), None, None, None))
             .collect();
         let events = vec![
             event(0, SessionEventKind::Start),
-            lap_event(5000, 0),
+            workout_segment_end_event(5000, 0),
             event(10_000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 2);
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 2);
 
-        assert_eq!(laps[0].start_ms, 0);
-        assert_eq!(laps[0].end_ms, 5000);
-        assert_eq!(laps[0].timer_ms, 5000);
-        assert_eq!(laps[0].average_power_w, Some(120)); // 100..140
-        assert_eq!(laps[0].max_power_w, Some(140));
+        assert_eq!(activity_segments[0].start_ms, 0);
+        assert_eq!(activity_segments[0].end_ms, 5000);
+        assert_eq!(activity_segments[0].timer_ms, 5000);
+        assert_eq!(activity_segments[0].average_power_w, Some(120)); // 100..140
+        assert_eq!(activity_segments[0].max_power_w, Some(140));
 
-        assert_eq!(laps[1].start_ms, 5000);
-        assert_eq!(laps[1].end_ms, 10_000);
-        assert_eq!(laps[1].timer_ms, 5000);
-        assert_eq!(laps[1].average_power_w, Some(170)); // 150..190
-        assert_eq!(laps[1].max_power_w, Some(190));
+        assert_eq!(activity_segments[1].start_ms, 5000);
+        assert_eq!(activity_segments[1].end_ms, 10_000);
+        assert_eq!(activity_segments[1].timer_ms, 5000);
+        assert_eq!(activity_segments[1].average_power_w, Some(170)); // 150..190
+        assert_eq!(activity_segments[1].max_power_w, Some(190));
     }
 
     #[test]
-    fn lap_boundary_sample_belongs_to_next_lap() {
+    fn activity_segment_boundary_sample_belongs_to_next_lap() {
         let samples = vec![
             sample(0, Some(100), None, None, None),
             sample(5000, Some(500), None, None, None), // exactly on boundary
@@ -720,13 +732,13 @@ mod tests {
         ];
         let events = vec![
             event(0, SessionEventKind::Start),
-            lap_event(5000, 0),
+            workout_segment_end_event(5000, 0),
             event(7000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 2);
-        assert_eq!(laps[0].max_power_w, Some(100));
-        assert_eq!(laps[1].max_power_w, Some(500));
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 2);
+        assert_eq!(activity_segments[0].max_power_w, Some(100));
+        assert_eq!(activity_segments[1].max_power_w, Some(500));
     }
 
     #[test]
@@ -746,26 +758,29 @@ mod tests {
             event(7000, SessionEventKind::Resume),
             event(10_000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 1);
-        assert_eq!(laps[0].end_ms - laps[0].start_ms, 10_000);
-        assert_eq!(laps[0].timer_ms, 6000); // 10 s elapsed − 4 s paused
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 1);
+        assert_eq!(
+            activity_segments[0].end_ms - activity_segments[0].start_ms,
+            10_000
+        );
+        assert_eq!(activity_segments[0].timer_ms, 6000); // 10 s elapsed − 4 s paused
     }
 
     #[test]
-    fn pause_gap_split_across_laps() {
-        // Pause 4000..8000 straddles the lap boundary at 6000.
+    fn pause_gap_split_across_activity_segments() {
+        // Pause 4000..8000 straddles the activity segment boundary at 6000.
         let events = vec![
             event(0, SessionEventKind::Start),
             event(4000, SessionEventKind::Pause),
-            lap_event(6000, 0),
+            workout_segment_end_event(6000, 0),
             event(8000, SessionEventKind::Resume),
             event(12_000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&recording(vec![], events));
-        assert_eq!(laps.len(), 2);
-        assert_eq!(laps[0].timer_ms, 4000); // 6 s − 2 s paused
-        assert_eq!(laps[1].timer_ms, 4000); // 6 s − 2 s paused
+        let activity_segments = compute_activity_segments(&recording(vec![], events));
+        assert_eq!(activity_segments.len(), 2);
+        assert_eq!(activity_segments[0].timer_ms, 4000); // 6 s − 2 s paused
+        assert_eq!(activity_segments[1].timer_ms, 4000); // 6 s − 2 s paused
     }
 
     #[test]
@@ -777,10 +792,10 @@ mod tests {
             sample(2000, Some(100), None, None, None),
         ];
         let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::Pause)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 1);
-        assert_eq!(laps[0].end_ms, 3000); // last event is the latest timestamp
-        assert_eq!(laps[0].timer_ms, 3000); // zero-length open pause at the very end
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 1);
+        assert_eq!(activity_segments[0].end_ms, 3000); // last event is the latest timestamp
+        assert_eq!(activity_segments[0].timer_ms, 3000); // zero-length open pause at the very end
     }
 
     #[test]
@@ -791,14 +806,14 @@ mod tests {
             sample(2000, Some(201), Some(80), None, None),
         ];
         let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::End)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 1);
-        let lap = laps[0];
-        assert_eq!(lap.average_power_w, Some(151)); // (100+201)/2 = 150.5 → 151
-        assert_eq!(lap.max_power_w, Some(201));
-        assert_eq!(lap.average_heart_rate_bpm, Some(155));
-        assert_eq!(lap.max_heart_rate_bpm, Some(160));
-        assert_eq!(lap.average_cadence_rpm, Some(85));
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 1);
+        let activity_segment = activity_segments[0];
+        assert_eq!(activity_segment.average_power_w, Some(151)); // (100+201)/2 = 150.5 → 151
+        assert_eq!(activity_segment.max_power_w, Some(201));
+        assert_eq!(activity_segment.average_heart_rate_bpm, Some(155));
+        assert_eq!(activity_segment.max_heart_rate_bpm, Some(160));
+        assert_eq!(activity_segment.average_cadence_rpm, Some(85));
     }
 
     #[test]
@@ -808,93 +823,102 @@ mod tests {
             sample(1000, None, None, None, None),
         ];
         let events = vec![event(0, SessionEventKind::Start), event(2000, SessionEventKind::End)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 1);
-        let lap = laps[0];
-        assert_eq!(lap.average_power_w, None);
-        assert_eq!(lap.max_power_w, None);
-        assert_eq!(lap.average_heart_rate_bpm, None);
-        assert_eq!(lap.max_heart_rate_bpm, None);
-        assert_eq!(lap.average_cadence_rpm, None);
-        assert_eq!(lap.calories_kcal, 0);
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 1);
+        let activity_segment = activity_segments[0];
+        assert_eq!(activity_segment.average_power_w, None);
+        assert_eq!(activity_segment.max_power_w, None);
+        assert_eq!(activity_segment.average_heart_rate_bpm, None);
+        assert_eq!(activity_segment.max_heart_rate_bpm, None);
+        assert_eq!(activity_segment.average_cadence_rpm, None);
+        assert_eq!(activity_segment.calories_kcal, 0);
     }
 
     #[test]
-    fn calories_are_lap_kilojoules_rounded() {
+    fn calories_are_activity_segment_kilojoules_rounded() {
         // 300 s at 250 W = 75 000 J = 75 kJ → 75 kcal.
         let samples: Vec<Sample> = (0..300)
             .map(|k| sample(k * 1000, Some(250), None, None, None))
             .collect();
         let events = vec![event(0, SessionEventKind::Start), event(300_000, SessionEventKind::End)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps[0].calories_kcal, 75);
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments[0].calories_kcal, 75);
 
         // Rounding: 3 s at 250 W = 0.75 kJ → 1 kcal; 2 s at 250 W = 0.5 kJ → 1 (half up).
         let samples: Vec<Sample> = (0..3)
             .map(|k| sample(k * 1000, Some(250), None, None, None))
             .collect();
         let events = vec![event(0, SessionEventKind::Start), event(3000, SessionEventKind::End)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps[0].calories_kcal, 1);
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments[0].calories_kcal, 1);
 
         // 1 s at 250 W = 0.25 kJ → 0 kcal.
         let samples = vec![sample(0, Some(250), None, None, None)];
         let events = vec![event(0, SessionEventKind::Start), event(1000, SessionEventKind::End)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps[0].calories_kcal, 0);
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments[0].calories_kcal, 0);
     }
 
     #[test]
-    fn crash_case_final_partial_lap_without_end_event() {
+    fn crash_case_final_partial_activity_segment_without_end_event() {
         let samples: Vec<Sample> = (0..9)
             .map(|k| sample(k * 1000, Some(100), None, None, None))
             .collect();
-        let events = vec![event(0, SessionEventKind::Start), lap_event(5000, 0)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 2);
-        assert_eq!(laps[0].start_ms, 0);
-        assert_eq!(laps[0].end_ms, 5000);
-        // Final partial lap runs to the last sample, inclusive.
-        assert_eq!(laps[1].start_ms, 5000);
-        assert_eq!(laps[1].end_ms, 8000);
-        assert_eq!(laps[1].timer_ms, 3000);
-        // Sample at t == end (8000) is included in the final lap.
-        assert_eq!(laps[1].calories_kcal, (4.0f64 * 100.0 / 1000.0).round() as u16);
-        assert_eq!(laps[1].average_power_w, Some(100));
+        let events = vec![
+            event(0, SessionEventKind::Start),
+            workout_segment_end_event(5000, 0),
+        ];
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 2);
+        assert_eq!(activity_segments[0].start_ms, 0);
+        assert_eq!(activity_segments[0].end_ms, 5000);
+        // Final partial activity segment runs to the last sample, inclusive.
+        assert_eq!(activity_segments[1].start_ms, 5000);
+        assert_eq!(activity_segments[1].end_ms, 8000);
+        assert_eq!(activity_segments[1].timer_ms, 3000);
+        // Sample at t == end (8000) is included in the final activity segment.
+        assert_eq!(
+            activity_segments[1].calories_kcal,
+            (4.0f64 * 100.0 / 1000.0).round() as u16
+        );
+        assert_eq!(activity_segments[1].average_power_w, Some(100));
     }
 
     #[test]
-    fn no_events_single_lap_over_all_samples() {
+    fn no_events_single_activity_segment_over_all_samples() {
         let samples: Vec<Sample> = (0..5)
             .map(|k| sample(k * 1000, Some(200), None, None, None))
             .collect();
-        let laps = compute_laps(&recording(samples, vec![]));
-        assert_eq!(laps.len(), 1);
-        assert_eq!(laps[0].start_ms, 0);
-        assert_eq!(laps[0].end_ms, 4000);
-        assert_eq!(laps[0].timer_ms, 4000);
-        assert_eq!(laps[0].average_power_w, Some(200));
+        let activity_segments = compute_activity_segments(&recording(samples, vec![]));
+        assert_eq!(activity_segments.len(), 1);
+        assert_eq!(activity_segments[0].start_ms, 0);
+        assert_eq!(activity_segments[0].end_ms, 4000);
+        assert_eq!(activity_segments[0].timer_ms, 4000);
+        assert_eq!(activity_segments[0].average_power_w, Some(200));
     }
 
     #[test]
-    fn empty_session_yields_no_laps() {
-        let laps = compute_laps(&recording(vec![], vec![]));
-        assert!(laps.is_empty());
+    fn empty_session_yields_no_activity_segments() {
+        let activity_segments = compute_activity_segments(&recording(vec![], vec![]));
+        assert!(activity_segments.is_empty());
     }
 
     #[test]
-    fn lap_event_at_boundary_times_ignored() {
-        // Lap events coinciding with start or end must not create zero-length laps.
+    fn workout_segment_end_event_at_boundary_times_ignored() {
+        // Workout-segment-end events coinciding with start or end must not create zero-length activity segments.
         let samples = vec![sample(0, Some(100), None, None, None)];
         let events = vec![
             event(0, SessionEventKind::Start),
-            lap_event(0, 0),
-            lap_event(5000, 1),
+            workout_segment_end_event(0, 0),
+            workout_segment_end_event(5000, 1),
             event(5000, SessionEventKind::End),
         ];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 1);
-        assert_eq!((laps[0].start_ms, laps[0].end_ms), (0, 5000));
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 1);
+        assert_eq!(
+            (activity_segments[0].start_ms, activity_segments[0].end_ms),
+            (0, 5000)
+        );
     }
 
     #[test]
@@ -905,10 +929,10 @@ mod tests {
             sample(1500, Some(200), None, None, None),
         ];
         let events = vec![event(500, SessionEventKind::Start), event(2000, SessionEventKind::End)];
-        let laps = compute_laps(&recording(samples, events));
-        assert_eq!(laps.len(), 1);
-        assert_eq!(laps[0].start_ms, 500);
-        assert_eq!(laps[0].end_ms, 2000);
-        assert_eq!(laps[0].timer_ms, 1500);
+        let activity_segments = compute_activity_segments(&recording(samples, events));
+        assert_eq!(activity_segments.len(), 1);
+        assert_eq!(activity_segments[0].start_ms, 500);
+        assert_eq!(activity_segments[0].end_ms, 2000);
+        assert_eq!(activity_segments[0].timer_ms, 1500);
     }
 }

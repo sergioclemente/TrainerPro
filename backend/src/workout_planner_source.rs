@@ -328,7 +328,7 @@ pub struct PlannerPreview {
     pub duration_s: u32,
     pub est_if: f64,
     pub est_tss: f64,
-    pub segments: Vec<crate::commands::workout::SegmentRow>,
+    pub segments: Vec<crate::commands::workout::WorkoutSegmentRow>,
 }
 
 /// Lazy per-workout preview: fetch ZWO → existing parser → graph polyline

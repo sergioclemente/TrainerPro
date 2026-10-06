@@ -225,7 +225,7 @@ pub fn estimate_if_tss(workout: &ExecutableWorkout, ftp: u16) -> (f64, f64) {
 mod tests {
     use super::*;
     use crate::journal::{JournalHeader, Sample, SessionEvent};
-    use crate::model::{PowerTarget, Segment};
+    use crate::model::{PowerTarget, WorkoutSegment};
 
     const EPS: f64 = 1e-9;
 
@@ -239,6 +239,7 @@ mod tests {
             workout_name: "test".into(),
             ftp_w: 250,
             weight_kg: 72.0,
+            record_distance: false,
             trainer: Some("SimTrainer".into()),
             hrm: None,
             app_ver: "0.1.0".into(),
@@ -264,7 +265,7 @@ mod tests {
         }
     }
 
-    fn workout(segments: Vec<Segment>) -> ExecutableWorkout {
+    fn workout(segments: Vec<WorkoutSegment>) -> ExecutableWorkout {
         ExecutableWorkout {
             name: "w".into(),
             description: String::new(),
@@ -645,7 +646,7 @@ mod tests {
 
     #[test]
     fn estimate_one_hour_at_ftp() {
-        let w = workout(vec![Segment::Steady {
+        let w = workout(vec![WorkoutSegment::Steady {
             duration_s: 3600,
             power: PowerTarget::PercentFtp(1.0),
             cadence_rpm: None,
@@ -661,12 +662,12 @@ mod tests {
         // must enter the series as 0 W, so the estimate matches NP/IF/TSS of
         // the explicit [200×60, 0×60] series over the full 120 s duration.
         let w = workout(vec![
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::Watts(200),
                 cadence_rpm: None,
             },
-            Segment::FreeRide {
+            WorkoutSegment::FreeRide {
                 duration_s: 60,
                 cadence_rpm: None,
             },
@@ -686,7 +687,7 @@ mod tests {
 
     #[test]
     fn estimate_ramp_matches_target_series() {
-        let w = workout(vec![Segment::Ramp {
+        let w = workout(vec![WorkoutSegment::Ramp {
             duration_s: 300,
             start: PowerTarget::PercentFtp(0.5),
             end: PowerTarget::PercentFtp(1.0),
@@ -708,14 +709,14 @@ mod tests {
     fn estimate_degenerate_inputs() {
         let empty = workout(vec![]);
         assert_eq!(estimate_if_tss(&empty, 250), (0.0, 0.0));
-        let w = workout(vec![Segment::Steady {
+        let w = workout(vec![WorkoutSegment::Steady {
             duration_s: 60,
             power: PowerTarget::Watts(200),
             cadence_rpm: None,
         }]);
         assert_eq!(estimate_if_tss(&w, 0), (0.0, 0.0));
         // All-FreeRide workout: series is all zeros → IF 0, TSS 0.
-        let fr = workout(vec![Segment::FreeRide {
+        let fr = workout(vec![WorkoutSegment::FreeRide {
             duration_s: 120,
             cadence_rpm: None,
         }]);

@@ -17,7 +17,7 @@ use super::{ParseError, ParseWarning, Parsed, SourceFormat};
 use crate::consts::{
     MAX_TARGET_WATTS, POWER_FRACTION_MAX, POWER_FRACTION_MIN, TEXT_EVENT_DEFAULT_S,
 };
-use crate::model::{ExecutableWorkout, PowerTarget, Segment, TextEvent};
+use crate::model::{ExecutableWorkout, PowerTarget, TextEvent, WorkoutSegment};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Units {
@@ -300,7 +300,7 @@ pub fn parse_ergmrc(input: &str, ext_hint: Option<&str>) -> Result<Parsed, Parse
     }
 
     // Build segments from consecutive row pairs.
-    let mut segments: Vec<Segment> = Vec::new();
+    let mut segments: Vec<WorkoutSegment> = Vec::new();
     for pair in rows.windows(2) {
         let (_l1, t1, p1) = pair[0];
         let (l2, t2, p2) = pair[1];
@@ -317,14 +317,14 @@ pub fn parse_ergmrc(input: &str, ext_hint: Option<&str>) -> Result<Parsed, Parse
         }
         let start = make_target(p1, units, l2, &mut warnings);
         if p1 == p2 {
-            segments.push(Segment::Steady {
+            segments.push(WorkoutSegment::Steady {
                 duration_s,
                 power: start,
                 cadence_rpm: None,
             });
         } else {
             let end = make_target(p2, units, l2, &mut warnings);
-            segments.push(Segment::Ramp {
+            segments.push(WorkoutSegment::Ramp {
                 duration_s,
                 start,
                 end,
@@ -399,12 +399,12 @@ MINUTES PERCENT
         assert_eq!(
             p.workout.segments,
             vec![
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     duration_s: 600,
                     power: PowerTarget::PercentFtp(0.45),
                     cadence_rpm: None,
                 },
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     duration_s: 720,
                     power: PowerTarget::PercentFtp(0.88),
                     cadence_rpm: None,
@@ -434,12 +434,12 @@ MINUTES WATTS
         assert_eq!(
             p.workout.segments,
             vec![
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     duration_s: 300,
                     power: PowerTarget::Watts(100),
                     cadence_rpm: None,
                 },
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     duration_s: 600,
                     power: PowerTarget::Watts(250),
                     cadence_rpm: None,
@@ -465,7 +465,7 @@ MINUTES WATTS
         assert_eq!(p.source_format, SourceFormat::Erg);
         assert_eq!(
             p.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::Watts(150),
                 cadence_rpm: None,
@@ -494,7 +494,7 @@ DESCRIPTION = No Columns
         assert_eq!(p.source_format, SourceFormat::Erg);
         assert_eq!(
             p.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 120,
                 power: PowerTarget::Watts(200),
                 cadence_rpm: None,
@@ -507,7 +507,7 @@ DESCRIPTION = No Columns
         assert_eq!(p.source_format, SourceFormat::Mrc);
         assert_eq!(
             p.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 120,
                 power: PowerTarget::PercentFtp(2.0),
                 cadence_rpm: None,
@@ -549,13 +549,13 @@ MINUTES PERCENT
         assert_eq!(
             p.workout.segments,
             vec![
-                Segment::Ramp {
+                WorkoutSegment::Ramp {
                     duration_s: 300,
                     start: PowerTarget::PercentFtp(0.50),
                     end: PowerTarget::PercentFtp(0.75),
                     cadence_rpm: None,
                 },
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     duration_s: 300,
                     power: PowerTarget::PercentFtp(0.75),
                     cadence_rpm: None,
@@ -583,7 +583,7 @@ MINUTES PERCENT
         let p = ok(input, None);
         assert_eq!(
             p.workout.segments,
-            vec![Segment::Ramp {
+            vec![WorkoutSegment::Ramp {
                 duration_s: 300,
                 start: PowerTarget::PercentFtp(0.60),
                 end: PowerTarget::PercentFtp(0.90),
@@ -599,7 +599,7 @@ MINUTES PERCENT
         let p = ok(input, None);
         assert_eq!(
             p.workout.segments,
-            vec![Segment::Steady {
+            vec![WorkoutSegment::Steady {
                 duration_s: 630,
                 power: PowerTarget::PercentFtp(0.45),
                 cadence_rpm: None,
@@ -780,7 +780,7 @@ minutes percent
         let p = ok(input, None);
         assert_eq!(
             p.workout.segments,
-            vec![Segment::Steady {
+            vec![WorkoutSegment::Steady {
                 duration_s: 120,
                 power: PowerTarget::Watts(100),
                 cadence_rpm: None,
@@ -817,7 +817,7 @@ MINUTES WATTS
         let p = ok(input, None);
         assert_eq!(
             p.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::Watts(MAX_TARGET_WATTS),
                 cadence_rpm: None,
@@ -844,7 +844,7 @@ MINUTES PERCENT
         let p = ok(input, None);
         assert_eq!(
             p.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::PercentFtp(POWER_FRACTION_MIN),
                 cadence_rpm: None,
@@ -928,7 +928,7 @@ MINUTES WATTS
         let p = ok(input, None);
         assert_eq!(
             p.workout.segments,
-            vec![Segment::Ramp {
+            vec![WorkoutSegment::Ramp {
                 duration_s: 300,
                 start: PowerTarget::Watts(250),
                 end: PowerTarget::Watts(100),

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { before, test } from "node:test";
 import { transformWithEsbuild } from "vite";
 
-let appendSegmentResult;
+let appendWorkoutSegmentResult;
 let createRideTimelineState;
 let observePlayerState;
 let observeTrainerStatus;
@@ -23,7 +23,7 @@ async function loadTypeScriptModule(relativePath) {
 
 before(async () => {
   ({
-    appendSegmentResult,
+    appendWorkoutSegmentResult,
     createRideTimelineState,
     observePlayerState,
     observeTrainerStatus,
@@ -50,7 +50,7 @@ test("suppresses the phase transition caused by any recent user action", () => {
 test("keeps user actions without a phase beside later ride events", () => {
   let state = createRideTimelineState(player("riding"));
   state = recordUserAction(state, player("riding"), "Skip interval", null);
-  state = appendSegmentResult(state, {
+  state = appendWorkoutSegmentResult(state, {
     workout_session_id: "ride-1",
     segment_index: 2,
     planned_duration_s: 300,

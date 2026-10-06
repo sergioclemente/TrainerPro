@@ -5,7 +5,7 @@
 //!
 //! Rules (see spec for full text):
 //! - Tick advances only in Riding.
-//! - Segment rollover: FinalizeSegment + first target of new segment (or
+//! - WorkoutSegment rollover: FinalizeSegment + first target of new segment (or
 //!   EnterFreeRide). Workout end: CompleteWorkout + ResetTrainer, phase →
 //!   Finished.
 //! - Ramp targets recompute each Tick; SetTargetPower emitted only when the
@@ -23,7 +23,7 @@
 //!   each fires exactly once.
 
 use crate::consts::{INTENSITY_MAX, INTENSITY_MIN, MAX_TARGET_WATTS};
-use crate::model::{ExecutableWorkout, Segment, TextEvent};
+use crate::model::{ExecutableWorkout, TextEvent, WorkoutSegment};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -318,8 +318,8 @@ impl Engine {
     /// `None` inside FreeRide.
     fn current_target(&self) -> Option<u16> {
         match &self.workout.segments[self.seg_idx] {
-            Segment::Steady { power, .. } => Some(power.resolve(self.ftp, self.intensity)),
-            Segment::Ramp {
+            WorkoutSegment::Steady { power, .. } => Some(power.resolve(self.ftp, self.intensity)),
+            WorkoutSegment::Ramp {
                 duration_s,
                 start,
                 end,
@@ -336,7 +336,7 @@ impl Engine {
                 let w = a + (b - a) * frac;
                 Some(w.round().clamp(0.0, f64::from(MAX_TARGET_WATTS)) as u16)
             }
-            Segment::FreeRide { .. } => None,
+            WorkoutSegment::FreeRide { .. } => None,
         }
     }
 
@@ -391,12 +391,12 @@ mod tests {
     use super::*;
     use crate::model::PowerTarget;
 
-    fn wk(segments: Vec<Segment>) -> ExecutableWorkout {
+    fn wk(segments: Vec<WorkoutSegment>) -> ExecutableWorkout {
         wk_with_texts(segments, vec![])
     }
 
     fn wk_with_texts(
-        segments: Vec<Segment>,
+        segments: Vec<WorkoutSegment>,
         text_events: Vec<TextEvent>,
     ) -> ExecutableWorkout {
         ExecutableWorkout {
@@ -407,24 +407,24 @@ mod tests {
         }
     }
 
-    fn steady(duration_s: u32, watts: u16) -> Segment {
-        Segment::Steady {
+    fn steady(duration_s: u32, watts: u16) -> WorkoutSegment {
+        WorkoutSegment::Steady {
             duration_s,
             power: PowerTarget::Watts(watts),
             cadence_rpm: None,
         }
     }
 
-    fn steady_pct(duration_s: u32, frac: f64) -> Segment {
-        Segment::Steady {
+    fn steady_pct(duration_s: u32, frac: f64) -> WorkoutSegment {
+        WorkoutSegment::Steady {
             duration_s,
             power: PowerTarget::PercentFtp(frac),
             cadence_rpm: None,
         }
     }
 
-    fn ramp(duration_s: u32, start_w: u16, end_w: u16) -> Segment {
-        Segment::Ramp {
+    fn ramp(duration_s: u32, start_w: u16, end_w: u16) -> WorkoutSegment {
+        WorkoutSegment::Ramp {
             duration_s,
             start: PowerTarget::Watts(start_w),
             end: PowerTarget::Watts(end_w),
@@ -432,8 +432,8 @@ mod tests {
         }
     }
 
-    fn free(duration_s: u32) -> Segment {
-        Segment::FreeRide {
+    fn free(duration_s: u32) -> WorkoutSegment {
+        WorkoutSegment::FreeRide {
             duration_s,
             cadence_rpm: None,
         }
@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(e.active_ms(), 2000);
     }
 
-    // ---- Segment rollover ----
+    // ---- WorkoutSegment rollover ----
 
     #[test]
     fn rollover_finalizes_segment_and_emits_new_target() {

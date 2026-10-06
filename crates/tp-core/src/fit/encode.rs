@@ -22,6 +22,15 @@ const fn f(num: u8, size: u8, base: u8) -> FieldDef {
 }
 
 pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
+    if let Some(motion) = activity.motion {
+        if motion.records.len() != activity.samples.len()
+            || motion.activity_segments.len() != activity.laps.len()
+        {
+            return Err(FitError::Encode(
+                "motion trace does not match activity".into(),
+            ));
+        }
+    }
     let h = activity.header;
     let start_ms = h.started_unix_ms;
     let ts_start = fit_ts(start_ms)?;
@@ -94,7 +103,7 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         f(p::RECORD_CADENCE, 1, p::BASE_UINT8),
         f(p::RECORD_POWER, 2, p::BASE_UINT16),
     ];
-    if activity.record_distance {
+    if activity.motion.is_some() {
         record_fields.push(f(p::RECORD_SPEED, 2, p::BASE_UINT16));
         record_fields.push(f(p::RECORD_DISTANCE, 4, p::BASE_UINT32));
     }
@@ -124,8 +133,6 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
     }
     items.sort_by_key(|(t, rank, _)| (*t, *rank));
 
-    let flat = FlatRoad::new(h.weight_kg);
-    let mut distance_m = 0.0f64;
     for (_, _, item) in &items {
         match item {
             Item::Sample(i) => {
@@ -135,11 +142,10 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
                 body.push(opt_u8(s.heart_rate_bpm));
                 body.push(opt_u8(s.cadence_rpm));
                 put_u16(&mut body, s.power_w.unwrap_or(p::INVALID_UINT16));
-                if activity.record_distance {
-                    let v = flat.speed_ms(f64::from(s.power_w.unwrap_or(0)));
-                    distance_m += v; // 1 Hz → v m/s × 1 s
-                    put_u16(&mut body, scale_u16(v, p::SPEED_SCALE));
-                    put_u32(&mut body, scale_u32(distance_m, p::DISTANCE_SCALE));
+                if let Some(motion) = activity.motion {
+                    let point = motion.records[*i];
+                    put_u16(&mut body, scale_u16(point.speed_m_s, p::SPEED_SCALE));
+                    put_u32(&mut body, scale_u32(point.distance_m, p::DISTANCE_SCALE));
                 }
             }
             Item::Pause(t) => {
@@ -152,7 +158,7 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
     }
 
     // -- 5. laps ×M ---------------------------------------------------------
-    let lap_fields = [
+    let mut lap_fields = vec![
         f(p::LAP_MESSAGE_INDEX, 2, p::BASE_UINT16),
         f(p::LAP_TIMESTAMP, 4, p::BASE_UINT32),
         f(p::LAP_START_TIME, 4, p::BASE_UINT32),
@@ -165,7 +171,16 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         f(p::LAP_AVG_POWER, 2, p::BASE_UINT16),
         f(p::LAP_MAX_POWER, 2, p::BASE_UINT16),
     ];
+    if activity.motion.is_some() {
+        lap_fields.extend([
+            f(p::LAP_TOTAL_DISTANCE, 4, p::BASE_UINT32),
+            f(p::LAP_AVG_SPEED, 2, p::BASE_UINT16),
+            f(p::LAP_MAX_SPEED, 2, p::BASE_UINT16),
+        ]);
+    }
     write_definition(&mut body, p::LOCAL_LAP, p::MSG_LAP, &lap_fields);
+    let mut lap_distance_m = 0.0;
+    let mut encoded_lap_distance = 0;
     for (i, lap) in activity.laps.iter().enumerate() {
         body.push(p::LOCAL_LAP);
         put_u16(&mut body, i as u16);
@@ -179,13 +194,34 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         body.push(opt_u8(lap.average_cadence_rpm));
         put_u16(&mut body, lap.average_power_w.unwrap_or(p::INVALID_UINT16));
         put_u16(&mut body, lap.max_power_w.unwrap_or(p::INVALID_UINT16));
+        if let Some(motion) = activity.motion {
+            let summary = motion.activity_segments[i];
+            lap_distance_m += summary.distance_m;
+            let cumulative = scale_u32(lap_distance_m, p::DISTANCE_SCALE);
+            // Difference rounded boundaries, so all lap distances sum exactly.
+            put_u32(&mut body, cumulative.saturating_sub(encoded_lap_distance));
+            encoded_lap_distance = cumulative;
+            put_u16(
+                &mut body,
+                summary
+                    .average_speed_m_s(lap.timer_ms)
+                    .map(|speed| scale_u16(speed, p::SPEED_SCALE))
+                    .unwrap_or(p::INVALID_UINT16),
+            );
+            put_u16(&mut body, scale_u16(summary.max_speed_m_s, p::SPEED_SCALE));
+        }
     }
 
     // -- 6. session ---------------------------------------------------------
     let t = activity.totals;
-    let elapsed_ms = u64::from(t.elapsed_s) * 1000;
+    let elapsed_ms = activity
+        .laps
+        .last()
+        .map(|lap| lap.end_ms)
+        .unwrap_or(u64::from(t.elapsed_s) * 1000);
+    let timer_ms: u64 = activity.laps.iter().map(|lap| lap.timer_ms).sum();
     let ts_end = fit_ts(start_ms + elapsed_ms)?;
-    let session_fields = [
+    let mut session_fields = vec![
         f(p::SESSION_TIMESTAMP, 4, p::BASE_UINT32),
         f(p::SESSION_START_TIME, 4, p::BASE_UINT32),
         f(p::SESSION_SPORT, 1, p::BASE_ENUM),
@@ -205,6 +241,13 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         f(p::SESSION_INTENSITY_FACTOR, 2, p::BASE_UINT16),
         f(p::SESSION_THRESHOLD_POWER, 2, p::BASE_UINT16),
     ];
+    if activity.motion.is_some() {
+        session_fields.extend([
+            f(p::SESSION_TOTAL_DISTANCE, 4, p::BASE_UINT32),
+            f(p::SESSION_AVG_SPEED, 2, p::BASE_UINT16),
+            f(p::SESSION_MAX_SPEED, 2, p::BASE_UINT16),
+        ]);
+    }
     write_definition(&mut body, p::LOCAL_SESSION, p::MSG_SESSION, &session_fields);
     body.push(p::LOCAL_SESSION);
     put_u32(&mut body, ts_end);
@@ -212,7 +255,7 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
     body.push(p::SPORT_CYCLING);
     body.push(p::SUB_SPORT_INDOOR_CYCLING);
     put_u32(&mut body, ms_u32(elapsed_ms)?);
-    put_u32(&mut body, ms_u32(u64::from(t.timer_s) * 1000)?);
+    put_u32(&mut body, ms_u32(timer_ms)?);
     put_u16(&mut body, t.work_kj.min(u32::from(u16::MAX - 1)) as u16); // kJ ≈ kcal
     body.push(opt_u8(t.average_heart_rate_bpm));
     body.push(opt_u8(t.max_heart_rate_bpm));
@@ -238,6 +281,24 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
             .unwrap_or(p::INVALID_UINT16),
     );
     put_u16(&mut body, h.ftp_w);
+    if let Some(motion) = activity.motion {
+        put_u32(
+            &mut body,
+            scale_u32(motion.session.distance_m, p::DISTANCE_SCALE),
+        );
+        put_u16(
+            &mut body,
+            motion
+                .session
+                .average_speed_m_s(timer_ms)
+                .map(|speed| scale_u16(speed, p::SPEED_SCALE))
+                .unwrap_or(p::INVALID_UINT16),
+        );
+        put_u16(
+            &mut body,
+            scale_u16(motion.session.max_speed_m_s, p::SPEED_SCALE),
+        );
+    }
 
     // -- 7. activity --------------------------------------------------------
     let activity_fields = [
@@ -252,7 +313,7 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
     write_definition(&mut body, p::LOCAL_ACTIVITY, p::MSG_ACTIVITY, &activity_fields);
     body.push(p::LOCAL_ACTIVITY);
     put_u32(&mut body, ts_end);
-    put_u32(&mut body, ms_u32(u64::from(t.timer_s) * 1000)?);
+    put_u32(&mut body, ms_u32(timer_ms)?);
     put_u16(&mut body, 1);
     body.push(p::ACTIVITY_TYPE_MANUAL);
     body.push(p::EVENT_ACTIVITY);
@@ -381,38 +442,6 @@ fn software_version(app_ver: &str) -> u16 {
     major.saturating_mul(100).saturating_add(minor).min(u16::MAX - 1)
 }
 
-/// Virtual flat-road speed model: solve P = k_a·v³ + k_r·v (aero + rolling
-/// resistance, no slope/wind) for v via Newton's method. Constants: air
-/// density 1.225 kg/m³, CdA 0.32 m², Crr 0.005, bike mass 9 kg, g 9.81.
-struct FlatRoad {
-    k_aero: f64,
-    k_roll: f64,
-}
-
-impl FlatRoad {
-    fn new(rider_kg: f64) -> Self {
-        let mass = rider_kg.max(0.0) + 9.0;
-        FlatRoad {
-            k_aero: 0.5 * 1.225 * 0.32,
-            k_roll: 0.005 * mass * 9.81,
-        }
-    }
-
-    fn speed_ms(&self, power_w: f64) -> f64 {
-        if power_w <= 0.0 {
-            return 0.0;
-        }
-        let mut v = 8.0; // m/s starting guess
-        for _ in 0..25 {
-            let fx = self.k_aero * v * v * v + self.k_roll * v - power_w;
-            let dfx = 3.0 * self.k_aero * v * v + self.k_roll;
-            let next = v - fx / dfx;
-            v = if next > 0.0 { next } else { v / 2.0 };
-        }
-        v.max(0.0)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
@@ -421,7 +450,7 @@ impl FlatRoad {
 mod tests {
     use super::*;
     use crate::fit::FitActivity;
-    use crate::journal::{JournalHeader, Lap, Sample, SessionEvent, SessionEventKind};
+    use crate::journal::{ActivitySegment, JournalHeader, Sample, SessionEvent, SessionEventKind};
     use crate::metrics::SessionTotals;
 
     // -- minimal FIT decoder ------------------------------------------------
@@ -533,6 +562,7 @@ mod tests {
             workout_name: "2x20".into(),
             ftp_w: 250,
             weight_kg: 75.0,
+            record_distance: false,
             trainer: Some("KICKR".into()),
             hrm: Some("HRM-Dual".into()),
             app_ver: "1.2.3".into(),
@@ -574,16 +604,16 @@ mod tests {
         };
         vec![
             e(0, SessionEventKind::Start, None),
-            e(5_000, SessionEventKind::Lap, Some(0)),
+            e(5_000, SessionEventKind::WorkoutSegmentEnd, Some(0)),
             e(9_500, SessionEventKind::Pause, None),
             e(14_500, SessionEventKind::Resume, None),
             e(19_500, SessionEventKind::End, None),
         ]
     }
 
-    fn laps() -> Vec<Lap> {
+    fn laps() -> Vec<ActivitySegment> {
         vec![
-            Lap {
+            ActivitySegment {
                 start_ms: 0,
                 end_ms: 5_000,
                 timer_ms: 5_000,
@@ -594,7 +624,7 @@ mod tests {
                 average_cadence_rpm: Some(90),
                 calories_kcal: 1,
             },
-            Lap {
+            ActivitySegment {
                 start_ms: 5_000,
                 end_ms: 19_500,
                 timer_ms: 9_500,
@@ -625,18 +655,25 @@ mod tests {
     }
 
     fn encode(record_distance: bool) -> Vec<u8> {
-        let h = header();
+        let mut h = header();
+        h.record_distance = record_distance;
         let s = samples();
         let e = events();
         let l = laps();
         let t = totals();
+        let data = crate::journal::SessionRecording {
+            header: h.clone(),
+            samples: s.clone(),
+            events: e.clone(),
+        };
+        let motion = record_distance.then(|| crate::motion::replay_motion(&data, &l));
         encode_activity(&FitActivity {
             header: &h,
             samples: &s,
             events: &e,
             laps: &l,
             totals: &t,
-            record_distance,
+            motion: motion.as_ref(),
         })
         .unwrap()
     }
@@ -818,9 +855,9 @@ mod tests {
         assert_eq!(s.uint(p::SESSION_SPORT), 2, "cycling");
         assert_eq!(s.uint(p::SESSION_SUB_SPORT), 6, "indoor_cycling");
         assert_eq!(s.uint(p::SESSION_START_TIME), TS0);
-        assert_eq!(s.uint(p::SESSION_TIMESTAMP), TS0 + 20);
-        assert_eq!(s.uint(p::SESSION_TOTAL_ELAPSED_TIME), 20_000);
-        assert_eq!(s.uint(p::SESSION_TOTAL_TIMER_TIME), 15_000);
+        assert_eq!(s.uint(p::SESSION_TIMESTAMP), TS0 + 19);
+        assert_eq!(s.uint(p::SESSION_TOTAL_ELAPSED_TIME), 19_500);
+        assert_eq!(s.uint(p::SESSION_TOTAL_TIMER_TIME), 14_500);
         assert_eq!(s.uint(p::SESSION_AVG_POWER), 205);
         assert_eq!(s.uint(p::SESSION_MAX_POWER), 210);
         assert_eq!(s.uint(p::SESSION_AVG_HEART_RATE), 142);
@@ -840,13 +877,13 @@ mod tests {
         let msgs = decode(&encode(false));
         let a = msgs.last().unwrap();
         assert_eq!(a.global, p::MSG_ACTIVITY);
-        assert_eq!(a.uint(p::ACTIVITY_TIMESTAMP), TS0 + 20);
-        assert_eq!(a.uint(p::ACTIVITY_TOTAL_TIMER_TIME), 15_000);
+        assert_eq!(a.uint(p::ACTIVITY_TIMESTAMP), TS0 + 19);
+        assert_eq!(a.uint(p::ACTIVITY_TOTAL_TIMER_TIME), 14_500);
         assert_eq!(a.uint(p::ACTIVITY_NUM_SESSIONS), 1);
         assert_eq!(a.uint(p::ACTIVITY_TYPE), 0, "manual");
         assert_eq!(a.uint(p::ACTIVITY_EVENT), 26, "activity");
         assert_eq!(a.uint(p::ACTIVITY_EVENT_TYPE), 1, "stop");
-        assert_eq!(a.uint(p::ACTIVITY_LOCAL_TIMESTAMP), TS0 + 20);
+        assert_eq!(a.uint(p::ACTIVITY_LOCAL_TIMESTAMP), TS0 + 19);
     }
 
     // -- record_distance toggle ---------------------------------------------
@@ -870,14 +907,14 @@ mod tests {
         for r in &recs {
             let speed = r.uint(p::RECORD_SPEED);
             let dist = r.uint(p::RECORD_DISTANCE);
-            assert!(speed > 0, "positive speed at >0 W");
+            assert!(speed < p::INVALID_UINT16 as u64);
             assert!(dist >= prev, "distance monotonic");
-            assert!(dist > 0);
             prev = dist;
         }
-        // ~200 W on the flat should be plausibly 7–13 m/s
+        // First sample is at rest; later records accelerate.
         let v0 = recs[0].uint(p::RECORD_SPEED) as f64 / 1000.0;
-        assert!((5.0..15.0).contains(&v0), "plausible speed, got {v0} m/s");
+        assert_eq!(v0, 0.0);
+        assert!(recs.last().unwrap().uint(p::RECORD_SPEED) > 0);
     }
 
     // -- edge cases ---------------------------------------------------------
@@ -896,7 +933,7 @@ mod tests {
             events: &e,
             laps: &l,
             totals: &t,
-            record_distance: false,
+            motion: None,
         });
         assert!(err.is_err());
     }
@@ -927,7 +964,7 @@ mod tests {
             events: &[],
             laps: &[],
             totals: &t,
-            record_distance: false,
+            motion: None,
         })
         .unwrap();
         assert_eq!(crc::checksum(&buf), 0);
@@ -967,7 +1004,7 @@ mod tests {
             events: &[],
             laps: &[],
             totals: &t,
-            record_distance: false,
+            motion: None,
         })
         .unwrap();
         let msgs = decode(&buf);
@@ -990,7 +1027,7 @@ mod tests {
             events: &[],
             laps: &[],
             totals: &t,
-            record_distance: false,
+            motion: None,
         })
         .unwrap();
         let msgs = decode(&buf);

@@ -14,14 +14,14 @@
 // land on the interval — including intervals already ridden.
 
 import { useEffect, useRef, useState } from "react";
-import { RideTracePoint, SegmentRow, fmtDuration } from "../ipc";
+import { RideTracePoint, WorkoutSegmentRow, fmtDuration } from "../ipc";
 
 interface Props {
   graph: [number, number][];
   durationS: number;
   progressS?: number;
   height?: number;
-  segments?: SegmentRow[];
+  segments?: WorkoutSegmentRow[];
   /** FTP in watts. Supplied to draw a watt scale over the profile. */
   ftp?: number;
   /** Segment being ridden right now. Selected — and described — unless the
@@ -89,7 +89,7 @@ export function wattsFromPct(pct: number, ftp: number): number {
   return Math.round((pct / 100) * ftp);
 }
 
-export function segmentText(s: SegmentRow, ftp?: number): string {
+export function segmentText(s: WorkoutSegmentRow, ftp?: number): string {
   if (s.kind === "freeride") {
     const cad = s.cadence_rpm != null ? ` · ${s.cadence_rpm} rpm` : "";
     return `${s.label} — ${fmtDuration(s.duration_s)} · open${cad}`;

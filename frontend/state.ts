@@ -16,7 +16,7 @@ import {
   PlayerState,
   Role,
   ScanResult,
-  SegmentResult,
+  WorkoutSegmentResult,
   Settings,
   PlayerMeasurement,
   RideTracePoint,
@@ -25,7 +25,7 @@ import {
 } from "./ipc";
 import {
   appendAppMessage,
-  appendSegmentResult,
+  appendWorkoutSegmentResult,
   clearExpectedUserPhase,
   createRideTimelineState,
   observePlayerState,
@@ -67,7 +67,7 @@ export interface WorkoutDetailView {
   tags: string;
   origin?: string | null;
   graph: [number, number][];
-  segments: import("./ipc").SegmentRow[];
+  segments: import("./ipc").WorkoutSegmentRow[];
 }
 
 export interface Toast {
@@ -383,9 +383,9 @@ export async function wireEvents(): Promise<void> {
     }));
   });
 
-  await listen<SegmentResult>("segment_result", (e) => {
+  await listen<WorkoutSegmentResult>("workout_segment_result", (e) => {
     s.setState((state) => ({
-      rideTimeline: appendSegmentResult(state.rideTimeline, e.payload),
+      rideTimeline: appendWorkoutSegmentResult(state.rideTimeline, e.payload),
     }));
   });
 

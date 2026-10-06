@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
+use tp_core::model::{ExecutableWorkout, PowerTarget, WorkoutSegment};
 
 use crate::app_error::AppError;
 use crate::player_runtime::PlayerState;
@@ -36,7 +36,7 @@ pub struct WozWorkout {
     pub est_if: f64,
     pub est_tss: f64,
     pub graph: Vec<(u32, f64)>,
-    pub segments: Vec<crate::commands::workout::SegmentRow>,
+    pub segments: Vec<crate::commands::workout::WorkoutSegmentRow>,
 }
 
 async fn fetch(path: &str) -> Result<String, AppError> {
@@ -181,8 +181,8 @@ fn split_steps(body: &str) -> Vec<String> {
 }
 
 /// Parse one step ("2min @ 105rpm, 95% FTP" / "5min from 40 to 105% FTP" /
-/// "10min free ride" / "30sec MAX") into a Segment.
-fn parse_step(step: &str) -> Option<Segment> {
+/// "10min free ride" / "30sec MAX") into a WorkoutSegment.
+fn parse_step(step: &str) -> Option<WorkoutSegment> {
     let dur = parse_duration(step)?;
     if dur == 0 {
         return None;
@@ -194,7 +194,7 @@ fn parse_step(step: &str) -> Option<Segment> {
         .and_then(|c| c[1].parse::<u16>().ok());
 
     if lower.contains("free ride") || lower.contains("freeride") {
-        return Some(Segment::FreeRide {
+        return Some(WorkoutSegment::FreeRide {
             duration_s: dur,
             cadence_rpm: None,
         });
@@ -205,7 +205,7 @@ fn parse_step(step: &str) -> Option<Segment> {
     {
         let a: f64 = cap[1].parse().ok()?;
         let b: f64 = cap[2].parse().ok()?;
-        return Some(Segment::Ramp {
+        return Some(WorkoutSegment::Ramp {
             duration_s: dur,
             start: PowerTarget::PercentFtp(a / 100.0),
             end: PowerTarget::PercentFtp(b / 100.0),
@@ -213,7 +213,7 @@ fn parse_step(step: &str) -> Option<Segment> {
         });
     }
     if lower.contains("max") {
-        return Some(Segment::Steady {
+        return Some(WorkoutSegment::Steady {
             duration_s: dur,
             power: PowerTarget::PercentFtp(1.5),
             cadence_rpm: cadence,
@@ -224,7 +224,7 @@ fn parse_step(step: &str) -> Option<Segment> {
         .captures(&lower)
     {
         let p: f64 = cap[1].parse().ok()?;
-        return Some(Segment::Steady {
+        return Some(WorkoutSegment::Steady {
             duration_s: dur,
             power: PowerTarget::PercentFtp(p / 100.0),
             cadence_rpm: cadence,
@@ -234,13 +234,14 @@ fn parse_step(step: &str) -> Option<Segment> {
 }
 
 /// Parse one textbar line, expanding an optional "Nx " repeat prefix.
-pub fn parse_textbar(line: &str) -> Option<Vec<Segment>> {
+pub fn parse_textbar(line: &str) -> Option<Vec<WorkoutSegment>> {
     let line = line.trim();
     let (reps, body) = match regex::Regex::new(r"^(\d+)x\s+(.*)$").unwrap().captures(line) {
         Some(cap) => (cap[1].parse::<u32>().ok()?.clamp(1, 100), cap[2].to_string()),
         None => (1, line.to_string()),
     };
-    let steps: Option<Vec<Segment>> = split_steps(&body).iter().map(|s| parse_step(s)).collect();
+    let steps: Option<Vec<WorkoutSegment>> =
+        split_steps(&body).iter().map(|s| parse_step(s)).collect();
     let steps = steps?;
     if steps.is_empty() {
         return None;
@@ -276,7 +277,7 @@ pub fn parse_collection_page(html: &str) -> Vec<(String, ExecutableWorkout)> {
     let mut out = Vec::new();
     for (title, start, end) in sections {
         let slice = &html[start..end];
-        let mut segments: Vec<Segment> = Vec::new();
+        let mut segments: Vec<WorkoutSegment> = Vec::new();
         let mut ok = true;
         let mut any = false;
         for cap in bar.captures_iter(slice) {
@@ -509,10 +510,18 @@ mod tests {
     #[test]
     fn parses_steady_ramp_freeride_max() {
         let segs = parse_textbar("5min from 40 to 105% FTP").unwrap();
-        assert!(matches!(segs[0], Segment::Ramp { duration_s: 300, .. }));
+        assert!(matches!(
+            segs[0],
+            WorkoutSegment::Ramp {
+                duration_s: 300,
+                ..
+            }
+        ));
         let segs = parse_textbar("2min @ 50% FTP").unwrap();
         match &segs[0] {
-            Segment::Steady { duration_s, power, .. } => {
+            WorkoutSegment::Steady {
+                duration_s, power, ..
+            } => {
                 assert_eq!(*duration_s, 120);
                 assert_eq!(power.resolve(200, 1.0), 100);
             }
@@ -520,14 +529,14 @@ mod tests {
         }
         assert!(matches!(
             parse_textbar("10min free ride").unwrap()[0],
-            Segment::FreeRide {
+            WorkoutSegment::FreeRide {
                 duration_s: 600,
                 cadence_rpm: None,
             }
         ));
         let segs = parse_textbar("30sec MAX").unwrap();
         match &segs[0] {
-            Segment::Steady { power, .. } => assert_eq!(power.resolve(200, 1.0), 300),
+            WorkoutSegment::Steady { power, .. } => assert_eq!(power.resolve(200, 1.0), 300),
             other => panic!("{other:?}"),
         }
     }
@@ -539,7 +548,11 @@ mod tests {
         let segs = parse_textbar("4x 30sec @ 105rpm, 95% FTP, 30sec @ 85rpm, 55% FTP").unwrap();
         assert_eq!(segs.len(), 8);
         match &segs[0] {
-            Segment::Steady { duration_s, power, cadence_rpm } => {
+            WorkoutSegment::Steady {
+                duration_s,
+                power,
+                cadence_rpm,
+            } => {
                 assert_eq!(*duration_s, 30);
                 assert_eq!(power.resolve(100, 1.0), 95);
                 assert_eq!(*cadence_rpm, Some(105));
@@ -547,7 +560,9 @@ mod tests {
             other => panic!("{other:?}"),
         }
         match &segs[1] {
-            Segment::Steady { power, cadence_rpm, .. } => {
+            WorkoutSegment::Steady {
+                power, cadence_rpm, ..
+            } => {
                 assert_eq!(power.resolve(100, 1.0), 55);
                 assert_eq!(*cadence_rpm, Some(85));
             }
@@ -558,7 +573,10 @@ mod tests {
     #[test]
     fn compound_duration_and_reject_running_pace() {
         let segs = parse_textbar("1min 30sec @ 80% FTP").unwrap();
-        assert!(matches!(segs[0], Segment::Steady { duration_s: 90, .. }));
+        assert!(matches!(
+            segs[0],
+            WorkoutSegment::Steady { duration_s: 90, .. }
+        ));
         // Running lines (no % FTP) must fail → workout skipped.
         assert!(parse_textbar("2min @ 80% 5k pace").is_none());
     }

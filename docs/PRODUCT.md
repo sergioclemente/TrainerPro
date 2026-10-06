@@ -37,15 +37,31 @@ is not primarily a calendar, file manager, or large workout-catalog product.
 
 ## Vocabulary
 
+### Workout definitions
+
 | Term | Meaning |
 |---|---|
 | **Workout definition** | An undated structured prescription containing steps, targets, repetitions, cues, and training metadata. |
+| **Workout segment** | A prescribed interval in the executable workout, with its duration and targets. |
+| **Training-focus tag** | Athlete-facing intent such as Recovery Ride, Endurance Base, Threshold, or VO2 Max. |
+
+### Planning and execution
+
+| Term | Meaning |
+|---|---|
+| **Provider connection** | An authorized external account together with its capabilities and sync health. |
 | **Scheduled workout** | A workout definition placed on a date or time by a planning authority, with ownership and sync identity. |
 | **Workout recommendation** | An uncommitted suggestion. Starting it does not place it on a calendar. |
-| **Training-focus tag** | Athlete-facing intent such as Recovery Ride, Endurance Base, Threshold, or VO2 Max. |
 | **Workout session** | One live execution of a snapshotted workout, including pause state and adjustments. |
+| **Workout segment result** | The outcome of one attempt at a workout segment, including entirely skipped attempts that need not produce an activity segment. |
+
+### Recorded activities and export
+
+| Term | Meaning |
+|---|---|
 | **Activity** | The recorded historical result of a session. FIT is an export representation, not the entity itself. |
-| **Provider connection** | An authorized external account together with its capabilities and sync health. |
+| **Activity segment** | A recorded portion of a ride, with actual timing and measurements; revisiting a workout segment can produce another activity segment. |
+| **FIT lap** | The export representation of an activity segment. |
 
 There is no persisted queue or `NextUp` entity. Next Up is a read model composed
 from scheduled workouts and recommendations.

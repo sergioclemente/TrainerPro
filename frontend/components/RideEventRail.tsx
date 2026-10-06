@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { PlayerState, SegmentResult, SegmentRow } from "../ipc";
+import type { PlayerState, WorkoutSegmentResult, WorkoutSegmentRow } from "../ipc";
 import { fmtDuration } from "../ipc";
 import type { RideTimelineItem } from "../rideTimeline";
 import { useStore } from "../state";
@@ -35,7 +35,7 @@ function ordinal(n: number): string {
   }
 }
 
-function segmentSummary(result: SegmentResult, segment?: SegmentRow): string {
+function segmentSummary(result: WorkoutSegmentResult, segment?: WorkoutSegmentRow): string {
   const duration = result.skipped
     ? `${formatTimelineDuration(result.ridden_duration_s)} / ${formatTimelineDuration(result.planned_duration_s)}`
     : formatTimelineDuration(result.planned_duration_s);
@@ -46,7 +46,7 @@ function segmentSummary(result: SegmentResult, segment?: SegmentRow): string {
     : `${duration} @ ${result.average_power_w} W`;
 }
 
-function zoneStyle(segment?: SegmentRow): CSSProperties {
+function zoneStyle(segment?: WorkoutSegmentRow): CSSProperties {
   const startColor = segment ? zoneColor(segment.start_pct) : "#30363d";
   const endColor = segment ? zoneColor(segment.end_pct) : startColor;
   return {
@@ -55,7 +55,7 @@ function zoneStyle(segment?: SegmentRow): CSSProperties {
   } as CSSProperties;
 }
 
-function SegmentCard({ result, segment }: { result: SegmentResult; segment?: SegmentRow }) {
+function SegmentCard({ result, segment }: { result: WorkoutSegmentResult; segment?: WorkoutSegmentRow }) {
   return (
     <div
       className={`timeline-bubble timeline-segment ${result.skipped ? "skipped" : ""}`}
@@ -81,7 +81,7 @@ function SegmentCard({ result, segment }: { result: SegmentResult; segment?: Seg
 /** The interval being ridden, in the same shape as the finished cards above
     it but reading the plan (targets) rather than a result, so the history
     ends at "now" instead of one step behind the metrics. */
-function CurrentSegmentCard({ player, segment }: { player: PlayerState; segment?: SegmentRow }) {
+function CurrentSegmentCard({ player, segment }: { player: PlayerState; segment?: WorkoutSegmentRow }) {
   const index = player.seg_idx!;
   const duration = segment
     ? formatTimelineDuration(segment.duration_s)
@@ -111,7 +111,7 @@ function CurrentSegmentCard({ player, segment }: { player: PlayerState; segment?
 
 function TimelineEntry({ item, segments }: {
   item: RideTimelineItem;
-  segments: SegmentRow[];
+  segments: WorkoutSegmentRow[];
 }) {
   if (item.kind === "user-action") {
     return (
@@ -146,7 +146,7 @@ function readCollapsed(): boolean {
   }
 }
 
-export default function RideEventRail({ segments }: { segments: SegmentRow[] }) {
+export default function RideEventRail({ segments }: { segments: WorkoutSegmentRow[] }) {
   const items = useStore((state) => state.rideTimeline.items);
   const player = useStore((state) => state.player);
   const feedRef = useRef<HTMLDivElement>(null);

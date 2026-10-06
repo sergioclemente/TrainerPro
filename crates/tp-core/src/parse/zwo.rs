@@ -19,7 +19,7 @@ use roxmltree::Node;
 
 use super::{ParseError, ParseWarning, Parsed, SourceFormat};
 use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN, TEXT_EVENT_DEFAULT_S};
-use crate::model::{ExecutableWorkout, PowerTarget, Segment, TextEvent};
+use crate::model::{ExecutableWorkout, PowerTarget, TextEvent, WorkoutSegment};
 use crate::workout_definition::midpoint;
 
 pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
@@ -55,7 +55,7 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
         .find(|n| n.is_element() && n.tag_name().name() == "workout")
         .ok_or_else(|| ParseError::Invalid("missing <workout> element".into()))?;
 
-    let mut segments: Vec<Segment> = Vec::new();
+    let mut segments: Vec<WorkoutSegment> = Vec::new();
     let mut text_events: Vec<TextEvent> = Vec::new();
     let mut elapsed_s: u32 = 0;
 
@@ -74,7 +74,7 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                     &["Duration", "Power", "Cadence", "CadenceLow", "CadenceHigh"],
                     &mut warnings,
                 );
-                segments.push(Segment::Steady {
+                segments.push(WorkoutSegment::Steady {
                     duration_s,
                     power,
                     cadence_rpm,
@@ -110,12 +110,12 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                     &mut warnings,
                 );
                 for _ in 0..repeat {
-                    segments.push(Segment::Steady {
+                    segments.push(WorkoutSegment::Steady {
                         duration_s: on_s,
                         power: on_power,
                         cadence_rpm: on_cadence,
                     });
-                    segments.push(Segment::Steady {
+                    segments.push(WorkoutSegment::Steady {
                         duration_s: off_s,
                         power: off_power,
                         cadence_rpm: off_cadence,
@@ -150,7 +150,7 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                 } else {
                     (low, high)
                 };
-                segments.push(Segment::Ramp {
+                segments.push(WorkoutSegment::Ramp {
                     duration_s,
                     start,
                     end,
@@ -169,7 +169,7 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                     &["Duration", "Cadence", "CadenceLow", "CadenceHigh"],
                     &mut warnings,
                 );
-                segments.push(Segment::FreeRide {
+                segments.push(WorkoutSegment::FreeRide {
                     duration_s,
                     cadence_rpm,
                 });
@@ -185,7 +185,7 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                             "unknown element <{other}> at {}: mapped to Steady at 100 % FTP for {duration_s} s",
                             pos(el)
                         )));
-                        segments.push(Segment::Steady {
+                        segments.push(WorkoutSegment::Steady {
                             duration_s,
                             power: PowerTarget::PercentFtp(1.0),
                             cadence_rpm: None,
@@ -497,7 +497,7 @@ mod tests {
         let parsed = parse_zwo(FULL).unwrap();
         assert_eq!(
             parsed.workout.segments[1],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 300,
                 power: pf(0.88),
                 cadence_rpm: Some(95),
@@ -510,7 +510,7 @@ mod tests {
         let parsed = parse_zwo(FULL).unwrap();
         assert_eq!(
             parsed.workout.segments[0],
-            Segment::Ramp {
+            WorkoutSegment::Ramp {
                 duration_s: 600,
                 start: pf(0.40),
                 end: pf(0.75),
@@ -524,7 +524,7 @@ mod tests {
         let parsed = parse_zwo(FULL).unwrap();
         assert_eq!(
             parsed.workout.segments[8],
-            Segment::Ramp {
+            WorkoutSegment::Ramp {
                 duration_s: 120,
                 start: pf(0.50),
                 end: pf(0.90),
@@ -538,7 +538,7 @@ mod tests {
         let parsed = parse_zwo(FULL).unwrap();
         assert_eq!(
             parsed.workout.segments[10],
-            Segment::Ramp {
+            WorkoutSegment::Ramp {
                 duration_s: 600,
                 start: pf(0.70),
                 end: pf(0.35),
@@ -553,7 +553,7 @@ mod tests {
         let p = parse_zwo(xml).unwrap();
         assert_eq!(
             p.workout.segments,
-            vec![Segment::FreeRide {
+            vec![WorkoutSegment::FreeRide {
                 duration_s: 300,
                 cadence_rpm: Some(90),
             }]
@@ -568,7 +568,7 @@ mod tests {
         let parsed = parse_zwo(FULL).unwrap();
         assert_eq!(
             parsed.workout.segments[9],
-            Segment::FreeRide {
+            WorkoutSegment::FreeRide {
                 duration_s: 300,
                 cadence_rpm: None,
             }
@@ -578,12 +578,12 @@ mod tests {
     #[test]
     fn intervalst_expands_repeat_with_cadences() {
         let parsed = parse_zwo(FULL).unwrap();
-        let on = Segment::Steady {
+        let on = WorkoutSegment::Steady {
             duration_s: 60,
             power: pf(1.15),
             cadence_rpm: Some(100),
         };
-        let off = Segment::Steady {
+        let off = WorkoutSegment::Steady {
             duration_s: 120,
             power: pf(0.55),
             cadence_rpm: Some(85),
@@ -680,7 +680,7 @@ mod tests {
         assert_eq!(parsed.workout.segments.len(), 3);
         assert_eq!(
             parsed.workout.segments[1],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 30,
                 power: pf(1.0),
                 cadence_rpm: None,
@@ -717,7 +717,7 @@ mod tests {
         let parsed = parse_zwo(xml).unwrap();
         assert_eq!(
             parsed.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: pf(3.0),
                 cadence_rpm: None,
@@ -725,7 +725,7 @@ mod tests {
         );
         assert_eq!(
             parsed.workout.segments[1],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: pf(0.05),
                 cadence_rpm: None,
@@ -744,7 +744,7 @@ mod tests {
         let parsed = parse_zwo(xml).unwrap();
         assert_eq!(
             parsed.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: pf(0.05),
                 cadence_rpm: None,
@@ -773,7 +773,7 @@ mod tests {
         let parsed = parse_zwo(xml).unwrap();
         assert_eq!(
             parsed.workout.segments[0],
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: pf(0.5),
                 cadence_rpm: None,
@@ -804,9 +804,9 @@ mod tests {
             .segments
             .iter()
             .map(|s| match s {
-                Segment::Steady { cadence_rpm, .. }
-                | Segment::Ramp { cadence_rpm, .. }
-                | Segment::FreeRide { cadence_rpm, .. } => *cadence_rpm,
+                WorkoutSegment::Steady { cadence_rpm, .. }
+                | WorkoutSegment::Ramp { cadence_rpm, .. }
+                | WorkoutSegment::FreeRide { cadence_rpm, .. } => *cadence_rpm,
             })
             .collect();
         assert_eq!(
@@ -955,7 +955,7 @@ mod tests {
 #[cfg(test)]
 mod writer_tests {
     use super::*;
-    use crate::model::{ExecutableWorkout, PowerTarget, Segment, TextEvent};
+    use crate::model::{ExecutableWorkout, PowerTarget, TextEvent, WorkoutSegment};
 
     #[test]
     fn to_zwo_roundtrips_through_parse_zwo() {
@@ -963,22 +963,22 @@ mod writer_tests {
             name: "RT <&> test".into(),
             description: "desc".into(),
             segments: vec![
-                Segment::Ramp {
+                WorkoutSegment::Ramp {
                     duration_s: 300,
                     start: PowerTarget::PercentFtp(0.40),
                     end: PowerTarget::PercentFtp(1.05),
                     cadence_rpm: None,
                 },
-                Segment::Steady {
+                WorkoutSegment::Steady {
                     duration_s: 120,
                     power: PowerTarget::PercentFtp(0.50),
                     cadence_rpm: Some(90),
                 },
-                Segment::FreeRide {
+                WorkoutSegment::FreeRide {
                     duration_s: 60,
                     cadence_rpm: None,
                 },
-                Segment::Ramp {
+                WorkoutSegment::Ramp {
                     duration_s: 300,
                     start: PowerTarget::PercentFtp(0.70),
                     end: PowerTarget::PercentFtp(0.40),
@@ -994,7 +994,7 @@ mod writer_tests {
         assert_eq!(parsed.workout.segments.len(), w.segments.len());
         // Descending ramp keeps its direction.
         match &parsed.workout.segments[3] {
-            Segment::Ramp { start, end, .. } => {
+            WorkoutSegment::Ramp { start, end, .. } => {
                 assert_eq!(start.resolve(200, 1.0), 140);
                 assert_eq!(end.resolve(200, 1.0), 80);
             }
@@ -1044,16 +1044,29 @@ pub fn to_zwo(w: &ExecutableWorkout) -> String {
             if inner.is_empty() { "/>".to_string() } else { format!(">{inner}\n        </{tag}>") }
         };
         match seg {
-            Segment::Steady { duration_s, power, cadence_rpm } => {
-                let cad = cadence_rpm.map(|c| format!(" Cadence=\"{c}\"")).unwrap_or_default();
+            WorkoutSegment::Steady {
+                duration_s,
+                power,
+                cadence_rpm,
+            } => {
+                let cad = cadence_rpm
+                    .map(|c| format!(" Cadence=\"{c}\""))
+                    .unwrap_or_default();
                 out.push_str(&format!(
                     "        <SteadyState Duration=\"{duration_s}\" Power=\"{}\"{cad}{}\n",
                     frac(power),
                     close("SteadyState", &texts)
                 ));
             }
-            Segment::Ramp { duration_s, start, end, cadence_rpm } => {
-                let cad = cadence_rpm.map(|c| format!(" Cadence=\"{c}\"")).unwrap_or_default();
+            WorkoutSegment::Ramp {
+                duration_s,
+                start,
+                end,
+                cadence_rpm,
+            } => {
+                let cad = cadence_rpm
+                    .map(|c| format!(" Cadence=\"{c}\""))
+                    .unwrap_or_default();
                 out.push_str(&format!(
                     "        <Ramp Duration=\"{duration_s}\" PowerLow=\"{}\" PowerHigh=\"{}\"{cad}{}\n",
                     frac(start),
@@ -1061,8 +1074,13 @@ pub fn to_zwo(w: &ExecutableWorkout) -> String {
                     close("Ramp", &texts)
                 ));
             }
-            Segment::FreeRide { duration_s, cadence_rpm } => {
-                let cad = cadence_rpm.map(|c| format!(" Cadence=\"{c}\"")).unwrap_or_default();
+            WorkoutSegment::FreeRide {
+                duration_s,
+                cadence_rpm,
+            } => {
+                let cad = cadence_rpm
+                    .map(|c| format!(" Cadence=\"{c}\""))
+                    .unwrap_or_default();
                 out.push_str(&format!(
                     "        <FreeRide Duration=\"{duration_s}\"{cad}{}\n",
                     close("FreeRide", &texts)

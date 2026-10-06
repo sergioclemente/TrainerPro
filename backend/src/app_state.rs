@@ -170,7 +170,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             profile: Profile::default(),
-            record_distance: false,
+            record_distance: true,
             voice_enabled: default_voice_enabled(),
             intensity_default: 1.0,
             export_dir: None,
@@ -259,6 +259,18 @@ mod tests {
         conn.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
             .unwrap();
         conn
+    }
+
+    #[test]
+    fn distance_defaults_enabled_and_preserves_saved_choices() {
+        let conn = settings_connection();
+        assert!(load_settings(&conn).record_distance);
+        for enabled in [false, true] {
+            let mut settings = load_settings(&conn);
+            settings.record_distance = enabled;
+            save_settings(&conn, &settings).unwrap();
+            assert_eq!(load_settings(&conn).record_distance, enabled);
+        }
     }
 
     #[test]

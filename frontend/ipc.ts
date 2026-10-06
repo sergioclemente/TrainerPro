@@ -110,7 +110,8 @@ export interface RideTracePoint {
   cadence_rpm: number | null;
 }
 
-export interface SegmentResult {
+/** Live outcome of a workout-segment attempt, including entirely skipped attempts. */
+export interface WorkoutSegmentResult {
   workout_session_id: string;
   segment_index: number;
   /** 1-based: above 1 when a backward Go To re-rode this interval. */
@@ -122,7 +123,7 @@ export interface SegmentResult {
   skipped: boolean;
 }
 
-export interface LapRow {
+export interface ActivitySegmentRow {
   start_s: number;
   duration_s: number;
   average_power_w: number | null;
@@ -147,7 +148,7 @@ export interface ActivitySummary {
   work_kj: number;
   completed_pct: number;
   fit_path: string;
-  laps: LapRow[];
+  activity_segments: ActivitySegmentRow[];
 }
 
 export interface ActivityRow {
@@ -232,7 +233,7 @@ export interface PlanSyncReport {
   newest_date_local: string;
 }
 
-export interface SegmentRow {
+export interface WorkoutSegmentRow {
   kind: "steady" | "ramp" | "freeride";
   label: string;
   note: string | null;
@@ -244,14 +245,14 @@ export interface SegmentRow {
 
 export interface WorkoutDetail {
   summary: WorkoutSummary;
-  segments: SegmentRow[];
+  segments: WorkoutSegmentRow[];
 }
 
 /** Immutable workout profile captured when this player session was loaded. */
 export interface PlayerWorkoutProfile {
   workout_session_id: string;
   graph: [number, number][];
-  segments: SegmentRow[];
+  segments: WorkoutSegmentRow[];
   ftp_w: number;
 }
 
@@ -261,7 +262,7 @@ export interface PlannerPreview {
   duration_s: number;
   est_if: number;
   est_tss: number;
-  segments: SegmentRow[];
+  segments: WorkoutSegmentRow[];
 }
 
 export interface PlannerWorkout {
@@ -292,7 +293,7 @@ export interface WozWorkout {
   est_if: number;
   est_tss: number;
   graph: [number, number][];
-  segments: SegmentRow[];
+  segments: WorkoutSegmentRow[];
 }
 
 

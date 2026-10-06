@@ -41,7 +41,8 @@ wall-clock access. It owns:
 - executable workout and target calculations;
 - the workout engine state machine and effects;
 - journal parsing and aggregation;
-- NP, IF, TSS, zones, and related metrics; and
+- NP, IF, TSS, zones, and related metrics;
+- flat-road motion integration and replay for estimated speed/distance; and
 - FIT encoding.
 
 ### `tp-ble`
@@ -184,9 +185,19 @@ heart-rate path.
 
 Starting creates a session ID and snapshots the TPW definition. Runtime samples
 and control events append to a crash-safe JSONL journal. Ending replays the
-journal, computes summaries and laps, writes FIT, and inserts the Activity in
-one application flow. Activities retain the snapshot and optional schedule
-identity so later edits or provider disconnects cannot rewrite history.
+journal, computes summaries, activity segments, and an optional motion trace,
+writes FIT, and inserts the Activity in one application flow. Activities retain
+the snapshot and optional schedule identity so later edits or provider disconnects
+cannot rewrite history.
+
+Motion replay uses the journal's snapshotted distance preference and rider weight.
+The pure motion calculation owns energy and accumulated distance; speed is derived
+from energy. FIT serialization consumes the shared trace for records, activity
+segments, and session totals.
+Recording skips missed timer ticks, while replay bounds sample duration to avoid
+crediting overlapping time in older or delayed recordings.
+
+Domain terms are defined in the [product vocabulary](PRODUCT.md#vocabulary).
 
 ## Architectural decisions
 
