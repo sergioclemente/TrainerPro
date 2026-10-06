@@ -7,7 +7,7 @@ import WorkoutGraph from "../components/WorkoutGraph";
 import { SOURCES } from "../sources";
 
 export default function Library() {
-  const { workouts, refreshWorkouts, pushToast, settings } = useStore();
+  const { workouts, refreshWorkouts, refreshNextUp, pushToast, settings } = useStore();
   const [tab, setTab] = useState<string>("local");
 
   // Tabs = the built-in local grid + every enabled provider. A source disabled
@@ -66,7 +66,9 @@ export default function Library() {
     if (!confirm(`Delete workout “${name}”?`)) return;
     try {
       await ipc.deleteWorkout(id);
-      await refreshWorkouts();
+      // Next Up is cached in the store and only reloads when its section
+      // mounts; a deleted workout would otherwise linger there.
+      await Promise.all([refreshWorkouts(), refreshNextUp()]);
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
     }

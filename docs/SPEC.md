@@ -125,9 +125,13 @@ Keyboard controls are hold Space for push-to-talk, `S` for skip, and Up/Down
 for intensity. Space does not start, pause, or resume a workout. Display power uses a three-second rolling average; recording retains
 the unsmoothed measurement stream. The player graph draws the ridden power from
 the same one-second samples the journal records, and shows each interval's
-cadence target against an rpm scale on its right edge. Open intervals (free
-ride, no power target) draw as a hatched placeholder block rather than a zone
-bar; they may carry a cadence target, and the Player labels them "open".
+cadence target against an rpm scale on its right edge. When the workout
+prescribes cadence, the ridden cadence draws on that rpm scale too; a workout
+without cadence targets shows neither the scale nor the line. The progress cursor
+rises to the top of the interval it is in, not the top of the graph. Open
+intervals (free ride, no power target) draw as a hatched placeholder block
+rather than a zone bar; they may carry a cadence target, and the Player labels
+them "open".
 
 Loss of trainer control pauses the ride and starts reconnect attempts. Recovery
 reapplies control state and the current target, but never resumes the timer
@@ -259,4 +263,9 @@ missing bundled models report a source-specific error without blocking the Playe
 
 The workout rail retains device indicators and a session-only timeline. UI and
 voice actions share user-aligned command labels; ride events align opposite.
-Unmatched attempts remain transient in the composer rather than filling history.
+The timeline ends with a card for the interval being ridden, showing its
+planned duration, target power, target cadence, and time left, so the history
+reads up to now rather than one interval behind the live metrics. The rail
+collapses to a slim strip from a handle halfway down its edge; the choice
+persists across rides. Unmatched attempts remain transient in the composer rather than
+filling history.

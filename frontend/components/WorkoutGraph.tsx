@@ -3,12 +3,13 @@
 // exactly two points per segment, so polygon i ↔ segment i. When `segments`
 // is provided (detail view), bars are hoverable with a step tooltip and each
 // interval's cadence target draws as a dashed marker on an rpm scale at the
-// right edge. The Player also passes the ridden `trace` (a line on the watt
-// scale) and an `onGoTo` handler, which turns right-click on a bar into a
-// "Go to" menu.
+// right edge. The Player also passes the ridden `trace` (power as a line on
+// the watt scale, cadence as a line on the rpm scale) and an `onGoTo`
+// handler, which turns right-click on a bar into a "Go to" menu. The
+// progress cursor rises only to the top of the interval it is in.
 //
 // Layer order, bottom to top: polygons, cadence markers, hit rects, progress
-// shading, trace, selection outline, HTML labels, tooltip, menu. Everything
+// shading, traces, selection outline, HTML labels, tooltip, menu. Everything
 // above the hit rects ignores the pointer, so hover and right-click always
 // land on the interval — including intervals already ridden.
 
@@ -56,9 +57,17 @@ const CADENCE_GRID_STEP_RPM = 20;
 /** Consecutive trace points further apart than this (a skip, a forward
     Go To) are not joined. Samples arrive once a second. */
 const TRACE_GAP_BREAK_S = 2;
+/** Ridden power, on the watt scale: pure white, the brightest thing drawn. */
+const POWER_TRACE_COLOR = "#ffffff";
 const TRACE_PASS_OPACITY = 0.9;
 /** Earlier passes over ground ridden again after a backward Go To. */
 const TRACE_OLD_PASS_OPACITY = 0.35;
+/** Ridden cadence, on the rpm scale. Light yellow belongs to no power zone
+    (threshold amber is much deeper), so the line cannot be mistaken for a
+    target or for the white power line. */
+const CADENCE_TRACE_COLOR = "#fff3a3";
+const CADENCE_TRACE_OPACITY = 0.85;
+const CADENCE_TRACE_OLD_PASS_OPACITY = 0.3;
 /** Menu box estimate, for flipping it away from the graph's edges. */
 const MENU_WIDTH_PX = 190;
 const MENU_HEIGHT_PX = 44;
@@ -120,13 +129,16 @@ export function splitTracePasses(trace: RideTracePoint[]): RideTracePoint[][] {
   return passes;
 }
 
-/** Runs of consecutive points that have power; a second without data breaks
-    the line rather than drawing through it. */
-function poweredRuns(pass: RideTracePoint[]): RideTracePoint[][] {
+/** Runs of consecutive points that carry `field`; a second without data
+    breaks the line rather than drawing through it. */
+function sampledRuns(
+  pass: RideTracePoint[],
+  field: "power_w" | "cadence_rpm",
+): RideTracePoint[][] {
   const runs: RideTracePoint[][] = [];
   let current: RideTracePoint[] = [];
   for (const point of pass) {
-    if (point.power_w === null) {
+    if (point[field] === null) {
       if (current.length > 0) runs.push(current);
       current = [];
     } else {
@@ -286,12 +298,44 @@ export default function WorkoutGraph({
   const passes = trace && ftp && ftp > 0 ? splitTracePasses(trace) : [];
   const traceY = (w: number) => Math.max(0, y((w / ftp!) * 100));
   const traceLines = passes.flatMap((pass, passIndex) =>
-    poweredRuns(pass).map((run, runIndex) => ({
+    sampledRuns(pass, "power_w").map((run, runIndex) => ({
       key: `t${passIndex}-${runIndex}`,
       points: run.map((p) => `${x(p.elapsed_s)},${traceY(p.power_w!)}`).join(" "),
       opacity: passIndex === passes.length - 1 ? TRACE_PASS_OPACITY : TRACE_OLD_PASS_OPACITY,
     })),
   );
+  // Ridden cadence on the rpm scale, split the same way. Only when the
+  // workout prescribes cadence: with no target to ride against, the line
+  // would be noise over the power trace.
+  const cadencePasses = showCadence ? splitTracePasses(trace ?? []) : [];
+  const cadenceLines = cadencePasses.flatMap((pass, passIndex) =>
+    sampledRuns(pass, "cadence_rpm").map((run, runIndex) => ({
+      key: `r${passIndex}-${runIndex}`,
+      points: run.map((p) => `${x(p.elapsed_s)},${cadenceY(p.cadence_rpm!)}`).join(" "),
+      opacity:
+        passIndex === cadencePasses.length - 1
+          ? CADENCE_TRACE_OPACITY
+          : CADENCE_TRACE_OLD_PASS_OPACITY,
+    })),
+  );
+  // The cursor's top: the plan's height where the ride is right now, so the
+  // line reads as "here, on this block" instead of a full-height divider.
+  // The interval being ridden is the first guess; a cursor parked on a
+  // boundary belongs to the block it is about to enter.
+  const cursorTop = (t: number): number => {
+    const within = (p: { t0: number; t1: number }) => t >= p.t0 && t <= p.t1;
+    const index =
+      activeIndex !== null && activeIndex < polys.length && within(polys[activeIndex])
+        ? activeIndex
+        : polys.findIndex(within);
+    if (index < 0) return 0;
+    const p = polys[index];
+    if (p.open) return openTop;
+    const [, p0] = graph[index * 2];
+    const [, p1] = graph[index * 2 + 1];
+    const span = Math.max(p.t1 - p.t0, 1);
+    return y(p0 + ((p1 - p0) * (t - p.t0)) / span);
+  };
   const ridden =
     hovered && selected !== null
       ? riddenSummary(passes, polys[selected].t0, polys[selected].t1)
@@ -432,17 +476,40 @@ export default function WorkoutGraph({
             opacity={0.35}
             pointerEvents="none"
           />
-          <line x1={x(progressS)} x2={x(progressS)} y1={0} y2={height} stroke="#e6edf3" strokeWidth={2} pointerEvents="none" />
+          <line
+            x1={x(progressS)}
+            x2={x(progressS)}
+            y1={cursorTop(progressS)}
+            y2={height}
+            stroke="#e6edf3"
+            strokeWidth={2}
+            pointerEvents="none"
+          />
         </>
       )}
-      {/* Over the progress shading so the ridden line stays bright where the
-          plan has been dimmed. Round caps let a one-second run show as a dot. */}
+      {/* Over the progress shading so the ridden lines stay bright where the
+          plan has been dimmed. Round caps let a one-second run show as a dot.
+          Cadence goes under power so the watts stay the dominant line. */}
+      {cadenceLines.map((l) => (
+        <polyline
+          key={l.key}
+          points={l.points}
+          fill="none"
+          stroke={CADENCE_TRACE_COLOR}
+          strokeOpacity={l.opacity}
+          strokeWidth={1.25}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+      ))}
       {traceLines.map((l) => (
         <polyline
           key={l.key}
           points={l.points}
           fill="none"
-          stroke="#e6edf3"
+          stroke={POWER_TRACE_COLOR}
           strokeOpacity={l.opacity}
           strokeWidth={1.5}
           strokeLinecap="round"

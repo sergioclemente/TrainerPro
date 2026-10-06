@@ -186,7 +186,8 @@ export default function WorkoutDetail() {
       return;
     try {
       await ipc.deleteWorkout(d.id!);
-      await useStore.getState().refreshWorkouts();
+      const { refreshWorkouts, refreshNextUp } = useStore.getState();
+      await Promise.all([refreshWorkouts(), refreshNextUp()]);
       go("library");
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));

@@ -3,6 +3,9 @@
 //! Contract highlights:
 //! - Power attributes are FTP fractions → `PowerTarget::PercentFtp`.
 //! - `IntervalsT` expands to Repeat × (Steady on, Steady off).
+//! - Cadence: `Cadence` is an exact rpm. `CadenceLow`/`CadenceHigh` (planner
+//!   and Zwift range spelling) collapse to their midpoint when `Cadence` is
+//!   absent, the same rule TPW applies when compiling a cadence range.
 //! - Warmup/Ramp ramp PowerLow→PowerHigh; Cooldown ramps PowerHigh→PowerLow
 //!   (known ambiguity — see spec; keep the rule in one place).
 //! - `<textevent>` offsets are relative to the parent segment's start;
@@ -17,6 +20,7 @@ use roxmltree::Node;
 use super::{ParseError, ParseWarning, Parsed, SourceFormat};
 use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN, TEXT_EVENT_DEFAULT_S};
 use crate::model::{ExecutableWorkout, PowerTarget, TextEvent, WorkoutSegment};
+use crate::workout_definition::midpoint;
 
 pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
     // Real-world exporters emit unescaped '&' in titles/messages
@@ -64,8 +68,12 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                     continue;
                 };
                 let power = required_power(el, "Power", &mut warnings)?;
-                let cadence_rpm = optional_cadence(el, "Cadence", &mut warnings);
-                warn_unknown_attrs(el, &["Duration", "Power", "Cadence"], &mut warnings);
+                let cadence_rpm = cadence_target(el, &mut warnings);
+                warn_unknown_attrs(
+                    el,
+                    &["Duration", "Power", "Cadence", "CadenceLow", "CadenceHigh"],
+                    &mut warnings,
+                );
                 segments.push(WorkoutSegment::Steady {
                     duration_s,
                     power,
@@ -84,7 +92,7 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                 };
                 let on_power = required_power(el, "OnPower", &mut warnings)?;
                 let off_power = required_power(el, "OffPower", &mut warnings)?;
-                let on_cadence = optional_cadence(el, "Cadence", &mut warnings);
+                let on_cadence = cadence_target(el, &mut warnings);
                 let off_cadence = optional_cadence(el, "CadenceResting", &mut warnings);
                 warn_unknown_attrs(
                     el,
@@ -95,6 +103,8 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                         "OnPower",
                         "OffPower",
                         "Cadence",
+                        "CadenceLow",
+                        "CadenceHigh",
                         "CadenceResting",
                     ],
                     &mut warnings,
@@ -121,10 +131,17 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                 };
                 let low = required_power(el, "PowerLow", &mut warnings)?;
                 let high = required_power(el, "PowerHigh", &mut warnings)?;
-                let cadence_rpm = optional_cadence(el, "Cadence", &mut warnings);
+                let cadence_rpm = cadence_target(el, &mut warnings);
                 warn_unknown_attrs(
                     el,
-                    &["Duration", "PowerLow", "PowerHigh", "Cadence"],
+                    &[
+                        "Duration",
+                        "PowerLow",
+                        "PowerHigh",
+                        "Cadence",
+                        "CadenceLow",
+                        "CadenceHigh",
+                    ],
                     &mut warnings,
                 );
                 // Warmup/Ramp go low→high; Cooldown goes high→low.
@@ -146,8 +163,12 @@ pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
                 let Some(duration_s) = duration_or_skip(el, "Duration", &mut warnings)? else {
                     continue;
                 };
-                let cadence_rpm = optional_cadence(el, "Cadence", &mut warnings);
-                warn_unknown_attrs(el, &["Duration", "Cadence"], &mut warnings);
+                let cadence_rpm = cadence_target(el, &mut warnings);
+                warn_unknown_attrs(
+                    el,
+                    &["Duration", "Cadence", "CadenceLow", "CadenceHigh"],
+                    &mut warnings,
+                );
                 segments.push(WorkoutSegment::FreeRide {
                     duration_s,
                     cadence_rpm,
@@ -308,6 +329,19 @@ fn optional_cadence(el: Node, attr: &str, warnings: &mut Vec<ParseWarning>) -> O
             None
         }
     }
+}
+
+/// Cadence prescription for a segment: an exact `Cadence` wins; otherwise a
+/// `CadenceLow`/`CadenceHigh` range collapses to its midpoint (a lone bound is
+/// used as-is). Range rounding matches TPW's cadence-range compilation.
+fn cadence_target(el: Node, warnings: &mut Vec<ParseWarning>) -> Option<u16> {
+    let exact = optional_cadence(el, "Cadence", warnings);
+    let low = optional_cadence(el, "CadenceLow", warnings);
+    let high = optional_cadence(el, "CadenceHigh", warnings);
+    exact.or(match (low, high) {
+        (Some(low), Some(high)) => Some(midpoint(low, high)),
+        (low, high) => low.or(high),
+    })
 }
 
 /// Required positive integer Repeat for IntervalsT.
@@ -747,6 +781,39 @@ mod tests {
         );
         assert_eq!(parsed.warnings.len(), 1);
         assert!(parsed.warnings[0].message.contains("Cadence"));
+    }
+
+    #[test]
+    fn cadence_range_collapses_to_midpoint_without_warning() {
+        // WorkoutPlanner emits the exact rpm alongside its range; Zwift files
+        // may carry only the range. Neither spelling is "unknown".
+        let xml = r#"<workout_file><workout>
+            <IntervalsT Repeat="1" OnDuration="90" OffDuration="120" OnPower="0.9" OffPower="0.55" Cadence="65" CadenceLow="60" CadenceHigh="70"/>
+            <SteadyState Duration="60" Power="0.5" CadenceLow="60" CadenceHigh="65"/>
+            <Ramp Duration="60" PowerLow="0.5" PowerHigh="0.7" CadenceLow="80" CadenceHigh="90"/>
+            <FreeRide Duration="60" CadenceHigh="100"/>
+        </workout></workout_file>"#;
+        let parsed = parse_zwo(xml).unwrap();
+        assert!(
+            parsed.warnings.is_empty(),
+            "unexpected: {:?}",
+            parsed.warnings
+        );
+        let cadences: Vec<Option<u16>> = parsed
+            .workout
+            .segments
+            .iter()
+            .map(|s| match s {
+                WorkoutSegment::Steady { cadence_rpm, .. }
+                | WorkoutSegment::Ramp { cadence_rpm, .. }
+                | WorkoutSegment::FreeRide { cadence_rpm, .. } => *cadence_rpm,
+            })
+            .collect();
+        assert_eq!(
+            cadences,
+            vec![Some(65), None, Some(63), Some(85), Some(100)],
+            "exact wins; 60–65 rounds up like TPW; a lone bound stands"
+        );
     }
 
     // -- error cases --------------------------------------------------------
