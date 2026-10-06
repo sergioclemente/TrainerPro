@@ -15,7 +15,8 @@ use tracing::{error, warn};
 use tp_core::consts::{ENGINE_TICK_MS, ERG_KEEPALIVE_S, SAMPLE_HZ, SMOOTH_WINDOW_S};
 use tp_core::engine::{Engine, EngineAction, EngineEvent, Phase, SegmentEndReason};
 use tp_core::journal::{
-    compute_laps, replay, JournalHeader, JournalWriter, Sample, SessionEvent, SessionEventKind,
+    compute_activity_segments, replay, JournalHeader, JournalWriter, Sample, SessionEvent,
+    SessionEventKind,
 };
 use tp_core::metrics::{normalized_power, session_totals, tss};
 use tp_core::model::ExecutableWorkout;
@@ -97,8 +98,9 @@ pub struct PlayerMeasurement {
     pub power_smoothed_3s_w: Option<u16>,
 }
 
+/// Live outcome of a workout-segment attempt, including entirely skipped attempts.
 #[derive(Debug, Clone, Serialize)]
-pub struct SegmentResult {
+pub struct WorkoutSegmentResult {
     pub workout_session_id: String,
     pub segment_index: usize,
     /// 1-based count of results for this index in the session. Above 1 when
@@ -121,7 +123,7 @@ pub struct RideTracePoint {
 }
 
 #[derive(Default)]
-struct SegmentAccumulator {
+struct WorkoutSegmentAccumulator {
     ridden_ms: u64,
     power_sum: u64,
     power_n: u32,
@@ -129,7 +131,7 @@ struct SegmentAccumulator {
     cadence_n: u32,
 }
 
-impl SegmentAccumulator {
+impl WorkoutSegmentAccumulator {
     fn note_tick(&mut self, elapsed_ms: u64) {
         self.ridden_ms = self.ridden_ms.saturating_add(elapsed_ms);
     }
@@ -152,9 +154,9 @@ impl SegmentAccumulator {
         attempt: u32,
         planned_duration_s: u32,
         skipped: bool,
-    ) -> SegmentResult {
+    ) -> WorkoutSegmentResult {
         let completed = std::mem::take(self);
-        SegmentResult {
+        WorkoutSegmentResult {
             workout_session_id: workout_session_id.to_owned(),
             segment_index,
             attempt,
@@ -170,7 +172,7 @@ impl SegmentAccumulator {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct LapRow {
+pub struct ActivitySegmentRow {
     pub start_s: u32,
     pub duration_s: u32,
     pub average_power_w: Option<u16>,
@@ -196,7 +198,7 @@ pub struct ActivitySummary {
     pub work_kj: u32,
     pub completed_pct: f64,
     pub fit_path: String,
-    pub laps: Vec<LapRow>,
+    pub activity_segments: Vec<ActivitySegmentRow>,
 }
 
 fn phase_str(p: Phase) -> &'static str {
@@ -242,6 +244,7 @@ pub async fn spawn(
         workout_name: workout.name.clone(),
         ftp_w: settings.profile.ftp,
         weight_kg: settings.profile.weight_kg,
+        record_distance: settings.record_distance,
         trainer: trainer_state.name,
         hrm: heart_rate_state.name,
         app_ver: env!("CARGO_PKG_VERSION").into(),
@@ -307,8 +310,8 @@ pub async fn spawn(
         live_power: Vec::new(),
         hr_sum: 0,
         hr_n: 0,
-        segment_accumulator: SegmentAccumulator::default(),
-        segment_attempts: vec![0; workout.segments.len()],
+        workout_segment_accumulator: WorkoutSegmentAccumulator::default(),
+        workout_segment_attempts: vec![0; workout.segments.len()],
         ride_trace: Vec::new(),
         ftp_w: settings.profile.ftp,
     };
@@ -358,9 +361,9 @@ struct Runtime {
     hr_sum: u64,
     hr_n: u32,
     /// Ride time and 1 Hz measurements for the current workout segment.
-    segment_accumulator: SegmentAccumulator,
+    workout_segment_accumulator: WorkoutSegmentAccumulator,
     /// Results emitted so far per segment index; a Go To can re-ride one.
-    segment_attempts: Vec<u32>,
+    workout_segment_attempts: Vec<u32>,
     /// Every `ride_sample` emitted this session, in emission order, so a UI
     /// that mounts mid-ride can draw the line it missed.
     ride_trace: Vec<RideTracePoint>,
@@ -374,6 +377,7 @@ impl Runtime {
         engine_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sample_tick =
             tokio::time::interval(Duration::from_secs_f64(1.0 / f64::from(SAMPLE_HZ)));
+        sample_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut keepalive = tokio::time::interval(Duration::from_secs(ERG_KEEPALIVE_S));
         let mut trainer_measurements = self.trainer.subscribe_measurements();
         let mut trainer_state_rx = self.trainer.subscribe_state();
@@ -443,7 +447,7 @@ impl Runtime {
                 _ = engine_tick.tick() => {
                     if self.engine.phase() == Phase::Riding {
                         let actions = self.engine.step(EngineEvent::Tick { dt_ms: ENGINE_TICK_MS });
-                        self.segment_accumulator.note_tick(ENGINE_TICK_MS);
+                        self.workout_segment_accumulator.note_tick(ENGINE_TICK_MS);
                         let finished = self.apply_engine_actions(actions).await;
                         if finished { break; }
                     }
@@ -655,16 +659,16 @@ impl Runtime {
                 } => {
                     let planned_duration_s =
                         self.engine.workout().segments[*segment_index].duration_s();
-                    self.segment_attempts[*segment_index] += 1;
-                    let result = self.segment_accumulator.take_result(
+                    self.workout_segment_attempts[*segment_index] += 1;
+                    let result = self.workout_segment_accumulator.take_result(
                         &self.workout_session_id,
                         *segment_index,
-                        self.segment_attempts[*segment_index],
+                        self.workout_segment_attempts[*segment_index],
                         planned_duration_s,
                         *reason == SegmentEndReason::Skipped,
                     );
-                    let _ = self.app.emit("segment_result", &result);
-                    self.write_event(SessionEventKind::Lap, Some(*segment_index));
+                    let _ = self.app.emit("workout_segment_result", &result);
+                    self.write_event(SessionEventKind::WorkoutSegmentEnd, Some(*segment_index));
                     Ok(())
                 }
                 EngineAction::ShowText(t) => {
@@ -730,7 +734,7 @@ impl Runtime {
     }
 
     fn write_sample(&mut self) {
-        self.segment_accumulator
+        self.workout_segment_accumulator
             .note_sample(self.latest_power_w, self.latest_cadence_rpm);
         if let Some(p) = self.latest_power_w {
             self.power_sum += u64::from(p);
@@ -830,7 +834,7 @@ impl Runtime {
         self.state_tx.send_replace(ps);
     }
 
-    /// Session finalization: close journal → replay → laps/totals → FIT →
+    /// Session finalization: close journal → replay → activity segments/totals → FIT →
     /// Activity row → summary. The journal survives any failure.
     async fn finalize(&mut self) -> Result<ActivitySummary, AppError> {
         self.write_event(SessionEventKind::End, None);
@@ -840,18 +844,22 @@ impl Runtime {
         }
 
         let data = replay(BufReader::new(File::open(&self.journal_path)?))?;
-        let laps = compute_laps(&data);
+        let activity_segments = compute_activity_segments(&data);
         let state = self.app.state::<AppState>();
         let settings = state.settings();
         let totals = session_totals(&data, data.header.ftp_w);
 
+        let motion = data
+            .header
+            .record_distance
+            .then(|| tp_core::motion::replay_motion(&data, &activity_segments));
         let fit_bytes = tp_core::fit::encode_activity(&tp_core::fit::FitActivity {
             header: &data.header,
             samples: &data.samples,
             events: &data.events,
-            laps: &laps,
+            laps: &activity_segments,
             totals: &totals,
-            record_distance: settings.record_distance,
+            motion: motion.as_ref(),
         })?;
         let activity_id = uuid::Uuid::new_v4().to_string();
         let fit_path = state.activities_dir().join(format!("{activity_id}.fit"));
@@ -944,14 +952,14 @@ impl Runtime {
             work_kj: totals.work_kj,
             completed_pct,
             fit_path: fit_path_string,
-            laps: laps
+            activity_segments: activity_segments
                 .iter()
-                .map(|l| LapRow {
-                    start_s: (l.start_ms / 1000) as u32,
-                    duration_s: ((l.end_ms - l.start_ms) / 1000) as u32,
-                    average_power_w: l.average_power_w,
-                    max_power_w: l.max_power_w,
-                    average_heart_rate_bpm: l.average_heart_rate_bpm,
+                .map(|segment| ActivitySegmentRow {
+                    start_s: (segment.start_ms / 1000) as u32,
+                    duration_s: ((segment.end_ms - segment.start_ms) / 1000) as u32,
+                    average_power_w: segment.average_power_w,
+                    max_power_w: segment.max_power_w,
+                    average_heart_rate_bpm: segment.average_heart_rate_bpm,
                 })
                 .collect(),
         })
@@ -977,11 +985,11 @@ fn ymd_utc(unix_s: u64) -> (u32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::SegmentAccumulator;
+    use super::WorkoutSegmentAccumulator;
 
     #[test]
-    fn segment_result_uses_ridden_time_and_independent_sample_averages() {
-        let mut accumulator = SegmentAccumulator::default();
+    fn workout_segment_result_uses_ridden_time_and_independent_sample_averages() {
+        let mut accumulator = WorkoutSegmentAccumulator::default();
         accumulator.note_tick(2_250);
         accumulator.note_sample(Some(200), Some(88));
         accumulator.note_sample(Some(220), None);
@@ -999,8 +1007,8 @@ mod tests {
     }
 
     #[test]
-    fn taking_a_segment_result_resets_the_accumulator() {
-        let mut accumulator = SegmentAccumulator::default();
+    fn taking_a_workout_segment_result_resets_the_accumulator() {
+        let mut accumulator = WorkoutSegmentAccumulator::default();
         accumulator.note_tick(1_000);
         accumulator.note_sample(Some(250), Some(90));
         let _ = accumulator.take_result("session", 0, 1, 60, false);

@@ -24,8 +24,9 @@ impl PowerTarget {
     }
 }
 
+/// A prescribed interval in an executable workout, with duration and targets.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Segment {
+pub enum WorkoutSegment {
     Steady {
         duration_s: u32,
         power: PowerTarget,
@@ -46,12 +47,12 @@ pub enum Segment {
     },
 }
 
-impl Segment {
+impl WorkoutSegment {
     pub fn duration_s(&self) -> u32 {
         match self {
-            Segment::Steady { duration_s, .. }
-            | Segment::Ramp { duration_s, .. }
-            | Segment::FreeRide { duration_s, .. } => *duration_s,
+            WorkoutSegment::Steady { duration_s, .. }
+            | WorkoutSegment::Ramp { duration_s, .. }
+            | WorkoutSegment::FreeRide { duration_s, .. } => *duration_s,
         }
     }
 }
@@ -69,17 +70,17 @@ pub struct ExecutableWorkout {
     pub name: String,
     pub description: String,
     /// Flat segment list; interval repeats are pre-expanded by the parser.
-    pub segments: Vec<Segment>,
+    pub segments: Vec<WorkoutSegment>,
     /// Sorted by `offset_s`; offsets are workout-absolute.
     pub text_events: Vec<TextEvent>,
 }
 
 impl ExecutableWorkout {
     pub fn duration_s(&self) -> u32 {
-        self.segments.iter().map(Segment::duration_s).sum()
+        self.segments.iter().map(WorkoutSegment::duration_s).sum()
     }
 
-    /// Segment containing active-time offset `t_s`, plus the offset into that
+    /// WorkoutSegment containing active-time offset `t_s`, plus the offset into that
     /// segment. `None` when `t_s` is at/past the end of the workout.
     pub fn segment_at(&self, t_s: u32) -> Option<(usize, u32)> {
         let mut start = 0u32;
@@ -99,8 +100,8 @@ impl ExecutableWorkout {
     pub fn target_power_w_at(&self, t_s: u32, ftp: u16, intensity: f64) -> Option<u16> {
         let (idx, into) = self.segment_at(t_s)?;
         match &self.segments[idx] {
-            Segment::Steady { power, .. } => Some(power.resolve(ftp, intensity)),
-            Segment::Ramp {
+            WorkoutSegment::Steady { power, .. } => Some(power.resolve(ftp, intensity)),
+            WorkoutSegment::Ramp {
                 duration_s,
                 start,
                 end,
@@ -112,7 +113,7 @@ impl ExecutableWorkout {
                 let w = a + (b - a) * frac;
                 Some(w.round().clamp(0.0, f64::from(MAX_TARGET_WATTS)) as u16)
             }
-            Segment::FreeRide { .. } => None,
+            WorkoutSegment::FreeRide { .. } => None,
         }
     }
 
@@ -122,9 +123,9 @@ impl ExecutableWorkout {
     pub fn target_cadence_rpm_at(&self, t_s: u32) -> Option<u16> {
         let (segment_index, _) = self.segment_at(t_s)?;
         match &self.segments[segment_index] {
-            Segment::Steady { cadence_rpm, .. }
-            | Segment::Ramp { cadence_rpm, .. }
-            | Segment::FreeRide { cadence_rpm, .. } => *cadence_rpm,
+            WorkoutSegment::Steady { cadence_rpm, .. }
+            | WorkoutSegment::Ramp { cadence_rpm, .. }
+            | WorkoutSegment::FreeRide { cadence_rpm, .. } => *cadence_rpm,
         }
     }
 }
@@ -133,7 +134,7 @@ impl ExecutableWorkout {
 mod tests {
     use super::*;
 
-    fn wk(segments: Vec<Segment>) -> ExecutableWorkout {
+    fn wk(segments: Vec<WorkoutSegment>) -> ExecutableWorkout {
         ExecutableWorkout {
             name: "t".into(),
             description: String::new(),
@@ -151,7 +152,7 @@ mod tests {
 
     #[test]
     fn target_at_ramp_interpolates() {
-        let w = wk(vec![Segment::Ramp {
+        let w = wk(vec![WorkoutSegment::Ramp {
             duration_s: 100,
             start: PowerTarget::Watts(100),
             end: PowerTarget::Watts(200),
@@ -166,12 +167,12 @@ mod tests {
     #[test]
     fn segment_at_boundaries() {
         let w = wk(vec![
-            Segment::Steady {
+            WorkoutSegment::Steady {
                 duration_s: 60,
                 power: PowerTarget::Watts(100),
                 cadence_rpm: Some(95),
             },
-            Segment::FreeRide {
+            WorkoutSegment::FreeRide {
                 duration_s: 30,
                 cadence_rpm: None,
             },

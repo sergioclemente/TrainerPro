@@ -45,7 +45,7 @@ import {
   spanOfNode,
   toDraft,
   toGraph,
-  toSegmentRows,
+  toWorkoutSegmentRows,
   totalDuration,
   updateNode,
 } from "../builder/model";
@@ -423,7 +423,7 @@ export default function Builder() {
 
   const segments = useMemo(() => expand(nodes), [nodes]);
   const graph = useMemo(() => toGraph(segments), [segments]);
-  const rows = useMemo(() => toSegmentRows(segments), [segments]);
+  const rows = useMemo(() => toWorkoutSegmentRows(segments), [segments]);
   const stats = useMemo(() => estimate(segments, ftp), [segments, ftp]);
   const span = useMemo(() => spanOfNode(nodes, segments, selectedId), [nodes, segments, selectedId]);
   const blocker = saveBlocker(name, nodes);

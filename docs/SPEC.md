@@ -113,7 +113,8 @@ The player supports:
 - start, pause, explicit resume, skip, and end;
 - go to any interval from the graph (right-click), forward or backward, before
   or during the ride; the interval left and any passed over are recorded as
-  skipped, and a re-ridden interval records a further result and lap;
+  skipped, and a re-ridden workout segment records a further result and activity
+  segment;
 - intensity adjustment from 50% through 150%;
 - ERG enable/disable;
 - steady and ramp power targets, free ride, cadence targets, and coaching cues;
@@ -140,7 +141,7 @@ recorded while riding, not while paused. Pauses, resumes, interval boundaries,
 and session metadata are retained so replay can reconstruct elapsed and timer
 time correctly.
 
-Ending a ride replays the journal, calculates summaries and interval laps,
+Ending a ride replays the journal, calculates summaries and activity segments,
 encodes a Garmin-compatible FIT file, and inserts one Activity. If FIT encoding
 fails, TrainerPro reports the error and preserves the journal for recovery.
 
@@ -152,6 +153,30 @@ training metrics, and available heart-rate data. Users can reveal the FIT file,
 upload it to a connected Garmin account, and delete an Activity. Confirmed Garmin
 uploads are remembered per Activity and account. Upload errors never automatically resend the file. A
 configured export directory receives an additional FIT copy.
+
+### Estimated indoor speed and distance
+
+New installations include estimated speed and distance in FIT exports by default;
+saved on/off preferences are preserved. Loading a session snapshots this choice
+and rider weight in its journal. Legacy journals without that preference omit
+speed and distance. Existing FIT files and upload receipts are unchanged.
+
+The estimate models flat-road acceleration, aerodynamic drag, rolling resistance,
+and coasting from measured trainer power and combined rider/bicycle mass. Speed
+starts at rest. Zero measured power permits coasting; missing power resets speed
+and adds no distance. Manual and trainer-fault pauses freeze both speed and
+distance; resuming continues from the saved speed. Interval changes, skips,
+intensity, and ERG changes preserve momentum.
+
+Each sample covers up to one second before its timestamp, clipped to the preceding
+sample and latest start/resume. A gap of at least two seconds of unsampled active
+time resets momentum; paused time does not count toward that gap.
+Missing recording time and time after the final sample add no distance. Catch-up
+samples cannot contribute overlapping time. Distance spanning activity-segment boundaries is
+split between the activity segments. FIT records, laps, and session totals share one estimate;
+average speed includes all timer time, including coasting and missing measurements.
+Zero-duration averages are absent. The estimate is an export feature; the Player
+does not display live speed or distance.
 
 ## Settings and connections
 

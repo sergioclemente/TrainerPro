@@ -78,7 +78,7 @@ export default function Summary() {
         {stat("work", `${summary.work_kj} kJ`)}
       </div>
 
-      <h2>Laps</h2>
+      <h2>Activity segments</h2>
       <table className="table">
         <thead>
           <tr>
@@ -91,14 +91,14 @@ export default function Summary() {
           </tr>
         </thead>
         <tbody>
-          {summary.laps.map((l, i) => (
+          {summary.activity_segments.map((segment, i) => (
             <tr key={i}>
               <td>{i + 1}</td>
-              <td>{fmtDuration(l.start_s)}</td>
-              <td>{fmtDuration(l.duration_s)}</td>
-              <td>{l.average_power_w ?? "–"}</td>
-              <td>{l.max_power_w ?? "–"}</td>
-              <td>{l.average_heart_rate_bpm ?? "–"}</td>
+              <td>{fmtDuration(segment.start_s)}</td>
+              <td>{fmtDuration(segment.duration_s)}</td>
+              <td>{segment.average_power_w ?? "–"}</td>
+              <td>{segment.max_power_w ?? "–"}</td>
+              <td>{segment.average_heart_rate_bpm ?? "–"}</td>
             </tr>
           ))}
         </tbody>

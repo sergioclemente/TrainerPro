@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { SegmentResult, SegmentRow } from "../ipc";
+import type { WorkoutSegmentResult, WorkoutSegmentRow } from "../ipc";
 import type { RideTimelineItem } from "../rideTimeline";
 import { useStore } from "../state";
 import { zoneColor } from "./WorkoutGraph";
@@ -32,7 +32,7 @@ function ordinal(n: number): string {
   }
 }
 
-function segmentSummary(result: SegmentResult, segment?: SegmentRow): string {
+function segmentSummary(result: WorkoutSegmentResult, segment?: WorkoutSegmentRow): string {
   const duration = result.skipped
     ? `${formatTimelineDuration(result.ridden_duration_s)} / ${formatTimelineDuration(result.planned_duration_s)}`
     : formatTimelineDuration(result.planned_duration_s);
@@ -43,7 +43,7 @@ function segmentSummary(result: SegmentResult, segment?: SegmentRow): string {
     : `${duration} @ ${result.average_power_w} W`;
 }
 
-function SegmentCard({ result, segment }: { result: SegmentResult; segment?: SegmentRow }) {
+function SegmentCard({ result, segment }: { result: WorkoutSegmentResult; segment?: WorkoutSegmentRow }) {
   const startColor = segment ? zoneColor(segment.start_pct) : "#30363d";
   const endColor = segment ? zoneColor(segment.end_pct) : startColor;
   const style = {
@@ -75,7 +75,7 @@ function SegmentCard({ result, segment }: { result: SegmentResult; segment?: Seg
 
 function TimelineEntry({ item, segments }: {
   item: RideTimelineItem;
-  segments: SegmentRow[];
+  segments: WorkoutSegmentRow[];
 }) {
   if (item.kind === "user-action") {
     return (
@@ -102,7 +102,7 @@ function TimelineEntry({ item, segments }: {
   );
 }
 
-export default function RideEventRail({ segments }: { segments: SegmentRow[] }) {
+export default function RideEventRail({ segments }: { segments: WorkoutSegmentRow[] }) {
   const items = useStore((state) => state.rideTimeline.items);
   const feedRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);

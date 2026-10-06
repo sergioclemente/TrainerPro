@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::State;
-use tp_core::model::{ExecutableWorkout, PowerTarget, Segment};
+use tp_core::model::{ExecutableWorkout, PowerTarget, WorkoutSegment};
 use tp_core::parse::{parse_ergmrc, parse_zwo, Parsed};
 use tp_core::workout_definition::WorkoutDefinition;
 
@@ -49,15 +49,22 @@ pub fn graph_points(w: &ExecutableWorkout, ftp: u16) -> Vec<(u32, f64)> {
     let mut t = 0u32;
     for seg in &w.segments {
         match seg {
-            Segment::Steady { duration_s, power, .. } => {
+            WorkoutSegment::Steady {
+                duration_s, power, ..
+            } => {
                 out.push((t, pct(power)));
                 out.push((t + duration_s, pct(power)));
             }
-            Segment::Ramp { duration_s, start, end, .. } => {
+            WorkoutSegment::Ramp {
+                duration_s,
+                start,
+                end,
+                ..
+            } => {
                 out.push((t, pct(start)));
                 out.push((t + duration_s, pct(end)));
             }
-            Segment::FreeRide { duration_s, .. } => {
+            WorkoutSegment::FreeRide { duration_s, .. } => {
                 // Zero at both ends marks an open interval: no real target
                 // can be 0 % (POWER_FRACTION_MIN), so the graph draws the
                 // pair as an open block rather than a zone bar.
@@ -238,7 +245,7 @@ pub async fn delete_workout(state: State<'_, AppState>, id: String) -> R<()> {
 /// Structured segment description for the workout detail view. Percentages
 /// are of FTP (absolute-watt targets converted at the caller's FTP).
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub struct SegmentRow {
+pub struct WorkoutSegmentRow {
     pub kind: String, // "steady" | "ramp" | "freeride"
     /// Derived step title: Warm-up / Cool-down / Ramp / Steady / Interval /
     /// Recovery / Free ride.
@@ -252,14 +259,14 @@ pub struct SegmentRow {
     pub cadence_rpm: Option<u16>,
 }
 
-pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
+pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<WorkoutSegmentRow> {
     let pct = |p: &PowerTarget| match p {
         PowerTarget::PercentFtp(f) => f * 100.0,
         PowerTarget::Watts(watts) => f64::from(*watts) / f64::from(ftp.max(1)) * 100.0,
     };
     let n = w.segments.len();
     let mut start_t = 0u32;
-    let mut rows: Vec<SegmentRow> = Vec::with_capacity(n);
+    let mut rows: Vec<WorkoutSegmentRow> = Vec::with_capacity(n);
     for (i, s) in w.segments.iter().enumerate() {
         let dur = s.duration_s();
         let end_t = start_t + dur;
@@ -273,13 +280,17 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
             if texts.is_empty() { None } else { Some(texts.join(" · ")) }
         };
         let row = match s {
-            Segment::Steady { duration_s, power, cadence_rpm } => {
+            WorkoutSegment::Steady {
+                duration_s,
+                power,
+                cadence_rpm,
+            } => {
                 let p = pct(power);
                 // Recovery = easy spinning right after harder work.
                 let label = if p < 62.0
                     && rows
                         .last()
-                        .map(|prev: &SegmentRow| prev.end_pct > p + 12.0)
+                        .map(|prev: &WorkoutSegmentRow| prev.end_pct > p + 12.0)
                         .unwrap_or(false)
                 {
                     "Recovery"
@@ -288,7 +299,7 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
                 } else {
                     "Steady"
                 };
-                SegmentRow {
+                WorkoutSegmentRow {
                     kind: "steady".into(),
                     label: label.into(),
                     note,
@@ -298,7 +309,12 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
                     cadence_rpm: *cadence_rpm,
                 }
             }
-            Segment::Ramp { duration_s, start, end, cadence_rpm } => {
+            WorkoutSegment::Ramp {
+                duration_s,
+                start,
+                end,
+                cadence_rpm,
+            } => {
                 let (a, b) = (pct(start), pct(end));
                 let label = if i == 0 && b > a {
                     "Warm-up"
@@ -307,7 +323,7 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
                 } else {
                     "Ramp"
                 };
-                SegmentRow {
+                WorkoutSegmentRow {
                     kind: "ramp".into(),
                     label: label.into(),
                     note,
@@ -317,10 +333,10 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
                     cadence_rpm: *cadence_rpm,
                 }
             }
-            Segment::FreeRide {
+            WorkoutSegment::FreeRide {
                 duration_s,
                 cadence_rpm,
-            } => SegmentRow {
+            } => WorkoutSegmentRow {
                 kind: "freeride".into(),
                 label: "Free ride".into(),
                 note,
@@ -339,7 +355,7 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<SegmentRow> {
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkoutDetail {
     pub summary: WorkoutSummary,
-    pub segments: Vec<SegmentRow>,
+    pub segments: Vec<WorkoutSegmentRow>,
 }
 
 #[tauri::command]

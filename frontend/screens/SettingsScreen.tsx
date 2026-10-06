@@ -104,10 +104,15 @@ export default function SettingsScreen() {
                 inputMode="decimal"
               />
             </label>
-            <label className="row gap">
-              <input type="checkbox" checked={settings.record_distance} onChange={toggleDistance} />
-              Record virtual speed/distance in FIT files
-            </label>
+            <div className="setting-option">
+              <label className="row gap">
+                <input type="checkbox" checked={settings.record_distance} onChange={toggleDistance} />
+                Include estimated speed and distance
+              </label>
+              <span className="muted setting-description">
+                Estimates flat-road acceleration and coasting from measured power and your weight. Pauses freeze speed and distance; resuming continues from the saved speed. Applies to newly loaded rides.
+              </span>
+            </div>
             <div className="setting-option">
               <label className="row gap">
                 <input type="checkbox" checked={settings.voice_enabled} onChange={toggleVoice} />

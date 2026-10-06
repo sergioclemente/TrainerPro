@@ -2,7 +2,7 @@
 // strip, hoverable graph, and a tree-structured interval list where repeats
 // become "N×" groups with indented children.
 
-import { AppError, SegmentRow, fmtDuration, ipc } from "../ipc";
+import { AppError, WorkoutSegmentRow, fmtDuration, ipc } from "../ipc";
 import { WorkoutDetailView, useStore } from "../state";
 import WorkoutGraph, { segmentText, zoneColor } from "../components/WorkoutGraph";
 
@@ -11,16 +11,16 @@ import WorkoutGraph, { segmentText, zoneColor } from "../components/WorkoutGraph
 // ---------------------------------------------------------------------------
 
 type Node =
-  | { type: "single"; seg: SegmentRow }
-  | { type: "repeat"; reps: number; children: SegmentRow[] };
+  | { type: "single"; seg: WorkoutSegmentRow }
+  | { type: "repeat"; reps: number; children: WorkoutSegmentRow[] };
 
-function repKey(s: SegmentRow): string {
+function repKey(s: WorkoutSegmentRow): string {
   const { note, ...rest } = s;
   void note;
   return JSON.stringify(rest);
 }
 
-function buildTree(segments: SegmentRow[]): Node[] {
+function buildTree(segments: WorkoutSegmentRow[]): Node[] {
   const nodes: Node[] = [];
   let i = 0;
   while (i < segments.length) {
@@ -85,7 +85,7 @@ function zoneOf(pct: number): number {
   return 6;
 }
 
-function zoneSeconds(segments: SegmentRow[]): number[] {
+function zoneSeconds(segments: WorkoutSegmentRow[]): number[] {
   const out = ZONES.map(() => 0);
   for (const s of segments) {
     if (s.kind === "freeride") {
@@ -103,7 +103,7 @@ function zoneSeconds(segments: SegmentRow[]): number[] {
   return out;
 }
 
-function SegLine({ seg, ftp }: { seg: SegmentRow; ftp: number }) {
+function SegLine({ seg, ftp }: { seg: WorkoutSegmentRow; ftp: number }) {
   const color =
     seg.kind === "freeride" ? "#6e7681" : zoneColor(Math.max(seg.start_pct, seg.end_pct));
   return (
