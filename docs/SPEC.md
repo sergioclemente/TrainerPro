@@ -1,271 +1,165 @@
 # TrainerPro behavior specification
 
-**Purpose:** Define TrainerPro's current observable behavior and acceptance
-contract. **Audience:** Engineers, reviewers, and testers changing the shipped
-application.
+**Purpose:** Define current observable behavior and acceptance expectations.
+**Audience:** Engineers, reviewers, and testers changing the application.
 
-Product intent is defined in [PRODUCT.md](PRODUCT.md). Technical ownership and
-flows are defined in [architecture.md](architecture.md). Code and tests remain
-authoritative for internal types, wire payloads, database schema, and constants.
+See [PRODUCT.md](PRODUCT.md) for intent, [architecture.md](architecture.md) for
+ownership, and [CONTRIBUTING.md](../CONTRIBUTING.md) for verification rules.
 
 ## Application surface
 
-TrainerPro is a dark-theme desktop application with primary navigation for
-**Workouts**, **Build**, **Devices**, **Activities**, and **Settings**. Loading a
-workout opens its detail view; starting it opens the full player. Ending a ride
-opens a summary.
-
-macOS is the validated platform. The shared implementation includes Windows
-support, but physical BLE recovery and installer behavior remain manual release
-gates. Linux is unsupported.
+TrainerPro is a dark-theme desktop application with **Workouts**, **Build**,
+**Devices**, **Activities**, and **Settings** navigation. Selecting a workout
+opens detail; loading it opens the Player; ending a ride opens Summary.
+macOS is the validated platform. Windows BLE and installer validation remain
+open; Linux is unsupported. Outstanding gates are in [ROADMAP.md](ROADMAP.md).
 
 ## Workouts and Next Up
 
-The Workouts screen begins with a horizontally scrollable **Next Up** rail and
-keeps the Library below it.
+Workouts leads with a horizontally scrollable Next Up rail, then the Library.
+Next Up lists active, unfulfilled schedules in local calendar order, followed
+by up to three recommendations. Future schedules have no display cutoff beyond
+what is cached. Missed schedules remain visible through seven calendar days
+after their date, then leave the rail but remain stored. Linking an Activity
+fulfills its schedule.
 
-Next Up contains, in order:
-
-1. active, unfulfilled scheduled workouts in local calendar order; then
-2. up to three recommendations derived from recent Activity frequency.
-
-A scheduled workout remains visible from its scheduled date through the next
-seven calendar days. Older missed schedules remain stored for traceability but
-leave Next Up. The future display horizon is intentionally not capped beyond
-the schedules available locally.
-
-The backend determines the retention date using the active Intervals.icu
-account's IANA time zone, falling back to the machine-local zone when no account
-is connected. A schedule disappears after an Activity links to it.
-
-Recommendations use the preceding 180 days of Activity history, rank by
-frequency and then recency, and exclude definitions already scheduled in the
-projection. They display the definition's training-focus tag, or a generic
-structured-ride label when none exists.
-
-Opening either item shows the shared workout detail. Starting a scheduled item
-preserves its schedule identity through the session and resulting Activity.
+Each schedule's cutoff and labels use its placement time zone, then its account
+zone, then machine-local fallback. Recommendations rank the preceding 180 days
+of Activity history by frequency, then recency, excluding already-scheduled
+definitions. They show a training-focus tag or a generic structured-ride label.
+Both item types share detail and execution; schedule identity follows the ride.
 
 ## Library, imports, and authoring
 
-The local Library lists TrainerPro-owned definitions. Provider-scheduled cache
-definitions remain executable through Next Up but are not local Library items,
-deduplication candidates, or deletable local workouts.
+The local Library contains TrainerPro-owned definitions. Provider-scheduled
+cache entries remain executable through Next Up but are excluded from local
+listing, deduplication, and deletion. Importing ZWO, ERG, or MRC converts to TPW,
+reports warnings, and deduplicates equivalent local definitions without managing
+or deleting the original file.
 
-The Library imports ZWO, ERG, and MRC files. Import converts supported content
-to canonical TPW, reports parser warnings, and deduplicates equivalent local
-definitions. The original file is not managed or deleted by TrainerPro.
-
-Enabled WorkoutPlanner and What's on Zwift sources appear as separate Library
-tabs. Their payloads are normalized into TPW before execution. Cached source
-data may remain available when a remote source is temporarily unavailable.
-
-Build creates cycling workouts from steady intervals, ramps, free ride, and
-repetitions. It validates required fields and displays duration, graph, and
-estimated metrics before saving a TrainerPro-owned definition. Detail and Build
-views show relative targets together with watts resolved from the current FTP.
+Opt-in WorkoutPlanner and What's on Zwift libraries have separate tabs and
+normalize workouts to TPW. Cached content can remain available offline.
+Build supports steady intervals, ramps, free ride, and repetitions, with
+validation, duration, graph, and estimated metrics before saving. Detail and
+Build show relative targets with watts resolved from current FTP.
 
 ## Devices
 
-Devices has Trainer, Heart Rate Monitor, and Controller slots. A slot can scan,
-connect, disconnect, and forget a saved device. Discovery results are deduplicated
-and ordered by signal strength.
+Devices has Smart Trainer, Heart Rate, and Controller slots. **Scan for devices**
+starts shared discovery; results are deduplicated and displayed in arrival order.
+Trainer and HRM slots support connect, disconnect, and forget. Saved FTMS trainers
+and BLE HRMs reconnect in the background. Connecting cancels an active public scan.
 
-TrainerPro supports FTMS trainers and BLE heart-rate monitors. Saved devices
-reconnect in the background. Live state comes from the device status stream;
-retaining a device object does not imply connectivity.
+Controller input defaults to **Trainer controls**. Wahoo BIKE SHIFT controls share
+the trainer link; disabling input never disconnects the trainer. A paired left
+Zwift Ride controller carries both handles on one bonded link and overrides
+trainer input without automatic fallback. Disconnecting or forgetting the active
+paired controller disables input; disconnect retains its pairing. Forgetting an
+inactive pairing leaves trainer controls active.
 
-A foreground connection cancels a public scan and waits for scan cleanup.
-Trainer and HRM connections may proceed concurrently when their setup does not
-compete for the same scan. CoreBluetooth disconnect events are authoritative.
-
-The simulated trainer and HRM implement the production connection contracts and
-support fault injection. Simulator success does not replace physical Bluetooth
-disconnect/reconnect validation.
-
-### Handlebar controls
-
-The Controller source defaults to Trainer controls, following the selected
-trainer. Wahoo BIKE SHIFT input shares the trainer connection; disabling its
-input never disconnects the trainer. Alternatively, select a paired controller;
-currently this is the left Zwift Ride controller, which carries both handles
-over one bonded link. Selecting the paired controller overrides trainer input
-without automatic fallback. Forgetting an active paired controller disables
-input until another source is selected. Removing a saved controller while using
-trainer controls leaves trainer input active. Disconnecting the paired controller
-turns input off but keeps the saved pairing.
-
-Wahoo left steering and Ride A pause/resume; hold Wahoo right steering or Ride Y
-to talk. Other handlebar buttons are unassigned. Controller loss cancels a held
-utterance without pausing the workout. Input recovery requires a fresh press.
-Protocol support targets BIKE SHIFT and Ride firmware 1.2.0; physical hardware and
-firmware compatibility remain manual validation gates. Bridged controllers,
-separate-side Ride connections, music control, and virtual shifting are excluded.
+Wahoo left steering and Ride A pause/resume; hold right steering or Ride Y to talk.
+Other buttons are unassigned. Controller loss cancels a hold without pausing the
+ride; recovery requires a fresh press. Protocol support targets BIKE SHIFT and
+Ride firmware 1.2.0. Bridged or separate-side Ride connections, music controls,
+and virtual shifting are excluded. Simulators implement the same device contracts
+but do not establish physical compatibility or recovery.
 
 ## Workout execution
 
-Starting a workout creates a session identity and snapshots the canonical
-definition. The pure engine advances on ticks and emits effects; the backend
-runtime owns clocks, device commands, events, and recording.
+Loading the Player creates a session and snapshots the workout. Controls support
+start, pause, explicit resume, skip, end, ERG toggling, and 50–150% intensity.
+Steady/ramp power, free ride, cadence targets, and coaching cues are supported.
+Right-clicking the graph selects any interval before or during riding. Leaving
+an interval and passing over others records skips; revisiting records another
+attempt and, when ridden, another activity segment.
 
-The player supports:
+Keyboard controls: hold Space to talk, `s` to skip, `e` to toggle ERG, `d` to
+show/hide detailed stats, and Up/Down for intensity. Space never starts, pauses,
+or resumes a ride.
+The Player shows interval and ride clocks, targets, power, cadence, heart rate,
+work, average/normalized power, intensity factor, and training stress.
 
-- start, pause, explicit resume, skip, and end;
-- go to any interval from the graph (right-click), forward or backward, before
-  or during the ride; the interval left and any passed over are recorded as
-  skipped, and a re-ridden workout segment records a further result and activity
-  segment;
-- intensity adjustment from 50% through 150%;
-- ERG enable/disable;
-- steady and ramp power targets, free ride, cadence targets, and coaching cues;
-- interval countdown, elapsed and remaining time, power, cadence, heart rate,
-  work, average power, normalized power, intensity factor, and training stress.
+Displayed power is averaged over three seconds; recording retains unsmoothed
+measurements. The graph uses journal samples for ridden power. Prescribed and
+ridden cadence share a right-side rpm scale; both scale and trace are hidden when
+no cadence is prescribed.
+The cursor reaches the active interval's top. Open intervals are hatched, labelled
+“open,” and may prescribe cadence.
 
-Keyboard controls are hold Space for push-to-talk, `S` for skip, and Up/Down
-for intensity. Space does not start, pause, or resume a workout. Display power uses a three-second rolling average; recording retains
-the unsmoothed measurement stream. The player graph draws the ridden power from
-the same one-second samples the journal records, and shows each interval's
-cadence target against an rpm scale on its right edge. When the workout
-prescribes cadence, the ridden cadence draws on that rpm scale too; a workout
-without cadence targets shows neither the scale nor the line. The progress cursor
-rises to the top of the interval it is in, not the top of the graph. Open
-intervals (free ride, no power target) draw as a hatched placeholder block
-rather than a zone bar; they may carry a cadence target, and the Player labels
-them "open".
-
-Loss of trainer control pauses the ride and starts reconnect attempts. Recovery
-reapplies control state and the current target, but never resumes the timer
-without the rider's explicit action. HRM loss clears only heart-rate data and
-does not pause trainer execution.
+Trainer-control loss pauses the ride. Recovery restores control and the current
+target but requires explicit resume. HRM loss clears only heart-rate data and
+never pauses the ride.
 
 ## Recording and Activities
 
-A ride writes a crash-tolerant JSONL journal at one-second cadence. Samples are
-recorded while riding, not while paused. Pauses, resumes, interval boundaries,
-and session metadata are retained so replay can reconstruct elapsed and timer
-time correctly.
+A crash-tolerant journal records one-second samples while riding, plus pause,
+resume, interval, and session information. Ending replays it, computes summaries
+and activity segments, creates FIT, and inserts an Activity. Storage/FIT failures
+report an error and preserve the journal whenever recovery is possible.
 
-Ending a ride replays the journal, calculates summaries and activity segments,
-encodes a Garmin-compatible FIT file, and inserts one Activity. If FIT encoding
-fails, TrainerPro reports the error and preserves the journal for recovery.
-
-The completion screen offers Save FIT, upload to a connected Activity provider,
-and Done. It has no manual browser import or file-reveal action.
-
-Activities lists completed rides with their date, workout, duration, power,
-training metrics, and available heart-rate data. Users can reveal the FIT file,
-upload it to a connected Garmin account, and delete an Activity. Confirmed Garmin
-uploads are remembered per Activity and account. Upload errors never automatically resend the file. A
-configured export directory receives an additional FIT copy.
+Summary offers Save FIT, connected Activity-destination upload, and Done, with
+no browser-import or file-reveal action. Activities shows date, workout, duration,
+power, training metrics, and available HR; it supports FIT reveal, upload, and
+deletion. A configured export directory receives an additional FIT copy.
 
 ### Estimated indoor speed and distance
 
-New installations include estimated speed and distance in FIT exports by default;
-saved on/off preferences are preserved. Loading a session snapshots this choice
-and rider weight in its journal. Legacy journals without that preference omit
-speed and distance. Existing FIT files and upload receipts are unchanged.
+Distance recording defaults on for new installations and preserves saved choices.
+Loading snapshots the preference and rider weight; legacy journals without it omit
+speed/distance. Existing FIT files and upload receipts are unchanged.
 
-The estimate models flat-road acceleration, aerodynamic drag, rolling resistance,
-and coasting from measured trainer power and combined rider/bicycle mass. Speed
-starts at rest. Zero measured power permits coasting; missing power resets speed
-and adds no distance. Manual and trainer-fault pauses freeze both speed and
-distance; resuming continues from the saved speed. Interval changes, skips,
-intensity, and ERG changes preserve momentum.
+The flat-road estimate uses measured power and combined rider/bicycle mass,
+including acceleration, drag, rolling resistance, and coasting. Speed starts at
+rest. Zero power permits coasting; missing power resets speed without adding
+distance. Pauses freeze speed/distance; resume preserves momentum, as do interval,
+intensity, and ERG changes.
 
-Each sample covers up to one second before its timestamp, clipped to the preceding
-sample and latest start/resume. A gap of at least two seconds of unsampled active
-time resets momentum; paused time does not count toward that gap.
-Missing recording time and time after the final sample add no distance. Catch-up
-samples cannot contribute overlapping time. Distance spanning activity-segment boundaries is
-split between the activity segments. FIT records, laps, and session totals share one estimate;
-average speed includes all timer time, including coasting and missing measurements.
-Zero-duration averages are absent. The estimate is an export feature; the Player
-does not display live speed or distance.
+Samples cover at most the preceding second, bounded by the previous sample and
+latest start/resume. Unsampled active gaps of at least two seconds reset momentum;
+paused time does not count. Missing time and time after the final sample add no
+distance; overlapping samples receive no double credit. Boundary-spanning distance
+is apportioned to activity segments. FIT records, laps, and session totals share
+one estimate. Average speed includes all timer time, including coasting and missing
+measurements; zero-duration averages are absent. Live speed/distance is not displayed.
 
 ## Settings and connections
 
-Settings manages athlete FTP and weight, distance recording, FIT export,
-optional workout libraries, and provider connections. A connection exposes
-plan-source and/or Activity-destination actions. Authentication status reflects
-local credential availability, not a live connectivity probe; unavailable
-credentials on one connection do not hide other connections.
-
-Next Up refreshes connected plan sources independently and keeps cached results
-available on failure. Refresh windows use each source's account time zone;
-schedule cutoffs and labels use placement time zone, then account time zone,
-then the machine's local zone. Activity uploads target a specific connected
-account, with upload markers remembered for that Activity/account pair.
-The local builder does not publish plans or modify external calendars.
-
-Garmin Connect sign-in supports verification codes and stores session tokens in
-the OS credential manager. Expired or revoked sessions require sign-in again.
-Uploads are manual and may flow onward to services linked to Garmin. The
-unofficial integration and live validation gate are described in
-[feature-garmin.md](feature-garmin.md).
-
-Intervals.icu connection uses a personal API key stored in the OS credential
-manager. The application stores only non-secret account identity, time zone,
-sync health, and provider-scoped schedule state in SQLite. Cached workouts
-render before background refresh and remain executable offline. Disconnecting
-retires provider schedules while preserving Activity history. The full contract
-is in [feature-intervals-icu.md](feature-intervals-icu.md).
-
-WorkoutPlanner and What's on Zwift are opt-in library sources. WorkoutPlanner
-configuration supports URL and optional Basic Auth credentials; its behavior is
-defined in [feature-workoutplanner.md](feature-workoutplanner.md).
+Settings manages FTP, weight, distance recording, FIT export, voice, libraries,
+and provider connections. [Integrations](integrations.md) defines account setup,
+inbound Intervals.icu schedules, manual Garmin uploads, and disconnect behavior.
+The builder never publishes calendars. [WorkoutPlanner](feature-workoutplanner.md)
+remains a separate optional library configured with a URL and optional Basic Auth.
 
 ## Failure behavior
 
-- Parse failures identify the unsupported file or workout content.
-- Bluetooth permission, unavailable adapter, incompatible trainer, refused
-  control, and lost control remain distinguishable user-facing failures.
-- Network or provider failures retain last-good cached data and expose sync
-  health instead of deleting workouts.
-- Invalid credentials point the rider to Settings without echoing secrets.
-- Storage or FIT failures preserve the journal whenever recovery remains
-  possible.
-- Commands return stable error codes and human-readable messages; runtime
-  outcomes that do not require caller branching use the shared toast event.
-
-## Acceptance
-
-Automated tests must cover pure parsing, compilation, engine effects, metrics,
-FIT output, database reconciliation, source adapters, simulator faults, and a
-complete simulated ride. Changes spanning Rust and TypeScript must pass the
-workspace tests and frontend production build.
-
-Physical trainer disconnect/reconnect, platform Bluetooth behavior, packaged
-application startup, and Garmin FIT import remain manual validation gates when
-the affected subsystem changes.
+Parse failures identify unsupported content. Bluetooth permission, adapter,
+compatibility, refused-control, and lost-control failures remain distinguishable.
+Provider errors expose sync health; invalid credentials direct riders to Settings
+without revealing secrets. Commands provide stable error codes and readable
+messages; asynchronous runtime outcomes use the shared toast path.
 
 ## Workout voice and timeline
 
-Voice is enabled by default. At startup it checks microphone permission and
-requests it if needed, immediately releasing the permission-check stream.
-Settings can disable voice. Bundled models run on-device without downloads;
-audio and transcripts are not stored or sent.
-Holding Space in a focused Player, or a handlebar button in a visible Player,
-captures one utterance. Hidden or minimized windows cannot capture. Releasing
-submits at most one validated command; silence and pauses within a hold do
-nothing. Capture cancels after 15 seconds, on Player exit, Settings disable,
-input loss, or release during microphone startup. Pending interpretation is
-discarded, and recovery requires a new press.
+Voice defaults on, checks/requests microphone permission at startup, and immediately
+releases the permission-check stream. Bundled models run on-device without runtime
+downloads; audio/transcripts are neither stored nor sent.
 
-Start, pause, resume, skip, intensity, and ERG commands
-use the same actions as UI controls. End-like voice commands pause; ending the
-ride remains manual. Skip also advances the interval while paused without
-restarting the trainer.
+Holding Space in a focused Player, or a mapped controller button in a visible
+Player (even unfocused), captures one utterance. Losing focus cancels keyboard
+capture; hidden/minimized windows cannot capture. Release submits at most one
+validated command; silence and speech pauses do nothing. Capture cancels
+after 15 seconds, on Player exit, disable, input loss, or release during microphone
+startup. Pending interpretation is discarded; recovery requires a fresh press.
 
-Settings disable releases the voice runtimes. Voice errors must not prevent
-pointer or keyboard control.
-Repeated capture or model failures expose Retry and the Settings disable path;
-missing bundled models report a source-specific error without blocking the Player.
+Voice shares UI actions for start, pause, resume, skip, intensity, and ERG.
+End-like commands pause and require manual completion. Skip while paused advances
+without restarting the trainer. Disabling voice releases microphone and models;
+idle releases the microphone while keeping models ready. Errors must preserve
+pointer/keyboard operation. Repeated failures expose Retry and Settings disable;
+missing models identify the failing source without blocking the Player.
 
-The workout rail retains device indicators and a session-only timeline. UI and
-voice actions share user-aligned command labels; ride events align opposite.
-The timeline ends with a card for the interval being ridden, showing its
-planned duration, target power, target cadence, and time left, so the history
-reads up to now rather than one interval behind the live metrics. The rail
-collapses to a slim strip from a handle halfway down its edge; the choice
-persists across rides. Unmatched attempts remain transient in the composer rather than
-filling history.
+The rail retains device indicators and a session-only timeline. UI and voice
+actions share labels on the user's side; ride events align opposite. The timeline
+ends with the current interval's duration, power/cadence targets, and time left.
+A midpoint handle collapses it; the choice persists across rides. Unmatched
+attempts remain transient in the composer.

@@ -10,12 +10,16 @@ Install stable Rust, Node 20+, and the platform build tools. Then run:
 
 ```bash
 npm install
+npm run voice:models
 npm run tauri:qa
 ```
 
 TrainerPro QA uses a separate bundle identifier and data directory. Prefer the
 simulated trainer and HRM; they support the same contracts and fault injection
-as the physical-device paths.
+as the physical-device paths. Fetch the pinned voice models before the first
+debug launch and after model-manifest changes; debug startup does not fetch them.
+
+For automated application checks, follow the [QA runner guide](backend/tests/e2e/README.md).
 
 ## Before submitting
 
@@ -25,17 +29,22 @@ they can use its public API. Keep narrow inline tests for private protocol or
 coordination invariants that have no practical public test path; do not expose
 production internals solely to move a test.
 
-Run focused tests while developing. For changes spanning Rust and TypeScript,
-finish with:
+Maintain automated coverage for parsing, compilation, engine effects, metrics,
+FIT output, database reconciliation, source adapters, simulator faults, and a
+complete simulated ride. Changes to device lifecycle, packaging, or FIT output
+also require the applicable manual checks in [the roadmap](docs/ROADMAP.md).
+
+Run focused tests while developing, including `npm run test:frontend` for
+frontend behavior. For changes spanning Rust and TypeScript, finish with:
 
 ```bash
 cargo test --workspace
 npm run build
 ```
 
-Check formatting before applying it repository-wide. If the baseline fails in
-unrelated files, do not create formatting churn. Before committing, inspect
-`git diff --check`, the changed-file list, and `git status`.
+Run `cargo fmt --all -- --check` before and after Rust edits. If the baseline
+fails in unrelated files, fix only formatting introduced by your change. Before
+committing, inspect `git diff --check`, the changed-file list, and `git status`.
 
 Never commit `dist/`, `target/`, credentials, personal activity data, or built
 application bundles.
@@ -43,8 +52,8 @@ application bundles.
 ## Architecture guardrails
 
 - Keep `tp-core` pure: no I/O, async, BLE, or Tauri dependencies.
-- Keep trainer and heart-rate hardware behind `TrainerConnection` and
-  `HeartRateConnection`; the simulator must be able to exercise the behavior.
+- Keep hardware behind `TrainerConnection`, `HeartRateConnection`, and
+  `StandaloneControllerConnection`; simulators must exercise the same behavior.
 - Extend the component that already owns a responsibility. Do not create
   parallel state channels or generic abstractions without multiple consumers,
   a real invariant, or a clear ownership boundary.
@@ -78,7 +87,8 @@ change affects it:
    (boundaries, flows, invariants, normative formats).
 3. **Give each fact one home.** Link to the canonical explanation instead of
    copying it. `PRODUCT.md` owns the durable destination, `SPEC.md` current
-   observable behavior, and `ROADMAP.md` unfinished sequencing.
+   application behavior, `integrations.md` connected-provider behavior, and
+   `ROADMAP.md` unfinished sequencing.
 4. **Prefer current truth.** Delete completed plans and superseded research;
    Git history is the archive.
 5. **Let code own implementation detail.** Internal types, SQL, IPC payloads,
@@ -98,7 +108,7 @@ A `v*` tag triggers `.github/workflows/release.yml`, which builds unsigned
 macOS and Windows packages and attaches them to a draft GitHub release. Signing
 and notarization credentials remain maintainer responsibilities.
 
-All Tauri builds, including QA and release CI, fetch the pinned voice models
+Packaged Tauri builds, including QA and release CI, fetch the pinned voice models
 through the shared pre-build hook before compiling the frontend. Downloads need
 network access on a clean checkout; verified local assets are reused offline.
 Size or SHA-256 verification failure stops the build before bundling.

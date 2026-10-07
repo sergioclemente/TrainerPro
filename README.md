@@ -39,8 +39,8 @@ workout, engine, recording, metrics, and FIT logic. `tp-ble` owns BLE drivers,
 connection traits, scanning, and simulators. `tp-integrations` provides reusable
 Garmin and Intervals.icu clients independently of the app and domain model.
 SQLite is authoritative for TPW workout definitions, schedules, provider state,
-and the Activity index; session
-journals and FIT files remain durable activity artifacts.
+and the Activity index; session journals and FIT files remain durable activity
+artifacts.
 
 See [the architecture guide](docs/architecture.md) for boundaries and flows.
 
@@ -51,9 +51,10 @@ See [the architecture guide](docs/architecture.md) for boundaries and flows.
 | [Product](docs/PRODUCT.md) | Product direction, vocabulary, decisions, and non-goals |
 | [Behavior spec](docs/SPEC.md) | Current user-visible behavior and acceptance expectations |
 | [Architecture](docs/architecture.md) | Technical ownership, invariants, and system flows |
+| [Voice developer guide](docs/voice.md) | Voice pipeline entry points and development workflows |
 | [TPW](docs/TPW.md) | Normative TrainerPro Workout JSON format |
 | [Roadmap](docs/ROADMAP.md) | Unfinished work and external gates |
-| [Intervals.icu](docs/feature-intervals-icu.md) | Inbound schedule-sync contract |
+| [Integrations](docs/integrations.md) | Garmin and Intervals.icu account, upload, and schedule behavior |
 | [WorkoutPlanner](docs/feature-workoutplanner.md) | Connected-library contract |
 
 Documentation purpose and maintenance rules are in

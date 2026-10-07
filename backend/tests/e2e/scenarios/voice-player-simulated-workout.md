@@ -21,7 +21,7 @@ scenario checks one representative spoken path per application action.
 
 - Run the current TrainerPro QA debug application. Use a packaged release QA
   build only when the run is also serving as the release packaging check.
-- Do not launch or interact with the regular TrainerPro application.
+- Follow the [QA runner guide](../README.md) for identity and profile setup.
 - **Simulated KICKR** is connected. **Simulated HRM** may also be connected.
   The `connect-simulated-devices` scenario can establish both connections.
 - `samples/sweetspot_3x10.zwo` is imported into the QA library as
@@ -47,7 +47,7 @@ scenario checks one representative spoken path per application action.
 ## Steps
 
 1. Open **Sweet Spot 3x10**, select **Ride this workout**, and wait until the
-   Player rail shows **Hold Space or controller button to talk** and the trainer shows **Simulated KICKR** as
+   Player rail shows **Push to talk** and the trainer shows **Simulated KICKR** as
    connected. The Player must show **Start** and **ready to start**.
 2. Say **“Set intensity to ninety percent.”** Expect feedback
    **Intensity set to 90%** and a persistent **90% intensity** badge.

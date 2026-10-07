@@ -11,7 +11,8 @@ tests.
 
 ## Running a scenario
 
-Use the isolated debug QA application for routine iteration:
+Complete [development setup](../../../CONTRIBUTING.md#development-setup), including
+voice-model preparation. Use the isolated debug QA application for routine iteration:
 
 ```bash
 npm run tauri:qa
@@ -37,7 +38,7 @@ preconditions are runner responsibilities rather than test steps.
 Scenarios marked with `input: human-microphone` require a person to speak the
 quoted phrases into the selected system input. A Computer Use agent may operate
 and observe the UI, but synthetic text entry is not a substitute for the real
-microphone, Moonshine, and endpointing path.
+microphone, Moonshine, and release-finalization path.
 
 For a scenario that requires unpaired devices, prepare the QA profile through
 the application itself: open **Devices**, use **Forget** for any saved trainer
@@ -56,5 +57,5 @@ Screenshots are not required for successful runs. The agent already observes
 the application visually; a runner may retain its final screenshot only when
 a run fails and the image is useful for diagnosis.
 
-This suite initially uses only simulated devices. Physical BLE behavior
+These scenarios use simulated devices. Physical BLE behavior
 remains a manual validation gate.

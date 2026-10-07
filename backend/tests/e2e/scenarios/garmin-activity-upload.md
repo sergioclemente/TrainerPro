@@ -6,9 +6,9 @@ application. **Audience:** QA operators with a separate Garmin test account.
 ID: `garmin-activity-upload`
 Input: human Garmin sign-in and MFA; simulated trainer and HRM.
 
-Use the verified `com.trainerpro.desktop.qa` bundle. The operator supplies
-credentials directly in the application. Never put passwords, tokens, codes,
-or identifying response bodies in test artifacts.
+Follow the [QA runner guide](../README.md) for bundle verification. The operator
+supplies credentials directly in the application. Never put passwords, tokens,
+codes, or identifying response bodies in test artifacts.
 
 1. Open Settings → Connections. Verify Garmin and Intervals.icu load
    independently and Garmin offers sign-in. Empty fields cannot be submitted.
