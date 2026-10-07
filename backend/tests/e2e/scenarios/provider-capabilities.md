@@ -5,8 +5,8 @@
 
 ID: `provider-capabilities`
 Input: connected Intervals.icu and Garmin QA accounts, an existing Garmin upload
-receipt, and simulated trainer/HRM devices. Follow the QA identity rules in
-CONTRIBUTING.md. Use disposable simulated rides for uploads.
+receipt, and simulated trainer/HRM devices. Follow the [QA runner guide](../README.md).
+Use disposable simulated rides for uploads.
 
 1. Upgrade an existing QA database to the new packaged app. Verify both account
    identities remain connected and existing Activity upload markers remain.
@@ -25,12 +25,9 @@ CONTRIBUTING.md. Use disposable simulated rides for uploads.
    already-confirmed Activities offer no repeated upload action.
 6. On a fresh test account setup, verify each provider's own authentication form
    and the common connection view after sign-in. Continue the provider-specific
-   scenario for MFA, reconnect, and credential-revocation validation.
+   [Garmin scenario](garmin-activity-upload.md) for MFA, reconnect, and
+   credential-revocation validation.
 
-The 2026-09-30 packaged smoke check verified existing account reuse, migration of
-an existing receipt, live Intervals.icu refresh, and a new disposable Garmin
-upload through the shared capability commands. Fresh sign-in and the remaining
-Garmin authentication/onward-sync gates are tracked in `garmin-activity-upload`.
 Independent-source failures, capability rejection, stale connection IDs,
-per-source date boundaries, and transfer coordination are covered by automated
-tests; the smoke check does not claim multiple live plan-source implementations.
+per-source date boundaries, and transfer coordination have automated coverage;
+this scenario does not establish multiple live plan-source implementations.

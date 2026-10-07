@@ -79,11 +79,9 @@ receipt, invokes the destination, and records only a confirmed remote Activity I
 Uploads and local deletion share a transfer guard, acquired before the provider
 guard. Reconnection preserves receipts; local deletion cascades only local receipts.
 
-The Garmin client sends one upload and checks asynchronous completion without
-resending the FIT. The backend persists rotated tokens before uploading and
-records the resulting receipt. Uncertain outcomes remain errors; recording and
-finalization do not depend on Garmin availability. Protocol references and live
-validation gates belong in [the Garmin contract](feature-garmin.md).
+The backend persists rotated Garmin tokens before uploading. Recording and
+finalization do not depend on provider availability. Upload behavior belongs in
+[Integrations](integrations.md#garmin-connect).
 
 ## Next Up and schedule sync
 
@@ -94,20 +92,17 @@ projection uses placement zone, then account zone, then machine-local fallback.
 
 Intervals.icu fetches a bounded calendar window through `tp-integrations`. The
 backend maps structured workouts to TPW before transactionally updating definitions
-and schedules. Failed requests cannot erase cached data. Repeated sync preserves
-local identities; edits update definition and placement together. Missing events
-and disconnects soft-retire provider state while retaining Activity references.
-See [the Intervals.icu contract](feature-intervals-icu.md) for reconciliation and
-external API semantics.
+and schedules. External event identity is scoped to the provider connection.
+Reconciliation and cache behavior belong in [Integrations](integrations.md#intervalsicu).
 
 ## Devices and player
 
 `TrainerConnection`, `HeartRateConnection`, and `StandaloneControllerConnection`
 separate hardware from application policy; simulators implement the same contracts.
-Stable Trainer and HRM role owners replace connections during recovery while
-consumers retain their state and measurement subscriptions. A retained object does
-not prove connectivity: `DeviceStatus` is authoritative, driven by adapter
-disconnect events for BLE link loss.
+Stable Trainer and HRM role owners manage reconnect policy and replace connections
+while consumers retain their state and measurement subscriptions. A retained
+object does not prove connectivity: `DeviceStatus` is authoritative, driven by
+adapter disconnect events for BLE link loss.
 
 The Controller selects borrowed trainer controls or an owned standalone connection.
 Wahoo input uses the FTMS notification pump; the Controller never owns or retries
@@ -116,18 +111,18 @@ the owner state stream; transient input carries its generation. Discontinuities
 cancel holds rather than synthesizing releases. Button mappings stay in the Player.
 
 The pure engine consumes runtime-supplied events and returns actions. The runtime
-owns ticks, trainer effects, keep-alive, measurement aggregation, reconnect policy,
-journal writes, and UI events. Trainer-control failure pauses execution; recovery
+owns ticks, trainer effects, keep-alive, measurement aggregation, journal writes,
+and UI events. Trainer-control failure pauses execution; recovery
 reapplies control and targets but requires explicit resume. HRM failure affects
 only heart-rate data. Segment finalization distinguishes completion from skip so
 recording and the timeline share one transition source.
 
 ## Recording and Activity finalization
 
-Starting creates a session ID and snapshots the workout. Samples and control events
-append to a crash-safe JSONL journal. Ending replays it, computes summaries and
-activity segments, writes FIT, and inserts the Activity. Journal-first recording
-preserves recovery and deterministic finalization.
+Loading the Player creates a session ID and snapshots the workout. Samples and
+control events append to a crash-safe JSONL journal. Ending replays it, computes
+summaries and activity segments, writes FIT, and inserts the Activity.
+Journal-first recording preserves recovery and deterministic finalization.
 
 Motion replay uses the snapshotted distance preference and rider weight. The pure
 calculation owns energy and accumulated distance; speed derives from energy.
@@ -145,7 +140,7 @@ serialized without an utterance queue.
 
 Capture and routing generations reject stale results after permission, visibility,
 focus, or input changes. Finish closes capture before flushing; cancel invalidates
-the generation and discards late callbacks. Leaving or
-hiding the Player cancels work; hard disable releases microphone and models.
+the generation and discards late callbacks. Leaving or hiding the Player cancels
+work; hard disable releases microphone and models.
 Tracing records lifecycle boundaries, never audio or transcripts. Implementation
-entry points and QA workflows are in [the voice guide](../frontend/voice/README.md).
+entry points and QA workflows are in [the voice guide](voice.md).

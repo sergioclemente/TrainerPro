@@ -3,81 +3,58 @@
 **Purpose:** Record unfinished product outcomes, their order, and external
 gates. **Audience:** Maintainers choosing the next line of work.
 
-The durable destination is [PRODUCT.md](PRODUCT.md). Shipped behavior belongs
-in [SPEC.md](SPEC.md), not here. This roadmap has no date commitments.
+[PRODUCT.md](PRODUCT.md) owns direction and open product questions;
+[SPEC.md](SPEC.md) owns current behavior. This roadmap has no date commitments.
+Manual checks below remain open until supported by live evidence.
 
 ## Now — desktop reliability and release readiness
 
-- Validate physical trainer and HRM disconnect/reconnect behavior whenever the
-  device lifecycle changes; simulator coverage is necessary but not sufficient.
-- Verify the estimated speed/distance Settings option in packaged TrainerPro QA
-  once Computer Use onboarding is available.
+- Validate Zwift Ride controls on physical hardware, including pairing, button
+  mappings, interrupted holds, recovery, and firmware compatibility.
+- Verify the estimated speed/distance Settings option in packaged TrainerPro QA.
 - Validate estimated indoor speed/distance with a disposable Garmin upload,
   including speed graphs, lap totals, and pause timing.
 - Complete Windows BLE and packaged-app validation.
-- Establish macOS and Windows signing/notarization before presenting builds as
-  broadly installable releases.
-- Continue focused usability and recovery improvements around the execution
-  flow without expanding TrainerPro into a calendar or content platform.
+- Establish macOS signing/notarization and Windows signing before broad releases.
 
 ## Voice follow-ups
 
 These are follow-ups, not additional release gates.
 
+- Extend voice commands beyond the Player, with actions appropriate to each
+  screen and availability checked against its current state.
+- Improve recognition and command reliability under fan noise, varied phrasing,
+  and microphone changes, reducing missed commands and unintended actions.
 - Complete the [spoken-command](../backend/tests/e2e/scenarios/voice-player-simulated-workout.md)
   and [runtime-discontinuity](../backend/tests/e2e/scenarios/voice-runtime-discontinuities.md)
   scenarios, including speaker echo, focus, sleep/wake, input replacement,
   permission revocation, and continued pointer/keyboard operation.
 - Measure long-session resource use, Player responsiveness, trainer control,
   and end-of-speech-to-action latency on the intended hardware floor.
-- Validate voice on Windows; macOS field results do not establish Windows support.
-- Pursue the [Moonshine upstream follow-ups](../vendor/moonshine-wasm/README.md#upstream-follow-ups)
-  without blocking TrainerPro releases.
+- Validate voice on Windows; macOS results do not establish Windows support.
+- Pursue the [Moonshine upstream follow-ups](../vendor/moonshine-wasm/README.md#upstream-follow-ups).
 - Build an evaluation corpus only if field accuracy warrants it. The dataset
   and model repositories `simoeswolf/TrainerPro` on Hugging Face are reserved,
   not runtime dependencies. Establish consent, provenance, licensing, and held-out
-  evaluation before generating or uploading data; consider training only if
-  semantic matching and deterministic argument parsing prove insufficient.
+  evaluation first; consider training only if matching and argument parsing
+  prove insufficient.
 
-## Next — evidence-driven provider expansion
+## Conditional — broader distribution
 
-- Select another planning or activity provider only when API access and user
-  demand justify it.
-- Treat TrainingPeaks and official Garmin API access as gated integrations.
-- Consider Strava only for capabilities its public API actually exposes.
-- Prove each concrete capability before extracting shared connector
-  abstractions.
+- Design production Intervals.icu OAuth if distribution expands beyond personal
+  use.
 
 ## Later — routes from outdoor rides
 
-- Reconstruct terrain from a previous outdoor ride and drive progress from current
-  power at simulated distance along that route, reusing the pure motion model.
-- Define terrain smoothing, positioning, braking, and trainer resistance control
-  as a separate feature. Journal enough motion and terrain data to reproduce an
-  activity. Routes and live speed/distance displays remain future work.
+- Reconstruct terrain from an outdoor ride and advance along it using current
+  power and the pure motion model.
+- Define smoothing, positioning, braking, trainer resistance, reproducible
+  recording, and live speed/distance displays before implementing routes.
 
 ## Later — adaptive coaching
 
-- Develop a separate AI planning service that owns training context, proposed
-  plans, user review, and publication to its planning authority.
-- Integrate that service as a plan source and, when supported, an Activity
-  destination. External history reads belong to the planning service.
+- Develop and integrate a separate AI planning service as a plan source and,
+  when supported, an Activity destination, following
+  [the provider direction](PRODUCT.md#provider-direction).
 - Evaluate recommendation quality, privacy, continuity, and operating cost
   before broader distribution.
-
-## Deferred and gated
-
-- Intervals.icu Activity upload, schedule publishing/editing, webhooks,
-  conflict resolution, and outbound retry queues are not currently planned.
-- Production Intervals.icu OAuth is required only if TrainerPro moves beyond
-  the personal/local distribution model.
-- Finish live validation of unofficial Garmin Web P0: MFA, token
-  refresh/revocation, account reconnection, and onward sync. Sign-in,
-  completed-Activity upload, restart persistence, and duplicate errors have
-  passed in QA. See [feature-garmin.md](feature-garmin.md).
-- Official Garmin synchronization depends on Garmin Developer Program access.
-- The future display horizon for Next Up remains an open product decision.
-
-Every future change must preserve deterministic `tp-core` execution, offline
-access to cached workouts, explicit ownership, observable sync failures, and
-the verification rules in [CONTRIBUTING.md](../CONTRIBUTING.md).

@@ -63,8 +63,7 @@ is not primarily a calendar, file manager, or large workout-catalog product.
 | **Activity segment** | A recorded portion of a ride, with actual timing and measurements; revisiting a workout segment can produce another activity segment. |
 | **FIT lap** | The export representation of an activity segment. |
 
-There is no persisted queue or `NextUp` entity. Next Up is a read model composed
-from scheduled workouts and recommendations.
+Next Up combines scheduled workouts and recommendations; it is not a managed queue.
 
 ## Product experience
 
@@ -74,9 +73,9 @@ recommendations show training purpose rather than an explanation of the ranking
 algorithm. The exact retention and ordering rules are specified in
 [SPEC.md](SPEC.md).
 
-Scheduled items and recommendations share the same detail, compilation, player,
-session, and Activity flow. Starting either snapshots the executable workout so
-a later provider edit cannot change the ride in progress or its history.
+Scheduled items and recommendations share one execution flow. Loading either
+into the Player snapshots the workout, protecting the ride and its history
+from later provider edits.
 
 The Library remains available for deliberate browsing and local ownership.
 Provider-owned schedule cache entries do not become removable local-library
@@ -85,21 +84,11 @@ owned local copy.
 
 ## Workout representation
 
-SQLite is the authoritative local store for normalized workout definitions,
-schedules, provider links, and Activities. **TrainerPro Workout (TPW)** is the
-versioned semantic JSON representation of a workout definition. It is designed
-for deterministic software, people, and language models to read and produce.
-The normative contract is [TPW/1](TPW.md).
-
-A definition compiles into the validated, possibly flattened workout the
-current trainer engine can execute:
-
-```text
-WorkoutDefinition -> ExecutableWorkout -> WorkoutSession -> Activity
-```
-
-Provider payloads may be retained for diagnostics or loss-aware conversion,
-but they are not a second editable source of truth.
+**TrainerPro Workout (TPW)** is the versioned semantic JSON representation of a
+workout definition, designed for software, people, and language models. See
+[TPW/1](TPW.md) for the normative contract and [architecture](architecture.md)
+for persistence and compilation. Provider payloads are boundary inputs, never
+a second editable source of truth.
 
 ## Provider direction
 
@@ -113,12 +102,12 @@ authoring retain their separate workflows.
 - **WorkoutPlanner** is a self-hosted definition source and editor.
 - **What's on Zwift** is a read-only workout catalog.
 - **Garmin Connect** supports explicit completed-Activity uploads through an
-  unofficial Web connection. Live account validation gates release; the
-  contract is in [feature-garmin.md](feature-garmin.md).
+  unofficial Web connection; see [Integrations](integrations.md#garmin-connect).
 - **TrainingPeaks and Strava** remain access- and evidence-dependent.
 - A future **AI planner** is an external planning service. It owns training
   context, plan generation, review, and publication. TrainerPro can consume its
   scheduled workouts and send it completed Activities through these capabilities.
+  External activity-history reads belong to that service.
 
 ## Non-goals
 
@@ -127,7 +116,9 @@ authoring retain their separate workflows.
 - Treating a workout file as canonical identity.
 - A generic connector abstraction without multiple concrete consumers.
 - Plan publication or calendar write-back from TrainerPro.
-- Intervals.icu Activity upload or external activity-history reads in the current scope.
+- Intervals.icu Activity upload, webhooks, sync conflict resolution, or outbound
+  retry queues in the current scope.
+- External activity-history reads in the current scope.
 - Production OAuth before broad multi-user distribution requires it.
 
 ## Open product questions
