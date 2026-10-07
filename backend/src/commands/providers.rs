@@ -36,7 +36,7 @@ pub struct ProviderDefinition {
 
 const PROVIDERS: &[ProviderDefinition] = &[
     ProviderDefinition {
-        id: crate::garmin::PROVIDER_ID,
+        id: tp_integrations::garmin::PROVIDER_ID,
         name: "Garmin",
         description: "Upload completed rides from the ride summary or Activities.",
         notice: Some("Uses an unofficial Garmin connection. Uploaded rides may sync onward to services linked to your Garmin account."),
@@ -44,7 +44,7 @@ const PROVIDERS: &[ProviderDefinition] = &[
         capabilities: &[ProviderCapability::Activities],
     },
     ProviderDefinition {
-        id: crate::intervals_icu::PROVIDER_ID,
+        id: tp_integrations::intervals_icu::PROVIDER_ID,
         name: "Intervals.icu",
         description: "Scheduled cycling workouts appear in Next Up and remain available offline.",
         notice: None,
@@ -183,8 +183,10 @@ pub async fn list_provider_connections(state: State<'_, AppState>) -> R<Vec<Prov
         };
         if let Some(row) = row {
             let credentials = match definition.id {
-                crate::garmin::PROVIDER_ID => garmin::has_credentials(&state, &row.id).await,
-                crate::intervals_icu::PROVIDER_ID => {
+                tp_integrations::garmin::PROVIDER_ID => {
+                    garmin::has_credentials(&state, &row.id).await
+                }
+                tp_integrations::intervals_icu::PROVIDER_ID => {
                     intervals_icu::has_credentials(&state, &row.id).await
                 }
                 _ => unreachable!("catalog must have an authentication adapter"),
@@ -247,7 +249,9 @@ pub async fn refresh_provider_plans(
         Some(ProviderCapability::Planning),
     )?;
     match connection.provider.as_str() {
-        crate::intervals_icu::PROVIDER_ID => intervals_icu::refresh(&state, &connection).await,
+        tp_integrations::intervals_icu::PROVIDER_ID => {
+            intervals_icu::refresh(&state, &connection).await
+        }
         _ => unreachable!("catalog must have a plan-source adapter"),
     }
 }
@@ -263,8 +267,10 @@ pub async fn disconnect_provider(
     let _operation = operations.acquire(&connection.provider)?;
     require_active(&state.db.lock().unwrap(), &connection_id, None)?;
     match connection.provider.as_str() {
-        crate::garmin::PROVIDER_ID => garmin::disconnect(&state, &garmin, &connection_id).await,
-        crate::intervals_icu::PROVIDER_ID => {
+        tp_integrations::garmin::PROVIDER_ID => {
+            garmin::disconnect(&state, &garmin, &connection_id).await
+        }
+        tp_integrations::intervals_icu::PROVIDER_ID => {
             intervals_icu::disconnect(&state, &connection_id).await
         }
         _ => unreachable!("catalog must have a disconnect adapter"),
@@ -292,7 +298,7 @@ pub async fn upload_activity(
         Some(ProviderCapability::Activities),
     )?;
     match connection.provider.as_str() {
-        crate::garmin::PROVIDER_ID => {
+        tp_integrations::garmin::PROVIDER_ID => {
             transfer_activity(&state.db, &connection_id, &activity_id, |fit| {
                 garmin::upload(&state, &connection_id, fit)
             })

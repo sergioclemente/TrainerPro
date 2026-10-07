@@ -4651,7 +4651,6 @@ name = "tp-app"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "futures",
@@ -4670,6 +4669,7 @@ dependencies = [
  "tokio",
  "tp-ble",
  "tp-core",
+ "tp-integrations",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -4698,6 +4698,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "tp-integrations"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]

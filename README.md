@@ -36,8 +36,10 @@ choosing **Open**. Windows packages similarly show an unknown-publisher warning.
 
 The React frontend talks to a Rust Tauri backend. `tp-core` contains pure
 workout, engine, recording, metrics, and FIT logic. `tp-ble` owns BLE drivers,
-connection traits, scanning, and simulators. SQLite is authoritative for TPW
-workout definitions, schedules, provider state, and the Activity index; session
+connection traits, scanning, and simulators. `tp-integrations` provides reusable
+Garmin and Intervals.icu clients independently of the app and domain model.
+SQLite is authoritative for TPW workout definitions, schedules, provider state,
+and the Activity index; session
 journals and FIT files remain durable activity artifacts.
 
 See [the architecture guide](docs/architecture.md) for boundaries and flows.
@@ -60,11 +62,12 @@ Documentation purpose and maintenance rules are in
 ## Repository layout
 
 ```text
-frontend/       React UI, state, and typed IPC client
-backend/        Tauri host, persistence, integrations, and runtime services
-crates/tp-core/ Pure workout, engine, journal, metrics, and FIT domain logic
-crates/tp-ble/  BLE contracts, drivers, device manager, and simulators
-docs/           Product, behavior, architecture, and feature contracts
+frontend/              React UI, state, and typed IPC client
+backend/               Tauri host, persistence, provider adapters, and runtime services
+crates/tp-core/         Pure workout, engine, journal, metrics, and FIT domain logic
+crates/tp-ble/          BLE contracts, drivers, device manager, and simulators
+crates/tp-integrations/ Garmin and Intervals.icu clients and provider payloads
+docs/                  Product, behavior, architecture, and feature contracts
 ```
 
 ## Contributing

@@ -1,5 +1,6 @@
 //! Garmin's unofficial mobile SSO and Connect activity-upload protocol.
-//! See docs/feature-garmin.md for the upstream reference and live validation gate.
+//! Callers own credential persistence and account/transfer coordination.
+//! Uploads return only confirmed remote activity IDs and never resend the file.
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -36,51 +37,30 @@ const MIN_FIT_HEADER_SIZE: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum GarminError {
-    #[error("Could not reach Garmin. Check your connection and try again.")]
+    #[error("Could not reach Garmin.")]
     Network,
-    #[error("Garmin sign-in expired or was rejected. Sign in again in Settings → Connections.")]
+    #[error("Garmin authentication expired or was rejected.")]
     Authentication,
-    #[error(
-        "Garmin requires a browser challenge. Use manual FIT import and try connecting later."
-    )]
+    #[error("Garmin requires a browser challenge.")]
     Challenge,
-    #[error("Garmin is limiting requests. Wait before trying again.")]
+    #[error("Garmin rate limit exceeded.")]
     RateLimited,
-    #[error("Garmin returned an unexpected response. Try again later or use manual FIT import.")]
+    #[error("Garmin returned an unexpected response.")]
     Protocol,
-    #[error("The Garmin verification code was rejected. Check the code and try again.")]
+    #[error("Garmin rejected the verification code.")]
     MfaRejected,
-    #[error("Garmin verification expired. Start sign-in again.")]
+    #[error("Garmin verification expired.")]
     MfaExpired,
-    #[error("Garmin says this activity already exists. Check Garmin Connect before trying again.")]
+    #[error("The activity already exists in Garmin.")]
     Duplicate,
-    #[error("Garmin rejected this FIT activity. Try importing the saved file on Garmin Connect.")]
+    #[error("Garmin rejected the FIT activity.")]
     UploadRejected,
-    #[error("Garmin requires an account step before uploads. Open Garmin Connect and review pending account setup or data-upload consent, then retry.")]
+    #[error("Garmin requires account setup or upload consent.")]
     UploadConsentRequired,
-    #[error("Garmin may have received this activity, but its upload could not be confirmed. Check Garmin Connect before retrying.")]
+    #[error("Garmin may have received the activity, but its upload could not be confirmed.")]
     UploadUncertain,
-    #[error("The recorded file is not a FIT activity. Use another completed ride.")]
+    #[error("The supplied file is not a FIT activity.")]
     InvalidFit,
-}
-
-impl GarminError {
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::Network => "garmin_network",
-            Self::Authentication => "garmin_authentication",
-            Self::Challenge => "garmin_challenge",
-            Self::RateLimited => "garmin_rate_limited",
-            Self::Protocol => "garmin_protocol",
-            Self::MfaRejected => "garmin_mfa_rejected",
-            Self::MfaExpired => "garmin_mfa_expired",
-            Self::Duplicate => "garmin_duplicate",
-            Self::UploadRejected => "garmin_upload_rejected",
-            Self::UploadConsentRequired => "garmin_upload_consent_required",
-            Self::UploadUncertain => "garmin_upload_uncertain",
-            Self::InvalidFit => "garmin_invalid_fit",
-        }
-    }
 }
 
 // Deliberately no Debug implementation: neither tokens nor MFA cookies belong in logs.
@@ -93,6 +73,8 @@ pub struct Tokens {
 }
 
 impl Tokens {
+    /// Whether the caller should refresh and durably store the returned tokens
+    /// before starting an authenticated operation.
     pub fn needs_refresh(&self) -> bool {
         self.expires_at_unix_s
             .is_none_or(|expires| now_unix_s().saturating_add(TOKEN_REFRESH_MARGIN_S) >= expires)
@@ -123,6 +105,7 @@ pub struct GarminClient {
 }
 
 impl GarminClient {
+    /// Create a client for Garmin's production services with a private cookie jar.
     pub fn new() -> Result<Self, GarminError> {
         Self::with_endpoints(SSO_BASE, API_BASE, TOKEN_URL)
     }
@@ -241,10 +224,18 @@ impl GarminClient {
         Ok(Account { id, display_name })
     }
 
-    pub async fn upload(&self, tokens: &Tokens, fit: Vec<u8>) -> Result<String, GarminError> {
+    /// Send the FIT once and return its confirmed remote activity ID. A pending
+    /// upload is polled without resending; an uncertain outcome is an error.
+    /// The caller supplies the multipart filename and owns deduplication receipts.
+    pub async fn upload(
+        &self,
+        tokens: &Tokens,
+        fit: Vec<u8>,
+        filename: &str,
+    ) -> Result<String, GarminError> {
         validate_fit(&fit)?;
         let file = reqwest::multipart::Part::bytes(fit)
-            .file_name("TrainerPro.fit")
+            .file_name(filename.to_owned())
             .mime_str("application/octet-stream")
             .map_err(|_| GarminError::InvalidFit)?;
         let response = native_headers(
@@ -514,10 +505,12 @@ pub fn validate_fit(fit: &[u8]) -> Result<(), GarminError> {
     if fit.len() < MIN_FIT_HEADER_SIZE || fit[FIT_SIGNATURE_OFFSET..FIT_SIGNATURE_END] != *b".FIT" {
         return Err(GarminError::InvalidFit);
     }
-    // Files are resolved from the Activity index; full FIT validity belongs to tp-core.
+    // This is a header check; callers are responsible for full FIT validity.
     Ok(())
 }
 
+// Private endpoint injection and MFA expiry keep protocol tests local.
+// Public payload and credential compatibility tests live in tests/.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,7 +573,7 @@ mod tests {
     }
 
     fn tokens() -> Tokens {
-        tokens_from_response(json!({"access_token":"test-access", "refresh_token":"test-refresh", "expires_in":3600}), TOKEN_CLIENT_ID, None).unwrap()
+        serde_json::from_value(json!({"access_token":"test-access", "refresh_token":"test-refresh", "client_id":"test-client"})).unwrap()
     }
 
     #[tokio::test]
@@ -665,8 +658,9 @@ mod tests {
             "",
         )]);
         let updated = client.refresh(&tokens()).await.unwrap();
-        assert_eq!(updated.refresh_token, "rotated-refresh");
-        assert_eq!(updated.access_token, "new-access");
+        let saved = serde_json::to_value(&updated).unwrap();
+        assert_eq!(saved["refresh_token"], "rotated-refresh");
+        assert_eq!(saved["access_token"], "new-access");
         assert!(requests.join().unwrap()[0].contains("refresh_token=test-refresh"));
         let (client, requests) = server(vec![(
             "400 Bad Request",
@@ -682,27 +676,29 @@ mod tests {
 
     #[tokio::test]
     async fn uploads_exact_fit_bytes_once_to_generic_upload_endpoint() {
-        let (client, requests) = server(vec![(
-            "200 OK",
-            json!({"detailedImportResult":{"successes":[{"internalId":456}],"failures":[]}}),
-            "",
-        )]);
-        assert_eq!(
-            client
-                .upload(&tokens(), SYNTHETIC_FIT.to_vec())
-                .await
-                .unwrap(),
-            "456"
-        );
-        let requests = requests.join().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert!(requests[0].starts_with("POST /upload-service/upload HTTP/1.1"));
-        assert!(requests[0].contains("name=\"file\"; filename=\"TrainerPro.fit\""));
-        assert!(requests[0]
-            .as_bytes()
-            .windows(SYNTHETIC_FIT.len())
-            .any(|part| part == SYNTHETIC_FIT));
-        assert!(requests[0].contains("authorization: Bearer test-access"));
+        for remote_id in [json!(456), json!("456")] {
+            let (client, requests) = server(vec![(
+                "200 OK",
+                json!({"detailedImportResult":{"successes":[{"internalId":remote_id}],"failures":[]}}),
+                "",
+            )]);
+            assert_eq!(
+                client
+                    .upload(&tokens(), SYNTHETIC_FIT.to_vec(), "ride.fit")
+                    .await
+                    .unwrap(),
+                "456"
+            );
+            let requests = requests.join().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].starts_with("POST /upload-service/upload HTTP/1.1"));
+            assert!(requests[0].contains("name=\"file\"; filename=\"ride.fit\""));
+            assert!(requests[0]
+                .as_bytes()
+                .windows(SYNTHETIC_FIT.len())
+                .any(|part| part == SYNTHETIC_FIT));
+            assert!(requests[0].contains("authorization: Bearer test-access"));
+        }
     }
 
     #[tokio::test]
@@ -722,7 +718,7 @@ mod tests {
         ]);
         assert_eq!(
             client
-                .upload(&tokens(), SYNTHETIC_FIT.to_vec())
+                .upload(&tokens(), SYNTHETIC_FIT.to_vec(), "ride.fit")
                 .await
                 .unwrap(),
             "456"
@@ -751,7 +747,9 @@ mod tests {
         ] {
             let (client, requests) = server(vec![("202 Accepted", json!({}), location)]);
             assert_eq!(
-                client.upload(&tokens(), SYNTHETIC_FIT.to_vec()).await,
+                client
+                    .upload(&tokens(), SYNTHETIC_FIT.to_vec(), "ride.fit")
+                    .await,
                 Err(GarminError::UploadUncertain)
             );
             assert_eq!(requests.join().unwrap().len(), 1);
@@ -771,7 +769,9 @@ mod tests {
                 ("201 Created", json!({}), location),
             ]);
             assert_eq!(
-                client.upload(&tokens(), SYNTHETIC_FIT.to_vec()).await,
+                client
+                    .upload(&tokens(), SYNTHETIC_FIT.to_vec(), "ride.fit")
+                    .await,
                 Err(GarminError::UploadUncertain)
             );
             assert_eq!(requests.join().unwrap().len(), 2);
@@ -793,7 +793,9 @@ mod tests {
                 (status, json!({}), ""),
             ]);
             assert_eq!(
-                client.upload(&tokens(), SYNTHETIC_FIT.to_vec()).await,
+                client
+                    .upload(&tokens(), SYNTHETIC_FIT.to_vec(), "ride.fit")
+                    .await,
                 Err(expected)
             );
             assert_eq!(requests.join().unwrap().len(), 2);
@@ -806,7 +808,9 @@ mod tests {
         responses.extend((0..UPLOAD_STATUS_CHECKS).map(|_| ("202 Accepted", json!({}), "")));
         let (client, requests) = server(responses);
         assert_eq!(
-            client.upload(&tokens(), SYNTHETIC_FIT.to_vec()).await,
+            client
+                .upload(&tokens(), SYNTHETIC_FIT.to_vec(), "ride.fit")
+                .await,
             Err(GarminError::UploadUncertain)
         );
         let requests = requests.join().unwrap();
@@ -821,23 +825,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_errors_are_distinct_and_never_retried() {
-        for (status, expected) in [
-            ("401 Unauthorized", GarminError::Authentication),
-            ("403 Forbidden", GarminError::Challenge),
-            ("409 Conflict", GarminError::Duplicate),
-            ("429 Too Many Requests", GarminError::RateLimited),
-            ("400 Bad Request", GarminError::UploadRejected),
+    async fn upload_failures_never_confirm_or_resend_the_activity() {
+        for (status, body, expected) in [
+            ("401 Unauthorized", json!({}), GarminError::Authentication),
+            ("403 Forbidden", json!({}), GarminError::Challenge),
+            ("409 Conflict", json!({}), GarminError::Duplicate),
+            ("429 Too Many Requests", json!({}), GarminError::RateLimited),
+            ("400 Bad Request", json!({}), GarminError::UploadRejected),
             (
                 "412 Precondition Failed",
+                json!({}),
                 GarminError::UploadConsentRequired,
             ),
-            ("500 Internal Server Error", GarminError::UploadUncertain),
-            ("200 OK", GarminError::UploadUncertain),
+            (
+                "500 Internal Server Error",
+                json!({}),
+                GarminError::UploadUncertain,
+            ),
+            ("200 OK", json!({}), GarminError::UploadUncertain),
+            (
+                "200 OK",
+                json!({"detailedImportResult":{"uploadId":123,"successes":[],"failures":[]}}),
+                GarminError::UploadUncertain,
+            ),
+            (
+                "200 OK",
+                json!({"detailedImportResult":{"successes":[{}],"failures":[]}}),
+                GarminError::UploadUncertain,
+            ),
+            (
+                "200 OK",
+                json!({"detailedImportResult":{"successes":[{"internalId":1},{"internalId":2}],"failures":[]}}),
+                GarminError::UploadUncertain,
+            ),
+            (
+                "200 OK",
+                json!({"detailedImportResult":{"successes":[],"failures":[{"messages":null}]}}),
+                GarminError::UploadRejected,
+            ),
+            (
+                "200 OK",
+                json!({"detailedImportResult":{"successes":[],"failures":[{"internalId":123,"messages":[{"code":DUPLICATE_ACTIVITY_MESSAGE_CODE}]}]}}),
+                GarminError::Duplicate,
+            ),
         ] {
-            let (client, requests) = server(vec![(status, json!({}), "")]);
+            let (client, requests) = server(vec![(status, body, "")]);
             assert_eq!(
-                client.upload(&tokens(), SYNTHETIC_FIT.to_vec()).await,
+                client
+                    .upload(&tokens(), SYNTHETIC_FIT.to_vec(), "ride.fit")
+                    .await,
                 Err(expected)
             );
             assert_eq!(requests.join().unwrap().len(), 1);
@@ -902,59 +938,5 @@ mod tests {
             requests.join().unwrap();
             assert!(!expected.to_string().contains("must-not-leak"));
         }
-    }
-
-    #[test]
-    fn only_a_single_confirmed_remote_activity_is_success() {
-        for body in [
-            json!({}),
-            json!({"detailedImportResult":{"uploadId":123,"successes":[],"failures":[]}}),
-            json!({"detailedImportResult":{"successes":[{}],"failures":[]}}),
-            json!({"detailedImportResult":{"successes":[{"internalId":1},{"internalId":2}],"failures":[]}}),
-        ] {
-            assert_eq!(upload_id(&body), Err(GarminError::UploadUncertain));
-        }
-        assert_eq!(
-            upload_id(
-                &json!({"detailedImportResult":{"successes":[],"failures":[{"messages":null}]}})
-            ),
-            Err(GarminError::UploadRejected)
-        );
-        assert_eq!(
-            upload_id(
-                &json!({"detailedImportResult":{"successes":[{"internalId":"123"}],"failures":[]}})
-            ),
-            Ok("123".into())
-        );
-    }
-
-    #[tokio::test]
-    async fn duplicate_in_a_success_http_response_is_not_an_upload_receipt() {
-        let (client, requests) = server(vec![(
-            "200 OK",
-            json!({"detailedImportResult": {
-                "successes": [], "failures": [{"internalId": 123, "messages": [{"code": DUPLICATE_ACTIVITY_MESSAGE_CODE}]}]
-            }}),
-            "",
-        )]);
-        assert_eq!(
-            client.upload(&tokens(), SYNTHETIC_FIT.to_vec()).await,
-            Err(GarminError::Duplicate)
-        );
-        assert_eq!(requests.join().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn invalid_fit_is_rejected_before_network_io() {
-        let client = GarminClient::with_endpoints(
-            "http://127.0.0.1:1",
-            "http://127.0.0.1:1",
-            "http://127.0.0.1:1",
-        )
-        .unwrap();
-        assert_eq!(
-            client.upload(&tokens(), b"not a FIT file".to_vec()).await,
-            Err(GarminError::InvalidFit)
-        );
     }
 }

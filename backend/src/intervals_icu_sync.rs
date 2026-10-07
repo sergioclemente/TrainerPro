@@ -5,9 +5,8 @@ use std::collections::HashSet;
 use rusqlite::Connection;
 
 use crate::database::{provider_connections, scheduled_workouts};
-use crate::intervals_icu::{
-    is_iso_date, IntervalsCalendarEvent, IntervalsWorkoutError, PROVIDER_ID,
-};
+use crate::intervals_icu::{to_workout_definition, IntervalsWorkoutError};
+use tp_integrations::intervals_icu::{is_iso_date, IntervalsCalendarEvent, PROVIDER_ID};
 
 const ALL_DAY_START_TIME_LOCAL: &str = "00:00:00";
 
@@ -115,7 +114,7 @@ pub(crate) fn persist_calendar_window(
 
     for event in events {
         let external_event_id = event.id.to_string();
-        let definition = match event.to_workout_definition() {
+        let definition = match to_workout_definition(event) {
             Ok(definition) => definition,
             Err(
                 IntervalsWorkoutError::UnsupportedSport { .. }

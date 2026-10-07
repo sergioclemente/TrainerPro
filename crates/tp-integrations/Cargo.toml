@@ -1,0 +1,18 @@
+[package]
+name = "tp-integrations"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable Garmin and Intervals.icu provider clients"
+license = "MIT"
+repository = "https://github.com/sergioclemente/TrainerPro"
+
+[dependencies]
+reqwest = { workspace = true, features = ["multipart", "cookies"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["time"] }
+base64 = "0.22"
+
+[dev-dependencies]
+tokio = { workspace = true }
