@@ -1,254 +1,17 @@
-//! Intervals.icu calendar payloads and their provider-specific TPW adapter.
-//!
-//! Network, credential, and sync policy do not belong here. This module maps
-//! the structured `workout_doc` returned by the provider into TrainerPro's
-//! semantic workout model without reparsing the event description.
+//! Convert Intervals.icu structured workouts into TrainerPro TPW definitions.
+//! Transport and provider payloads live in tp-integrations; sync policy stays separate.
 
-use std::time::Duration;
-
-use reqwest::StatusCode;
-use serde::Deserialize;
 use tp_core::consts::TEXT_EVENT_DEFAULT_S;
 use tp_core::workout_definition::{
     CyclingCadenceTarget, CyclingPowerTarget, CyclingStep, WorkoutCue, WorkoutDefinition,
     WorkoutDefinitionError, WorkoutFormat, WorkoutPrescription, TPW_VERSION,
 };
 
+use tp_integrations::intervals_icu::{IntervalsCalendarEvent, IntervalsStep, IntervalsTarget};
+
 const WORKOUT_CATEGORY: &str = "WORKOUT";
 const RIDE_TYPE: &str = "Ride";
 const VIRTUAL_RIDE_TYPE: &str = "VirtualRide";
-pub(crate) const PROVIDER_ID: &str = "intervals_icu";
-const API_BASE_URL: &str = "https://intervals.icu";
-const API_KEY_USERNAME: &str = "API_KEY";
-const REQUEST_TIMEOUT_SECONDS: u64 = 30;
-const ATHLETE_PATH: &str = "/api/v1/athlete/0";
-const CALENDAR_EVENTS_PATH: &str = "/api/v1/athlete/0/events";
-
-pub(crate) struct IntervalsIcuClient {
-    http: reqwest::Client,
-    base_url: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum IntervalsApiError {
-    #[error("Intervals.icu API key is blank")]
-    MissingApiKey,
-    #[error(
-        "invalid Intervals.icu calendar range {oldest_date_local:?} through {newest_date_local:?}; expected ordered YYYY-MM-DD dates"
-    )]
-    InvalidDateRange {
-        oldest_date_local: String,
-        newest_date_local: String,
-    },
-    #[error("could not create the Intervals.icu HTTP client: {0}")]
-    Client(#[source] reqwest::Error),
-    #[error("could not reach Intervals.icu: {0}")]
-    Request(#[source] reqwest::Error),
-    #[error("Intervals.icu rejected the API credentials")]
-    Unauthorized,
-    #[error("Intervals.icu returned HTTP {status}")]
-    HttpStatus { status: StatusCode },
-    #[error("Intervals.icu returned an invalid calendar response: {0}")]
-    InvalidResponse(#[source] reqwest::Error),
-    #[error("Intervals.icu returned invalid athlete metadata: {message}")]
-    InvalidAthlete { message: String },
-}
-
-impl IntervalsIcuClient {
-    pub(crate) fn new() -> Result<Self, IntervalsApiError> {
-        Self::with_base_url(API_BASE_URL)
-    }
-
-    fn with_base_url(base_url: &str) -> Result<Self, IntervalsApiError> {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
-            .user_agent(concat!("TrainerPro/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(IntervalsApiError::Client)?;
-        Ok(Self {
-            http,
-            base_url: base_url.trim_end_matches('/').to_string(),
-        })
-    }
-
-    /// Validate a personal API key and obtain the non-secret account metadata
-    /// required to scope provider identity and timed schedule placement.
-    pub(crate) async fn fetch_athlete(
-        &self,
-        api_key: &str,
-    ) -> Result<IntervalsAthlete, IntervalsApiError> {
-        if api_key.trim().is_empty() {
-            return Err(IntervalsApiError::MissingApiKey);
-        }
-        let response = self
-            .http
-            .get(format!("{}{}", self.base_url, ATHLETE_PATH))
-            .basic_auth(API_KEY_USERNAME, Some(api_key))
-            .send()
-            .await
-            .map_err(IntervalsApiError::Request)?;
-        let athlete: IntervalsAthlete = parse_response(response).await?;
-        if athlete.id.trim().is_empty() {
-            return Err(IntervalsApiError::InvalidAthlete {
-                message: "missing athlete id".into(),
-            });
-        }
-        if athlete.timezone.trim().is_empty() {
-            return Err(IntervalsApiError::InvalidAthlete {
-                message: "missing athlete timezone".into(),
-            });
-        }
-        Ok(athlete)
-    }
-
-    /// Fetch a bounded calendar window without asking Intervals.icu to resolve
-    /// relative targets or attach a workout file. The structured `workout_doc`
-    /// remains the source consumed by `to_workout_definition`.
-    pub(crate) async fn fetch_workout_events(
-        &self,
-        api_key: &str,
-        oldest_date_local: &str,
-        newest_date_local: &str,
-    ) -> Result<Vec<IntervalsCalendarEvent>, IntervalsApiError> {
-        if api_key.trim().is_empty() {
-            return Err(IntervalsApiError::MissingApiKey);
-        }
-        if !is_iso_date(oldest_date_local)
-            || !is_iso_date(newest_date_local)
-            || oldest_date_local > newest_date_local
-        {
-            return Err(IntervalsApiError::InvalidDateRange {
-                oldest_date_local: oldest_date_local.to_string(),
-                newest_date_local: newest_date_local.to_string(),
-            });
-        }
-
-        let response = self
-            .http
-            .get(format!("{}{}", self.base_url, CALENDAR_EVENTS_PATH))
-            .basic_auth(API_KEY_USERNAME, Some(api_key))
-            .query(&[
-                ("category", WORKOUT_CATEGORY),
-                ("oldest", oldest_date_local),
-                ("newest", newest_date_local),
-            ])
-            .send()
-            .await
-            .map_err(IntervalsApiError::Request)?;
-
-        parse_response(response).await
-    }
-}
-
-async fn parse_response<T: serde::de::DeserializeOwned>(
-    response: reqwest::Response,
-) -> Result<T, IntervalsApiError> {
-    match response.status() {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(IntervalsApiError::Unauthorized),
-        status if !status.is_success() => Err(IntervalsApiError::HttpStatus { status }),
-        _ => response
-            .json::<T>()
-            .await
-            .map_err(IntervalsApiError::InvalidResponse),
-    }
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-pub(crate) struct IntervalsAthlete {
-    pub id: String,
-    #[serde(default)]
-    pub name: String,
-    pub timezone: String,
-}
-
-impl IntervalsAthlete {
-    pub(crate) fn display_name(&self) -> Option<&str> {
-        let name = self.name.trim();
-        (!name.is_empty()).then_some(name)
-    }
-}
-
-pub(crate) fn is_iso_date(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 10
-        && bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct IntervalsCalendarEvent {
-    pub id: i64,
-    #[cfg(test)]
-    #[serde(default)]
-    pub uid: Option<String>,
-    #[cfg(test)]
-    #[serde(default)]
-    pub external_id: Option<serde_json::Value>,
-    #[serde(default)]
-    pub updated: Option<String>,
-    pub start_date_local: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    pub category: String,
-    pub name: String,
-    #[serde(default)]
-    pub moving_time: Option<u32>,
-    #[serde(default)]
-    workout_doc: Option<IntervalsWorkoutDoc>,
-}
-
-#[derive(Debug, Deserialize)]
-struct IntervalsWorkoutDoc {
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    duration: Option<u32>,
-    #[serde(default)]
-    steps: Vec<IntervalsStep>,
-}
-
-#[derive(Debug, Deserialize)]
-struct IntervalsStep {
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    duration: Option<u32>,
-    #[serde(default)]
-    distance: Option<f64>,
-    #[serde(default)]
-    until_lap_press: bool,
-    #[serde(default)]
-    reps: Option<u32>,
-    #[serde(default)]
-    steps: Vec<IntervalsStep>,
-    #[serde(default)]
-    ramp: bool,
-    #[serde(default)]
-    freeride: bool,
-    #[serde(default)]
-    power: Option<IntervalsTarget>,
-    #[serde(default)]
-    cadence: Option<IntervalsTarget>,
-    #[serde(default)]
-    hr: Option<IntervalsTarget>,
-    #[serde(default)]
-    pace: Option<IntervalsTarget>,
-}
-
-#[derive(Debug, Deserialize)]
-struct IntervalsTarget {
-    units: String,
-    #[serde(default)]
-    value: Option<f64>,
-    #[serde(default)]
-    start: Option<f64>,
-    #[serde(default)]
-    end: Option<f64>,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum IntervalsWorkoutError {
@@ -273,45 +36,50 @@ pub(crate) enum IntervalsWorkoutError {
     InvalidDefinition(#[from] WorkoutDefinitionError),
 }
 
-impl IntervalsCalendarEvent {
-    pub(crate) fn to_workout_definition(&self) -> Result<WorkoutDefinition, IntervalsWorkoutError> {
-        if self.category != WORKOUT_CATEGORY {
-            return Err(IntervalsWorkoutError::NotWorkout {
-                event_id: self.id,
-                category: self.category.clone(),
-            });
-        }
-        if !matches!(self.event_type.as_str(), RIDE_TYPE | VIRTUAL_RIDE_TYPE) {
-            return Err(IntervalsWorkoutError::UnsupportedSport {
-                event_id: self.id,
-                event_type: self.event_type.clone(),
-            });
-        }
-
-        let doc = self
-            .workout_doc
-            .as_ref()
-            .ok_or(IntervalsWorkoutError::MissingWorkoutDoc { event_id: self.id })?;
-        let definition = WorkoutDefinition {
-            format: WorkoutFormat::Tpw,
-            version: TPW_VERSION,
-            title: self.name.trim().to_string(),
-            description: doc
-                .description
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
-            training_focus: None,
-            prescription: WorkoutPrescription::Cycling {
-                steps: convert_steps(&doc.steps, "workout_doc.steps")?,
-            },
-        };
-        let definition_seconds = definition.duration_seconds()?;
-        check_duration(self.id, "workout_doc", doc.duration, definition_seconds)?;
-        check_duration(self.id, "moving_time", self.moving_time, definition_seconds)?;
-        Ok(definition)
+pub(crate) fn to_workout_definition(
+    event: &IntervalsCalendarEvent,
+) -> Result<WorkoutDefinition, IntervalsWorkoutError> {
+    if event.category != WORKOUT_CATEGORY {
+        return Err(IntervalsWorkoutError::NotWorkout {
+            event_id: event.id,
+            category: event.category.clone(),
+        });
     }
+    if !matches!(event.event_type.as_str(), RIDE_TYPE | VIRTUAL_RIDE_TYPE) {
+        return Err(IntervalsWorkoutError::UnsupportedSport {
+            event_id: event.id,
+            event_type: event.event_type.clone(),
+        });
+    }
+
+    let doc = event
+        .workout_doc
+        .as_ref()
+        .ok_or(IntervalsWorkoutError::MissingWorkoutDoc { event_id: event.id })?;
+    let definition = WorkoutDefinition {
+        format: WorkoutFormat::Tpw,
+        version: TPW_VERSION,
+        title: event.name.trim().to_string(),
+        description: doc
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        training_focus: None,
+        prescription: WorkoutPrescription::Cycling {
+            steps: convert_steps(&doc.steps, "workout_doc.steps")?,
+        },
+    };
+    let definition_seconds = definition.duration_seconds()?;
+    check_duration(event.id, "workout_doc", doc.duration, definition_seconds)?;
+    check_duration(
+        event.id,
+        "moving_time",
+        event.moving_time,
+        definition_seconds,
+    )?;
+    Ok(definition)
 }
 
 fn check_duration(
@@ -585,34 +353,11 @@ fn invalid_error(path: impl Into<String>, message: impl Into<String>) -> Interva
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    fn stub(response: String) -> (String, std::thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let handle = std::thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            let mut buffer = [0u8; 8192];
-            let count = socket.read(&mut buffer).unwrap();
-            socket.write_all(response.as_bytes()).unwrap();
-            String::from_utf8_lossy(&buffer[..count]).into_owned()
-        });
-        (base_url, handle)
-    }
-
-    fn http(status: &str, body: &str) -> String {
-        format!(
-            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        )
-    }
+    use tp_integrations::intervals_icu::IntervalsWorkoutDoc;
 
     fn event_with_steps(steps: Vec<IntervalsStep>, duration: u32) -> IntervalsCalendarEvent {
         IntervalsCalendarEvent {
             id: 7,
-            uid: Some("fixture-uid".into()),
-            external_id: None,
             updated: Some("2030-01-01T00:00:00.000+0000".into()),
             start_date_local: "2030-01-01T00:00:00".into(),
             event_type: VIRTUAL_RIDE_TYPE.into(),
@@ -645,126 +390,6 @@ mod tests {
     }
 
     #[test]
-    fn production_client_uses_intervals_base_url() {
-        let client = IntervalsIcuClient::new().unwrap();
-        assert_eq!(client.base_url, API_BASE_URL);
-    }
-
-    #[tokio::test]
-    async fn fetches_bounded_structured_workouts_with_basic_auth() {
-        let body = format!(
-            "[{}]",
-            include_str!("../../testdata/providers/intervals-icu/scheduled-virtual-ride.json")
-        );
-        let (base_url, request) = stub(http("200 OK", &body));
-        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
-
-        let events = client
-            .fetch_workout_events("synthetic-key", "2030-01-01", "2030-01-07")
-            .await
-            .unwrap();
-
-        assert_eq!(events.len(), 1);
-        assert_eq!(
-            events[0]
-                .to_workout_definition()
-                .unwrap()
-                .duration_seconds()
-                .unwrap(),
-            1_740
-        );
-        let request = request.join().unwrap();
-        assert!(request.starts_with(
-            "GET /api/v1/athlete/0/events?category=WORKOUT&oldest=2030-01-01&newest=2030-01-07"
-        ));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("authorization: basic qvbjx0tfwtpzew50agv0awmta2v5"));
-        assert!(!request.contains("resolve="));
-        assert!(!request.contains("ext="));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("user-agent: trainerpro/"));
-    }
-
-    #[tokio::test]
-    async fn fetches_authenticated_athlete_identity_and_timezone() {
-        let body = r#"{"id":"i123","name":"Ada Rider","timezone":"Europe/Zurich"}"#;
-        let (base_url, request) = stub(http("200 OK", body));
-        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
-
-        let athlete = client.fetch_athlete("synthetic-key").await.unwrap();
-
-        assert_eq!(
-            athlete,
-            IntervalsAthlete {
-                id: "i123".into(),
-                name: "Ada Rider".into(),
-                timezone: "Europe/Zurich".into(),
-            }
-        );
-        assert_eq!(athlete.display_name(), Some("Ada Rider"));
-        let request = request.join().unwrap();
-        assert!(request.starts_with("GET /api/v1/athlete/0 HTTP/1.1"));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("authorization: basic qvbjx0tfwtpzew50agv0awmta2v5"));
-    }
-
-    #[tokio::test]
-    async fn rejected_credentials_have_a_distinct_error() {
-        let (base_url, request) = stub(http("401 Unauthorized", "{}"));
-        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
-
-        assert!(matches!(
-            client
-                .fetch_workout_events("synthetic-key", "2030-01-01", "2030-01-07")
-                .await,
-            Err(IntervalsApiError::Unauthorized)
-        ));
-        request.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn blank_keys_and_invalid_ranges_fail_before_network_io() {
-        let client = IntervalsIcuClient::with_base_url("http://127.0.0.1:1").unwrap();
-        assert!(matches!(
-            client.fetch_athlete(" ").await,
-            Err(IntervalsApiError::MissingApiKey)
-        ));
-        assert!(matches!(
-            client
-                .fetch_workout_events(" ", "2030-01-01", "2030-01-07")
-                .await,
-            Err(IntervalsApiError::MissingApiKey)
-        ));
-        assert!(matches!(
-            client
-                .fetch_workout_events("synthetic-key", "2030-01-07", "2030-01-01")
-                .await,
-            Err(IntervalsApiError::InvalidDateRange { .. })
-        ));
-        assert!(matches!(
-            client
-                .fetch_workout_events("synthetic-key", "20300101", "2030-01-07")
-                .await,
-            Err(IntervalsApiError::InvalidDateRange { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn athlete_metadata_requires_a_timezone() {
-        let (base_url, request) = stub(http("200 OK", r#"{"id":"i123","timezone":""}"#));
-        let client = IntervalsIcuClient::with_base_url(&base_url).unwrap();
-
-        assert!(matches!(
-            client.fetch_athlete("synthetic-key").await,
-            Err(IntervalsApiError::InvalidAthlete { .. })
-        ));
-        request.join().unwrap();
-    }
-
-    #[test]
     fn live_virtual_ride_fixture_maps_to_tpw_without_flattening() {
         let event: IntervalsCalendarEvent = serde_json::from_str(include_str!(
             "../../testdata/providers/intervals-icu/scheduled-virtual-ride.json"
@@ -772,15 +397,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(event.id, 1_000_000);
-        assert_eq!(
-            event.uid.as_deref(),
-            Some("00000000-0000-0000-0000-000000000000")
-        );
-        assert!(event.external_id.is_none());
         assert!(event.updated.is_some());
         assert_eq!(event.start_date_local, "2030-01-01T00:00:00");
 
-        let definition = event.to_workout_definition().unwrap();
+        let definition = to_workout_definition(&event).unwrap();
         assert_eq!(definition.title, "TrainerPro API Probe");
         assert_eq!(definition.duration_seconds().unwrap(), 1_740);
         let WorkoutPrescription::Cycling { steps } = &definition.prescription;
@@ -839,9 +459,7 @@ mod tests {
             end: Some(240.0),
         });
         step.text = Some("  Hold good form  ".into());
-        let definition = event_with_steps(vec![step], 60)
-            .to_workout_definition()
-            .unwrap();
+        let definition = to_workout_definition(&event_with_steps(vec![step], 60)).unwrap();
         let WorkoutPrescription::Cycling { steps } = definition.prescription;
         let CyclingStep::Steady { power, cues, .. } = &steps[0] else {
             panic!("expected steady step");
@@ -877,9 +495,7 @@ mod tests {
             });
             step
         };
-        let definition = event_with_steps(vec![open_step()], 60)
-            .to_workout_definition()
-            .unwrap();
+        let definition = to_workout_definition(&event_with_steps(vec![open_step()], 60)).unwrap();
         let WorkoutPrescription::Cycling { steps } = definition.prescription;
         assert!(matches!(
             &steps[0],
@@ -891,9 +507,7 @@ mod tests {
 
         let mut with_power = open_step();
         with_power.power = Some(pct());
-        assert!(event_with_steps(vec![with_power], 60)
-            .to_workout_definition()
-            .is_err());
+        assert!(to_workout_definition(&event_with_steps(vec![with_power], 60)).is_err());
     }
 
     #[test]
@@ -901,7 +515,7 @@ mod tests {
         let mut event = event_with_steps(Vec::new(), 0);
         event.event_type = "Run".into();
         assert!(matches!(
-            event.to_workout_definition(),
+            to_workout_definition(&event),
             Err(IntervalsWorkoutError::UnsupportedSport { event_type, .. }) if event_type == "Run"
         ));
     }
@@ -918,7 +532,7 @@ mod tests {
             60,
         );
         assert!(matches!(
-            event.to_workout_definition(),
+            to_workout_definition(&event),
             Err(IntervalsWorkoutError::Invalid { path, message })
                 if path == "workout_doc.steps[0].power.units"
                     && message.contains("power_zone")
@@ -938,7 +552,7 @@ mod tests {
         );
         event.moving_time = Some(90);
         assert!(matches!(
-            event.to_workout_definition(),
+            to_workout_definition(&event),
             Err(IntervalsWorkoutError::DurationMismatch {
                 duration_source: "moving_time",
                 provider_seconds: 90,
@@ -960,7 +574,7 @@ mod tests {
         distance_step.distance = Some(1_000.0);
         let distance_event = event_with_steps(vec![distance_step], 60);
         assert!(matches!(
-            distance_event.to_workout_definition(),
+            to_workout_definition(&distance_event),
             Err(IntervalsWorkoutError::Invalid { path, .. })
                 if path == "workout_doc.steps[0].distance"
         ));
@@ -969,7 +583,7 @@ mod tests {
         open_step.until_lap_press = true;
         let open_event = event_with_steps(vec![open_step], 60);
         assert!(matches!(
-            open_event.to_workout_definition(),
+            to_workout_definition(&open_event),
             Err(IntervalsWorkoutError::Invalid { path, .. })
                 if path == "workout_doc.steps[0].until_lap_press"
         ));

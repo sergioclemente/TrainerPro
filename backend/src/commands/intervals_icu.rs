@@ -6,10 +6,11 @@ use super::providers::{require_active, PlanSyncReport, ProviderOperations};
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
 use crate::database::{provider_connections, scheduled_workouts};
-use crate::intervals_icu::{IntervalsApiError, IntervalsIcuClient, PROVIDER_ID};
 use crate::intervals_icu_sync::{self, IntervalsSyncError};
 use crate::local_date;
+use tp_integrations::intervals_icu::{IntervalsApiError, IntervalsIcuClient, PROVIDER_ID};
 
+const USER_AGENT: &str = concat!("TrainerPro/", env!("CARGO_PKG_VERSION"));
 const SYNC_LOOKBACK_DAYS: i64 = 7;
 const SYNC_LOOKAHEAD_DAYS: i64 = 42;
 const CREDENTIAL_USERNAME_PREFIX: &str = "intervals_icu:";
@@ -22,7 +23,7 @@ pub async fn connect_intervals_icu(
 ) -> Result<String, AppError> {
     let _operation = operations.acquire(PROVIDER_ID)?;
     let api_key = api_key.trim().to_string();
-    let athlete = IntervalsIcuClient::new()
+    let athlete = IntervalsIcuClient::new(USER_AGENT)
         .map_err(api_error)?
         .fetch_athlete(&api_key)
         .await
@@ -91,7 +92,7 @@ pub async fn refresh(
             return Err(error);
         }
     };
-    let client = IntervalsIcuClient::new().map_err(api_error)?;
+    let client = IntervalsIcuClient::new(USER_AGENT).map_err(api_error)?;
     let events = match client
         .fetch_workout_events(&api_key, &oldest_date_local, &newest_date_local)
         .await

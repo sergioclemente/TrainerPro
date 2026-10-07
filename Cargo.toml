@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["backend", "crates/tp-core", "crates/tp-ble"]
+members = ["backend", "crates/tp-core", "crates/tp-ble", "crates/tp-integrations"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -12,3 +12,4 @@ async-trait = "0.1"
 tracing = "0.1"
 futures = "0.3"
 btleplug = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

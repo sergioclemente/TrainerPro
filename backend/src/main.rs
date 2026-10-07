@@ -1,5 +1,5 @@
 //! TrainerPro backend: the Tauri host, application orchestration, and I/O
-//! adapters. Reusable domain and device behavior lives in the workspace crates.
+//! adapters. Reusable domain, device, and provider protocols live in workspace crates.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -10,7 +10,6 @@ mod controller;
 mod database;
 mod device_hub;
 mod device_owner;
-mod garmin;
 mod heart_rate_monitor;
 mod intervals_icu;
 mod intervals_icu_sync;
