@@ -97,6 +97,14 @@ resume, interval, and session information. Ending replays it, computes summaries
 and activity segments, creates FIT, and inserts an Activity. Storage/FIT failures
 report an error and preserve the journal whenever recovery is possible.
 
+The FIT file carries the ride and its plan. Records hold power, cadence, heart
+rate, and optional speed/distance. Each activity segment becomes a lap with
+averages, maxima, Normalized Power, work, and a link to the workout step it rode;
+a lap cut short by ending the ride has no link. The workout and its steps are
+embedded with the step title, duration, power range (% FTP or watts), cadence
+target, and intensity (warm-up, active, rest, cool-down, other). The rider's
+weight and FTP are included so consumers can scale zones and W/kg.
+
 Summary offers Save FIT, connected Activity-destination upload, and Done, with
 no browser-import or file-reveal action. Activities shows date, workout, duration,
 power, training metrics, and available HR; it supports FIT reveal, upload, and

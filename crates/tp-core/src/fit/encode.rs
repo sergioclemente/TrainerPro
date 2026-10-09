@@ -1,13 +1,15 @@
 //! FIT container encoding: 14-byte header, definition + data records
 //! (little-endian), trailing CRC-16. Message sequence:
-//! file_id → device_info → event(start) → records (1 Hz, with stop/start
-//! event pairs interleaved chronologically at pauses) → laps → session →
-//! activity. Timestamps: unix_s − FIT_EPOCH_OFFSET_S.
+//! file_id → device_info → user_profile → zones_target → workout →
+//! workout_step×N → event(start) → records (1 Hz, with stop/start event
+//! pairs interleaved chronologically at pauses) → laps → session → activity.
+//! Timestamps: unix_s − FIT_EPOCH_OFFSET_S.
 
 use super::profile as p;
 use super::{crc, FitActivity, FitError};
 use crate::consts::FIT_EPOCH_OFFSET_S;
 use crate::journal::SessionEventKind;
+use crate::model::{PowerTarget, StepRole, WorkoutSegment};
 
 /// One field in a definition record: (field number, size, base type).
 #[derive(Clone, Copy)]
@@ -83,6 +85,127 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         put_u16(&mut body, p::MANUFACTURER_DEVELOPMENT);
         put_u16(&mut body, *sw);
         put_string(&mut body, name, p::PRODUCT_NAME_SIZE as usize);
+    }
+
+    // -- 2b. user_profile + zones_target: the rider the metrics are scaled to
+    if h.weight_kg > 0.0 {
+        let user_profile_fields = [f(p::USER_PROFILE_WEIGHT, 2, p::BASE_UINT16)];
+        write_definition(
+            &mut body,
+            p::LOCAL_USER_PROFILE,
+            p::MSG_USER_PROFILE,
+            &user_profile_fields,
+        );
+        body.push(p::LOCAL_USER_PROFILE);
+        put_u16(&mut body, scale_u16(h.weight_kg, p::WEIGHT_SCALE));
+    }
+    if h.ftp_w > 0 {
+        let zones_target_fields = [
+            f(
+                p::ZONES_TARGET_FUNCTIONAL_THRESHOLD_POWER,
+                2,
+                p::BASE_UINT16,
+            ),
+            f(p::ZONES_TARGET_PWR_CALC_TYPE, 1, p::BASE_ENUM),
+        ];
+        write_definition(
+            &mut body,
+            p::LOCAL_ZONES_TARGET,
+            p::MSG_ZONES_TARGET,
+            &zones_target_fields,
+        );
+        body.push(p::LOCAL_ZONES_TARGET);
+        put_u16(&mut body, h.ftp_w);
+        body.push(p::PWR_CALC_TYPE_PERCENT_FTP);
+    }
+
+    // -- 2c. workout + workout_step×N: the plan, one step per executable
+    //        segment (repeats arrive pre-expanded), so lap.wkt_step_index is
+    //        the journal's workout segment index.
+    let step_roles: Option<Vec<StepRole>> = activity.workout.map(|w| w.step_roles(h.ftp_w));
+    if let (Some(workout), Some(roles)) = (activity.workout, step_roles.as_ref()) {
+        let workout_fields = [
+            f(p::WORKOUT_SPORT, 1, p::BASE_ENUM),
+            f(p::WORKOUT_SUB_SPORT, 1, p::BASE_ENUM),
+            f(p::WORKOUT_NUM_VALID_STEPS, 2, p::BASE_UINT16),
+            f(p::WORKOUT_WKT_NAME, p::WKT_NAME_SIZE, p::BASE_STRING),
+        ];
+        write_definition(&mut body, p::LOCAL_WORKOUT, p::MSG_WORKOUT, &workout_fields);
+        body.push(p::LOCAL_WORKOUT);
+        body.push(p::SPORT_CYCLING);
+        body.push(p::SUB_SPORT_INDOOR_CYCLING);
+        put_u16(&mut body, count_u16(workout.segments.len())?);
+        put_string(&mut body, &h.workout_name, p::WKT_NAME_SIZE as usize);
+
+        let step_fields = [
+            f(p::WORKOUT_STEP_MESSAGE_INDEX, 2, p::BASE_UINT16),
+            f(p::WORKOUT_STEP_NAME, p::WKT_STEP_NAME_SIZE, p::BASE_STRING),
+            f(p::WORKOUT_STEP_DURATION_TYPE, 1, p::BASE_ENUM),
+            f(p::WORKOUT_STEP_DURATION_VALUE, 4, p::BASE_UINT32),
+            f(p::WORKOUT_STEP_TARGET_TYPE, 1, p::BASE_ENUM),
+            f(p::WORKOUT_STEP_TARGET_VALUE, 4, p::BASE_UINT32),
+            f(p::WORKOUT_STEP_CUSTOM_TARGET_LOW, 4, p::BASE_UINT32),
+            f(p::WORKOUT_STEP_CUSTOM_TARGET_HIGH, 4, p::BASE_UINT32),
+            f(p::WORKOUT_STEP_INTENSITY, 1, p::BASE_ENUM),
+            f(p::WORKOUT_STEP_SECONDARY_TARGET_TYPE, 1, p::BASE_ENUM),
+            f(p::WORKOUT_STEP_SECONDARY_TARGET_VALUE, 4, p::BASE_UINT32),
+            f(
+                p::WORKOUT_STEP_SECONDARY_CUSTOM_TARGET_LOW,
+                4,
+                p::BASE_UINT32,
+            ),
+            f(
+                p::WORKOUT_STEP_SECONDARY_CUSTOM_TARGET_HIGH,
+                4,
+                p::BASE_UINT32,
+            ),
+        ];
+        write_definition(
+            &mut body,
+            p::LOCAL_WORKOUT_STEP,
+            p::MSG_WORKOUT_STEP,
+            &step_fields,
+        );
+        for (i, (segment, role)) in workout.segments.iter().zip(roles).enumerate() {
+            body.push(p::LOCAL_WORKOUT_STEP);
+            put_u16(&mut body, count_u16(i)?);
+            put_string(
+                &mut body,
+                &step_name(segment, *role),
+                p::WKT_STEP_NAME_SIZE as usize,
+            );
+            body.push(p::WKT_STEP_DURATION_TIME);
+            put_u32(&mut body, ms_u32(u64::from(segment.duration_s()) * 1000)?);
+            match step_power_range(segment, h.ftp_w) {
+                Some((low, high)) => {
+                    body.push(p::WKT_STEP_TARGET_POWER);
+                    put_u32(&mut body, p::WKT_STEP_TARGET_CUSTOM);
+                    put_u32(&mut body, low);
+                    put_u32(&mut body, high);
+                }
+                None => {
+                    body.push(p::WKT_STEP_TARGET_OPEN);
+                    put_u32(&mut body, p::INVALID_UINT32);
+                    put_u32(&mut body, p::INVALID_UINT32);
+                    put_u32(&mut body, p::INVALID_UINT32);
+                }
+            }
+            body.push(step_intensity(*role));
+            match step_cadence_rpm(segment) {
+                Some(rpm) => {
+                    body.push(p::WKT_STEP_TARGET_CADENCE);
+                    put_u32(&mut body, p::WKT_STEP_TARGET_CUSTOM);
+                    put_u32(&mut body, u32::from(rpm));
+                    put_u32(&mut body, u32::from(rpm));
+                }
+                None => {
+                    body.push(p::INVALID_ENUM);
+                    put_u32(&mut body, p::INVALID_UINT32);
+                    put_u32(&mut body, p::INVALID_UINT32);
+                    put_u32(&mut body, p::INVALID_UINT32);
+                }
+            }
+        }
     }
 
     // -- 3. event: timer start ----------------------------------------------
@@ -176,8 +299,16 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         f(p::LAP_AVG_HEART_RATE, 1, p::BASE_UINT8),
         f(p::LAP_MAX_HEART_RATE, 1, p::BASE_UINT8),
         f(p::LAP_AVG_CADENCE, 1, p::BASE_UINT8),
+        f(p::LAP_MAX_CADENCE, 1, p::BASE_UINT8),
         f(p::LAP_AVG_POWER, 2, p::BASE_UINT16),
         f(p::LAP_MAX_POWER, 2, p::BASE_UINT16),
+        f(p::LAP_NORMALIZED_POWER, 2, p::BASE_UINT16),
+        f(p::LAP_TOTAL_WORK, 4, p::BASE_UINT32),
+        f(p::LAP_SPORT, 1, p::BASE_ENUM),
+        f(p::LAP_SUB_SPORT, 1, p::BASE_ENUM),
+        f(p::LAP_LAP_TRIGGER, 1, p::BASE_ENUM),
+        f(p::LAP_WKT_STEP_INDEX, 2, p::BASE_UINT16),
+        f(p::LAP_INTENSITY, 1, p::BASE_ENUM),
     ];
     if activity.motion.is_some() {
         lap_fields.extend([
@@ -200,8 +331,36 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         body.push(opt_u8(lap.average_heart_rate_bpm));
         body.push(opt_u8(lap.max_heart_rate_bpm));
         body.push(opt_u8(lap.average_cadence_rpm));
+        body.push(opt_u8(lap.max_cadence_rpm));
         put_u16(&mut body, lap.average_power_w.unwrap_or(p::INVALID_UINT16));
         put_u16(&mut body, lap.max_power_w.unwrap_or(p::INVALID_UINT16));
+        put_u16(
+            &mut body,
+            lap.normalized_power_w.unwrap_or(p::INVALID_UINT16),
+        );
+        put_u32(&mut body, lap.work_j);
+        body.push(p::SPORT_CYCLING);
+        body.push(p::SUB_SPORT_INDOOR_CYCLING);
+        body.push(if i + 1 == activity.laps.len() {
+            p::LAP_TRIGGER_SESSION_END
+        } else {
+            p::LAP_TRIGGER_FITNESS_EQUIPMENT
+        });
+        // Step links only point into steps this file describes.
+        let step_role = step_roles
+            .as_ref()
+            .zip(lap.workout_segment_index)
+            .and_then(|(roles, index)| roles.get(index).map(|role| (index, *role)));
+        match step_role {
+            Some((index, role)) => {
+                put_u16(&mut body, count_u16(index)?);
+                body.push(step_intensity(role));
+            }
+            None => {
+                put_u16(&mut body, p::INVALID_UINT16);
+                body.push(p::INVALID_ENUM);
+            }
+        }
         if let Some(motion) = activity.motion {
             let summary = motion.activity_segments[i];
             lap_distance_m += summary.distance_m;
@@ -240,8 +399,10 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         f(p::SESSION_AVG_HEART_RATE, 1, p::BASE_UINT8),
         f(p::SESSION_MAX_HEART_RATE, 1, p::BASE_UINT8),
         f(p::SESSION_AVG_CADENCE, 1, p::BASE_UINT8),
+        f(p::SESSION_MAX_CADENCE, 1, p::BASE_UINT8),
         f(p::SESSION_AVG_POWER, 2, p::BASE_UINT16),
         f(p::SESSION_MAX_POWER, 2, p::BASE_UINT16),
+        f(p::SESSION_TOTAL_WORK, 4, p::BASE_UINT32),
         f(p::SESSION_FIRST_LAP_INDEX, 2, p::BASE_UINT16),
         f(p::SESSION_NUM_LAPS, 2, p::BASE_UINT16),
         f(p::SESSION_NORMALIZED_POWER, 2, p::BASE_UINT16),
@@ -268,8 +429,10 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
     body.push(opt_u8(t.average_heart_rate_bpm));
     body.push(opt_u8(t.max_heart_rate_bpm));
     body.push(opt_u8(t.average_cadence_rpm));
+    body.push(opt_u8(t.max_cadence_rpm));
     put_u16(&mut body, t.average_power_w.unwrap_or(p::INVALID_UINT16));
     put_u16(&mut body, t.max_power_w.unwrap_or(p::INVALID_UINT16));
+    put_u32(&mut body, joules_u32(t.work_j));
     put_u16(&mut body, 0); // first_lap_index
     put_u16(&mut body, activity.laps.len() as u16);
     put_u16(&mut body, t.normalized_power_w.unwrap_or(p::INVALID_UINT16));
@@ -415,6 +578,100 @@ fn ms_u32(ms: u64) -> Result<u32, FitError> {
     u32::try_from(ms).map_err(|_| FitError::Encode("duration exceeds u32 ms".into()))
 }
 
+/// Joules into a uint32 total_work field; a ride past the field's range
+/// pins to the largest valid value rather than wrapping.
+fn joules_u32(joules: u64) -> u32 {
+    joules.min(u64::from(u32::MAX - 1)) as u32
+}
+
+/// A step or lap index into a uint16 message_index field.
+fn count_u16(index: usize) -> Result<u16, FitError> {
+    u16::try_from(index)
+        .ok()
+        .filter(|v| *v != p::INVALID_UINT16)
+        .ok_or_else(|| FitError::Encode("workout step index exceeds uint16".into()))
+}
+
+/// Step title for the plan: role, duration and target, e.g.
+/// "Interval · 5:00 @ 105%" or "Warm-up · 10:00 @ 40→60%".
+fn step_name(segment: &WorkoutSegment, role: StepRole) -> String {
+    let duration = fmt_duration(segment.duration_s());
+    let target = match segment {
+        WorkoutSegment::Steady { power, .. } => format!(" @ {}", power_text(power)),
+        WorkoutSegment::Ramp { start, end, .. } => {
+            format!(" @ {}→{}", power_text(start), power_text(end))
+        }
+        WorkoutSegment::FreeRide { .. } => String::new(),
+    };
+    format!("{} · {duration}{target}", role.label())
+}
+
+fn power_text(target: &PowerTarget) -> String {
+    match target {
+        PowerTarget::PercentFtp(frac) => format!("{}%", (frac * 100.0).round()),
+        PowerTarget::Watts(watts) => format!("{watts} W"),
+    }
+}
+
+/// `m:ss`, or `h:mm:ss` from one hour.
+fn fmt_duration(total_s: u32) -> String {
+    let (h, m, s) = (total_s / 3600, (total_s / 60) % 60, total_s % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// FIT workout_power for a target: % FTP as-is, watts offset by 1000.
+fn workout_power(target: &PowerTarget) -> u32 {
+    match target {
+        PowerTarget::PercentFtp(frac) => (frac * 100.0).round() as u32,
+        PowerTarget::Watts(watts) => p::WORKOUT_POWER_WATTS_OFFSET + u32::from(*watts),
+    }
+}
+
+/// Custom power range (low, high) in workout_power units; `None` for an
+/// open step. A ramp spans its endpoints; one mixing % FTP and watts is
+/// resolved to watts at the ride's FTP so both ends share a unit.
+fn step_power_range(segment: &WorkoutSegment, ftp: u16) -> Option<(u32, u32)> {
+    let (start, end) = match segment {
+        WorkoutSegment::Steady { power, .. } => (power, power),
+        WorkoutSegment::Ramp { start, end, .. } => (start, end),
+        WorkoutSegment::FreeRide { .. } => return None,
+    };
+    let (a, b) = match (start, end) {
+        (PowerTarget::PercentFtp(_), PowerTarget::PercentFtp(_))
+        | (PowerTarget::Watts(_), PowerTarget::Watts(_)) => {
+            (workout_power(start), workout_power(end))
+        }
+        _ => (
+            p::WORKOUT_POWER_WATTS_OFFSET + u32::from(start.resolve(ftp, 1.0)),
+            p::WORKOUT_POWER_WATTS_OFFSET + u32::from(end.resolve(ftp, 1.0)),
+        ),
+    };
+    Some((a.min(b), a.max(b)))
+}
+
+fn step_cadence_rpm(segment: &WorkoutSegment) -> Option<u16> {
+    match segment {
+        WorkoutSegment::Steady { cadence_rpm, .. }
+        | WorkoutSegment::Ramp { cadence_rpm, .. }
+        | WorkoutSegment::FreeRide { cadence_rpm, .. } => *cadence_rpm,
+    }
+}
+
+/// FIT intensity for a step role, shared by the step and the laps riding it.
+fn step_intensity(role: StepRole) -> u8 {
+    match role {
+        StepRole::WarmUp => p::INTENSITY_WARMUP,
+        StepRole::CoolDown => p::INTENSITY_COOLDOWN,
+        StepRole::Recovery => p::INTENSITY_REST,
+        StepRole::Steady | StepRole::Interval | StepRole::Ramp => p::INTENSITY_ACTIVE,
+        StepRole::FreeRide => p::INTENSITY_OTHER,
+    }
+}
+
 fn scale_u16(v: f64, scale: f64) -> u16 {
     (v * scale).round().clamp(0.0, f64::from(u16::MAX - 1)) as u16
 }
@@ -469,6 +726,7 @@ mod tests {
     use crate::fit::FitActivity;
     use crate::journal::{ActivitySegment, JournalHeader, Sample, SessionEvent, SessionEventKind};
     use crate::metrics::SessionTotals;
+    use crate::model::ExecutableWorkout;
 
     // -- minimal FIT decoder ------------------------------------------------
 
@@ -627,6 +885,28 @@ mod tests {
         ]
     }
 
+    /// The plan the fixture rode: a 5 s steady step with a cadence target,
+    /// then a 15 s interval; the ride ended inside the second step.
+    fn workout() -> ExecutableWorkout {
+        ExecutableWorkout {
+            name: "2x20".into(),
+            description: String::new(),
+            segments: vec![
+                WorkoutSegment::Steady {
+                    duration_s: 5,
+                    power: PowerTarget::PercentFtp(0.8),
+                    cadence_rpm: Some(90),
+                },
+                WorkoutSegment::Steady {
+                    duration_s: 15,
+                    power: PowerTarget::PercentFtp(1.0),
+                    cadence_rpm: None,
+                },
+            ],
+            text_events: vec![],
+        }
+    }
+
     fn laps() -> Vec<ActivitySegment> {
         vec![
             ActivitySegment {
@@ -638,7 +918,11 @@ mod tests {
                 average_heart_rate_bpm: Some(140),
                 max_heart_rate_bpm: Some(140),
                 average_cadence_rpm: Some(90),
+                max_cadence_rpm: Some(90),
+                normalized_power_w: Some(202),
+                work_j: 1_010,
                 calories_kcal: 1,
+                workout_segment_index: Some(0),
             },
             ActivitySegment {
                 start_ms: 5_000,
@@ -649,7 +933,11 @@ mod tests {
                 average_heart_rate_bpm: Some(143),
                 max_heart_rate_bpm: Some(145),
                 average_cadence_rpm: Some(91),
+                max_cadence_rpm: Some(92),
+                normalized_power_w: Some(208),
+                work_j: 2_085,
                 calories_kcal: 2,
+                workout_segment_index: None,
             },
         ]
     }
@@ -666,6 +954,8 @@ mod tests {
             average_heart_rate_bpm: Some(142),
             max_heart_rate_bpm: Some(145),
             average_cadence_rpm: Some(90),
+            max_cadence_rpm: Some(92),
+            work_j: 3_095,
             work_kj: 3,
         }
     }
@@ -677,6 +967,7 @@ mod tests {
         let e = events();
         let l = laps();
         let t = totals();
+        let w = workout();
         let data = crate::journal::SessionRecording {
             header: h.clone(),
             samples: s.clone(),
@@ -690,6 +981,7 @@ mod tests {
             laps: &l,
             totals: &t,
             motion: motion.as_ref(),
+            workout: Some(&w),
         })
         .unwrap()
     }
@@ -731,10 +1023,21 @@ mod tests {
         let globals: Vec<u16> = msgs.iter().map(|m| m.global).collect();
         assert_eq!(globals[0], p::MSG_FILE_ID);
         assert_eq!(&globals[1..4], &[p::MSG_DEVICE_INFO; 3]);
-        assert_eq!(globals[4], p::MSG_EVENT, "timer start event");
+        assert_eq!(
+            &globals[4..9],
+            &[
+                p::MSG_USER_PROFILE,
+                p::MSG_ZONES_TARGET,
+                p::MSG_WORKOUT,
+                p::MSG_WORKOUT_STEP,
+                p::MSG_WORKOUT_STEP
+            ],
+            "rider and plan before the ride"
+        );
+        assert_eq!(globals[9], p::MSG_EVENT, "timer start event");
         // Middle: records + pause events only.
         let tail_start = globals.len() - 4;
-        for g in &globals[5..tail_start] {
+        for g in &globals[10..tail_start] {
             assert!(
                 *g == p::MSG_RECORD || *g == p::MSG_EVENT,
                 "only record/event between start and laps, got {g}"
@@ -880,6 +1183,217 @@ mod tests {
     }
 
     #[test]
+    fn laps_carry_work_np_cadence_and_step_links() {
+        let msgs = decode(&encode(false));
+        let laps_dec: Vec<&DecMsg> = msgs.iter().filter(|m| m.global == p::MSG_LAP).collect();
+
+        let l0 = laps_dec[0];
+        assert_eq!(l0.uint(p::LAP_MAX_CADENCE), 90);
+        assert_eq!(l0.uint(p::LAP_NORMALIZED_POWER), 202);
+        assert_eq!(l0.uint(p::LAP_TOTAL_WORK), 1_010, "joules");
+        assert_eq!(l0.uint(p::LAP_SPORT), 2, "cycling");
+        assert_eq!(l0.uint(p::LAP_SUB_SPORT), 6, "indoor_cycling");
+        assert_eq!(l0.uint(p::LAP_LAP_TRIGGER), 8, "fitness_equipment");
+        assert_eq!(l0.uint(p::LAP_WKT_STEP_INDEX), 0, "rode step 0");
+        assert_eq!(l0.uint(p::LAP_INTENSITY), 0, "steady step is active");
+
+        // Ended by stopping the ride: last lap, no step closed it.
+        let l1 = laps_dec[1];
+        assert_eq!(l1.uint(p::LAP_MAX_CADENCE), 92);
+        assert_eq!(l1.uint(p::LAP_TOTAL_WORK), 2_085);
+        assert_eq!(l1.uint(p::LAP_LAP_TRIGGER), 7, "session_end");
+        assert_eq!(l1.raw(p::LAP_WKT_STEP_INDEX).unwrap(), &[0xFF, 0xFF]);
+        assert_eq!(l1.raw(p::LAP_INTENSITY).unwrap(), &[0xFF]);
+    }
+
+    #[test]
+    fn rider_profile_and_power_zones() {
+        let msgs = decode(&encode(false));
+        let profile = msgs
+            .iter()
+            .find(|m| m.global == p::MSG_USER_PROFILE)
+            .unwrap();
+        assert_eq!(profile.uint(p::USER_PROFILE_WEIGHT), 750, "75.0 kg × 10");
+        let zones = msgs
+            .iter()
+            .find(|m| m.global == p::MSG_ZONES_TARGET)
+            .unwrap();
+        assert_eq!(zones.uint(p::ZONES_TARGET_FUNCTIONAL_THRESHOLD_POWER), 250);
+        assert_eq!(zones.uint(p::ZONES_TARGET_PWR_CALC_TYPE), 1, "percent_ftp");
+    }
+
+    #[test]
+    fn workout_and_steps_describe_the_plan() {
+        let msgs = decode(&encode(false));
+        let w = msgs.iter().find(|m| m.global == p::MSG_WORKOUT).unwrap();
+        assert_eq!(w.string(p::WORKOUT_WKT_NAME), "2x20");
+        assert_eq!(w.uint(p::WORKOUT_SPORT), 2, "cycling");
+        assert_eq!(w.uint(p::WORKOUT_SUB_SPORT), 6, "indoor_cycling");
+        assert_eq!(w.uint(p::WORKOUT_NUM_VALID_STEPS), 2);
+
+        let steps: Vec<&DecMsg> = msgs
+            .iter()
+            .filter(|m| m.global == p::MSG_WORKOUT_STEP)
+            .collect();
+        assert_eq!(steps.len(), 2);
+
+        let s0 = steps[0];
+        assert_eq!(s0.uint(p::WORKOUT_STEP_MESSAGE_INDEX), 0);
+        assert_eq!(s0.string(p::WORKOUT_STEP_NAME), "Steady · 0:05 @ 80%");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_DURATION_TYPE), 0, "time");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_DURATION_VALUE), 5_000, "ms");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_TARGET_TYPE), 4, "power");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_TARGET_VALUE), 0, "custom range");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_CUSTOM_TARGET_LOW), 80, "% FTP");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_CUSTOM_TARGET_HIGH), 80);
+        assert_eq!(s0.uint(p::WORKOUT_STEP_INTENSITY), 0, "active");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_SECONDARY_TARGET_TYPE), 3, "cadence");
+        assert_eq!(s0.uint(p::WORKOUT_STEP_SECONDARY_TARGET_VALUE), 0);
+        assert_eq!(s0.uint(p::WORKOUT_STEP_SECONDARY_CUSTOM_TARGET_LOW), 90);
+        assert_eq!(s0.uint(p::WORKOUT_STEP_SECONDARY_CUSTOM_TARGET_HIGH), 90);
+
+        let s1 = steps[1];
+        assert_eq!(s1.uint(p::WORKOUT_STEP_MESSAGE_INDEX), 1);
+        assert_eq!(s1.string(p::WORKOUT_STEP_NAME), "Interval · 0:15 @ 100%");
+        assert_eq!(s1.uint(p::WORKOUT_STEP_DURATION_VALUE), 15_000);
+        assert_eq!(s1.uint(p::WORKOUT_STEP_CUSTOM_TARGET_LOW), 100);
+        // No cadence prescription: secondary target absent.
+        assert_eq!(
+            s1.raw(p::WORKOUT_STEP_SECONDARY_TARGET_TYPE).unwrap(),
+            &[0xFF]
+        );
+        assert_eq!(
+            s1.raw(p::WORKOUT_STEP_SECONDARY_CUSTOM_TARGET_LOW).unwrap(),
+            &[0xFF; 4]
+        );
+    }
+
+    #[test]
+    fn step_roles_ramps_open_steps_and_watt_targets() {
+        let h = header();
+        let s = samples();
+        let t = totals();
+        let w = ExecutableWorkout {
+            name: "roles".into(),
+            description: String::new(),
+            segments: vec![
+                WorkoutSegment::Ramp {
+                    duration_s: 600,
+                    start: PowerTarget::PercentFtp(0.4),
+                    end: PowerTarget::PercentFtp(0.6),
+                    cadence_rpm: None,
+                },
+                WorkoutSegment::Steady {
+                    duration_s: 300,
+                    power: PowerTarget::Watts(275),
+                    cadence_rpm: None,
+                },
+                WorkoutSegment::Steady {
+                    duration_s: 120,
+                    power: PowerTarget::PercentFtp(0.5),
+                    cadence_rpm: None,
+                },
+                WorkoutSegment::FreeRide {
+                    duration_s: 60,
+                    cadence_rpm: Some(85),
+                },
+                WorkoutSegment::Ramp {
+                    duration_s: 3_660,
+                    start: PowerTarget::PercentFtp(0.6),
+                    end: PowerTarget::PercentFtp(0.4),
+                    cadence_rpm: None,
+                },
+            ],
+            text_events: vec![],
+        };
+        let buf = encode_activity(&FitActivity {
+            header: &h,
+            samples: &s,
+            events: &[],
+            laps: &[],
+            totals: &t,
+            motion: None,
+            workout: Some(&w),
+        })
+        .unwrap();
+        let msgs = decode(&buf);
+        let steps: Vec<&DecMsg> = msgs
+            .iter()
+            .filter(|m| m.global == p::MSG_WORKOUT_STEP)
+            .collect();
+        assert_eq!(steps.len(), 5);
+
+        let warmup = steps[0];
+        assert_eq!(
+            warmup.string(p::WORKOUT_STEP_NAME),
+            "Warm-up · 10:00 @ 40%→60%"
+        );
+        assert_eq!(warmup.uint(p::WORKOUT_STEP_INTENSITY), 2, "warmup");
+        assert_eq!(warmup.uint(p::WORKOUT_STEP_CUSTOM_TARGET_LOW), 40);
+        assert_eq!(warmup.uint(p::WORKOUT_STEP_CUSTOM_TARGET_HIGH), 60);
+
+        // Absolute watts: 275 W at FTP 250 is an interval, encoded as 1000 + W.
+        let interval = steps[1];
+        assert_eq!(
+            interval.string(p::WORKOUT_STEP_NAME),
+            "Interval · 5:00 @ 275 W"
+        );
+        assert_eq!(interval.uint(p::WORKOUT_STEP_INTENSITY), 0, "active");
+        assert_eq!(interval.uint(p::WORKOUT_STEP_CUSTOM_TARGET_LOW), 1_275);
+        assert_eq!(interval.uint(p::WORKOUT_STEP_CUSTOM_TARGET_HIGH), 1_275);
+
+        let recovery = steps[2];
+        assert_eq!(
+            recovery.string(p::WORKOUT_STEP_NAME),
+            "Recovery · 2:00 @ 50%"
+        );
+        assert_eq!(recovery.uint(p::WORKOUT_STEP_INTENSITY), 1, "rest");
+
+        let open = steps[3];
+        assert_eq!(open.string(p::WORKOUT_STEP_NAME), "Free ride · 1:00");
+        assert_eq!(open.uint(p::WORKOUT_STEP_TARGET_TYPE), 2, "open");
+        assert_eq!(
+            open.raw(p::WORKOUT_STEP_CUSTOM_TARGET_LOW).unwrap(),
+            &[0xFF; 4]
+        );
+        assert_eq!(open.uint(p::WORKOUT_STEP_INTENSITY), 6, "other");
+        assert_eq!(open.uint(p::WORKOUT_STEP_SECONDARY_CUSTOM_TARGET_LOW), 85);
+
+        let cooldown = steps[4];
+        assert_eq!(
+            cooldown.string(p::WORKOUT_STEP_NAME),
+            "Cool-down · 1:01:00 @ 60%→40%"
+        );
+        assert_eq!(cooldown.uint(p::WORKOUT_STEP_INTENSITY), 3, "cooldown");
+        assert_eq!(cooldown.uint(p::WORKOUT_STEP_DURATION_VALUE), 3_660_000);
+    }
+
+    #[test]
+    fn without_a_workout_laps_carry_no_step_link() {
+        let h = header();
+        let s = samples();
+        let e = events();
+        let l = laps();
+        let t = totals();
+        let buf = encode_activity(&FitActivity {
+            header: &h,
+            samples: &s,
+            events: &e,
+            laps: &l,
+            totals: &t,
+            motion: None,
+            workout: None,
+        })
+        .unwrap();
+        let msgs = decode(&buf);
+        assert!(!msgs.iter().any(|m| m.global == p::MSG_WORKOUT));
+        assert!(!msgs.iter().any(|m| m.global == p::MSG_WORKOUT_STEP));
+        let l0 = msgs.iter().find(|m| m.global == p::MSG_LAP).unwrap();
+        assert_eq!(l0.raw(p::LAP_WKT_STEP_INDEX).unwrap(), &[0xFF, 0xFF]);
+        assert_eq!(l0.raw(p::LAP_INTENSITY).unwrap(), &[0xFF]);
+    }
+
+    #[test]
     fn session_message_sport_and_scaled_totals() {
         let msgs = decode(&encode(false));
         let s = msgs.iter().find(|m| m.global == p::MSG_SESSION).unwrap();
@@ -894,6 +1408,8 @@ mod tests {
         assert_eq!(s.uint(p::SESSION_AVG_HEART_RATE), 142);
         assert_eq!(s.uint(p::SESSION_MAX_HEART_RATE), 145);
         assert_eq!(s.uint(p::SESSION_AVG_CADENCE), 90);
+        assert_eq!(s.uint(p::SESSION_MAX_CADENCE), 92);
+        assert_eq!(s.uint(p::SESSION_TOTAL_WORK), 3_095, "joules");
         assert_eq!(s.uint(p::SESSION_TOTAL_CALORIES), 3, "kJ ≈ kcal");
         assert_eq!(s.uint(p::SESSION_NUM_LAPS), 2);
         assert_eq!(s.uint(p::SESSION_FIRST_LAP_INDEX), 0);
@@ -968,6 +1484,7 @@ mod tests {
             laps: &l,
             totals: &t,
             motion: None,
+            workout: None,
         });
         assert!(err.is_err());
     }
@@ -990,6 +1507,8 @@ mod tests {
             average_heart_rate_bpm: None,
             max_heart_rate_bpm: None,
             average_cadence_rpm: None,
+            max_cadence_rpm: None,
+            work_j: 0,
             work_kj: 0,
         };
         let buf = encode_activity(&FitActivity {
@@ -999,6 +1518,7 @@ mod tests {
             laps: &[],
             totals: &t,
             motion: None,
+            workout: None,
         })
         .unwrap();
         assert_eq!(crc::checksum(&buf), 0);
@@ -1009,6 +1529,8 @@ mod tests {
             vec![
                 p::MSG_FILE_ID,
                 p::MSG_DEVICE_INFO,
+                p::MSG_USER_PROFILE,
+                p::MSG_ZONES_TARGET,
                 p::MSG_EVENT,
                 p::MSG_SESSION,
                 p::MSG_ACTIVITY
@@ -1039,6 +1561,7 @@ mod tests {
             laps: &[],
             totals: &t,
             motion: None,
+            workout: None,
         })
         .unwrap();
         let msgs = decode(&buf);
@@ -1062,6 +1585,7 @@ mod tests {
             laps: &[],
             totals: &t,
             motion: None,
+            workout: None,
         })
         .unwrap();
         let msgs = decode(&buf);
@@ -1106,6 +1630,6 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), def_globals.len(), "each global defined once");
-        assert_eq!(def_globals.len(), 7, "7 definitions");
+        assert_eq!(def_globals.len(), 11, "11 definitions");
     }
 }

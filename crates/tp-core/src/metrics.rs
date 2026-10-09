@@ -87,7 +87,10 @@ pub struct SessionTotals {
     pub average_heart_rate_bpm: Option<u16>,
     pub max_heart_rate_bpm: Option<u16>,
     pub average_cadence_rpm: Option<u16>,
-    /// Total work in kJ (Σ power × 1 s / 1000).
+    pub max_cadence_rpm: Option<u16>,
+    /// Total work in joules (Σ power × 1 s), for the FIT session.
+    pub work_j: u64,
+    /// Total work in kJ, rounded, for the Activity record.
     pub work_kj: u32,
 }
 
@@ -159,7 +162,8 @@ pub fn session_totals(data: &SessionRecording, ftp: u16) -> SessionTotals {
     let (average_power_w, max_power_w) = avg_max(data.samples.iter().filter_map(|s| s.power_w));
     let (average_heart_rate_bpm, max_heart_rate_bpm) =
         avg_max(data.samples.iter().filter_map(|s| s.heart_rate_bpm));
-    let (average_cadence_rpm, _) = avg_max(data.samples.iter().filter_map(|s| s.cadence_rpm));
+    let (average_cadence_rpm, max_cadence_rpm) =
+        avg_max(data.samples.iter().filter_map(|s| s.cadence_rpm));
 
     // kJ: each 1 Hz sample contributes power × 1 s joules; absent power = 0 J.
     let joules: u64 = data
@@ -202,6 +206,8 @@ pub fn session_totals(data: &SessionRecording, ftp: u16) -> SessionTotals {
         average_heart_rate_bpm,
         max_heart_rate_bpm,
         average_cadence_rpm,
+        max_cadence_rpm,
+        work_j: joules,
         work_kj,
     }
 }
@@ -430,9 +436,11 @@ mod tests {
         assert!((t.training_stress_score.unwrap() - 100.0).abs() < EPS);
         // kJ = 3600 s × 250 W / 1000 = 900.
         assert_eq!(t.work_kj, 900);
+        assert_eq!(t.work_j, 900_000);
         assert_eq!(t.average_heart_rate_bpm, None);
         assert_eq!(t.max_heart_rate_bpm, None);
         assert_eq!(t.average_cadence_rpm, None);
+        assert_eq!(t.max_cadence_rpm, None);
     }
 
     #[test]

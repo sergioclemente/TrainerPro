@@ -127,6 +127,12 @@ fn zwo_to_fit_end_to_end() {
         6,
         "one segment per segment, activity_segments: {activity_segments:?}"
     );
+    // Each activity segment is closed by the step it rode, in plan order.
+    let ridden_steps: Vec<Option<usize>> = activity_segments
+        .iter()
+        .map(|segment| segment.workout_segment_index)
+        .collect();
+    assert_eq!(ridden_steps, (0..6).map(Some).collect::<Vec<_>>());
     let totals = session_totals(&data, FTP);
     assert_eq!(totals.elapsed_s, 120);
     assert_eq!(totals.timer_s, 120, "no pauses in this ride");
@@ -146,6 +152,7 @@ fn zwo_to_fit_end_to_end() {
         laps: &activity_segments,
         totals: &totals,
         motion: None,
+        workout: Some(engine.workout()),
     })
     .expect("fit encodes");
     assert_eq!(fit[0], 14, "header size");

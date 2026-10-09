@@ -247,8 +247,8 @@ pub async fn delete_workout(state: State<'_, AppState>, id: String) -> R<()> {
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct WorkoutSegmentRow {
     pub kind: String, // "steady" | "ramp" | "freeride"
-    /// Derived step title: Warm-up / Cool-down / Ramp / Steady / Interval /
-    /// Recovery / Free ride.
+    /// Derived step title (`StepRole::label`): Warm-up / Cool-down / Ramp /
+    /// Steady / Interval / Recovery / Free ride.
     pub label: String,
     /// Workout text event(s) starting inside this segment (the planner's
     /// per-step comments travel through ZWO as textevents).
@@ -260,14 +260,12 @@ pub struct WorkoutSegmentRow {
 }
 
 pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<WorkoutSegmentRow> {
-    let pct = |p: &PowerTarget| match p {
-        PowerTarget::PercentFtp(f) => f * 100.0,
-        PowerTarget::Watts(watts) => f64::from(*watts) / f64::from(ftp.max(1)) * 100.0,
-    };
-    let n = w.segments.len();
+    let pct = |p: &PowerTarget| p.percent_ftp(ftp);
+    let roles = w.step_roles(ftp);
     let mut start_t = 0u32;
-    let mut rows: Vec<WorkoutSegmentRow> = Vec::with_capacity(n);
-    for (i, s) in w.segments.iter().enumerate() {
+    let mut rows: Vec<WorkoutSegmentRow> = Vec::with_capacity(w.segments.len());
+    for (s, role) in w.segments.iter().zip(roles) {
+        let label = role.label().to_string();
         let dur = s.duration_s();
         let end_t = start_t + dur;
         let note = {
@@ -290,22 +288,9 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<WorkoutSegmentRow> {
                 cadence_rpm,
             } => {
                 let p = pct(power);
-                // Recovery = easy spinning right after harder work.
-                let label = if p < 62.0
-                    && rows
-                        .last()
-                        .map(|prev: &WorkoutSegmentRow| prev.end_pct > p + 12.0)
-                        .unwrap_or(false)
-                {
-                    "Recovery"
-                } else if p >= 82.0 {
-                    "Interval"
-                } else {
-                    "Steady"
-                };
                 WorkoutSegmentRow {
                     kind: "steady".into(),
-                    label: label.into(),
+                    label,
                     note,
                     duration_s: *duration_s,
                     start_pct: p,
@@ -320,16 +305,9 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<WorkoutSegmentRow> {
                 cadence_rpm,
             } => {
                 let (a, b) = (pct(start), pct(end));
-                let label = if i == 0 && b > a {
-                    "Warm-up"
-                } else if i + 1 == n && b < a {
-                    "Cool-down"
-                } else {
-                    "Ramp"
-                };
                 WorkoutSegmentRow {
                     kind: "ramp".into(),
-                    label: label.into(),
+                    label,
                     note,
                     duration_s: *duration_s,
                     start_pct: a,
@@ -342,7 +320,7 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<WorkoutSegmentRow> {
                 cadence_rpm,
             } => WorkoutSegmentRow {
                 kind: "freeride".into(),
-                label: "Free ride".into(),
+                label,
                 note,
                 duration_s: *duration_s,
                 start_pct: 0.0,

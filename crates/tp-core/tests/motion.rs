@@ -180,6 +180,7 @@ fn long_pause_preserves_speed_and_resume_can_coast() {
         laps: &activity_segments,
         totals: &totals,
         motion: Some(&trace),
+        workout: None,
     })
     .unwrap();
     let messages = decode(&bytes);
@@ -374,6 +375,7 @@ fn fit_records_laps_and_session_share_distance_and_precise_timer_time() {
             laps: &activity_segments,
             totals: &totals,
             motion,
+            workout: None,
         })
         .unwrap();
         let messages = decode(&bytes);
@@ -461,6 +463,7 @@ fn empty_fit_has_invalid_average_speed_and_mismatched_trace_is_rejected() {
         laps: &activity_segments,
         totals: &totals,
         motion: Some(&trace),
+        workout: None,
     };
     let messages = decode(&encode_activity(&activity).unwrap());
     let session = &messages.iter().find(|(id, _)| *id == 18).unwrap().1;

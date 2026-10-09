@@ -859,6 +859,7 @@ impl Runtime {
             laps: &activity_segments,
             totals: &totals,
             motion: motion.as_ref(),
+            workout: Some(self.engine.workout()),
         })?;
         let activity_id = uuid::Uuid::new_v4().to_string();
         let fit_path = state.activities_dir().join(format!("{activity_id}.fit"));
