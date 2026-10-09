@@ -24,8 +24,8 @@ interface Props {
   segments?: WorkoutSegmentRow[];
   /** FTP in watts. Supplied to draw a watt scale over the profile. */
   ftp?: number;
-  /** Segment being ridden right now. Selected — and described — unless the
-      pointer picks another one. */
+  /** Segment being ridden right now. Outlined unless the pointer picks
+      another one; the tooltip only ever follows the pointer. */
   activeIndex?: number | null;
   /** Inclusive segment span to highlight, for callers whose selection covers
       more than one segment (a builder Repeat expands to many). Takes
@@ -238,11 +238,6 @@ export default function WorkoutGraph({
   }
   const openTop = y(OPEN_BLOCK_NOMINAL_PCT);
 
-  /** Midpoint of a bar as a % of the width, kept off the edges so a tooltip
-      centred there is not clipped by the (overflow-hidden) graph frame. */
-  const anchorPct = (p: { x0: number; x1: number }) =>
-    Math.min(85, Math.max(15, (((p.x0 + p.x1) / 2) / W) * 100));
-
   const interactive = segments !== undefined && segments.length === polys.length;
   // Default selection is whatever the caller marks — one segment being ridden,
   // or a span the editor has selected. The pointer overrides either.
@@ -254,9 +249,10 @@ export default function WorkoutGraph({
         ? [activeIndex, activeIndex]
         : null;
   const range: [number, number] | null = hover !== null ? [hover, hover] : marked;
-  // The single index the tooltip describes: a span is named by its first bar.
-  const selected = range ? range[0] : null;
-  const hovered = interactive && selected !== null ? segments![selected] : null;
+  // The tooltip describes only the bar under the pointer. A marked selection
+  // keeps its outline but stays quiet, so the ridden interval's label does not
+  // sit over the chart for the whole ride.
+  const hovered = interactive && hover !== null ? segments![hover] : null;
 
   // Watt scale: labels only, every 100 W. Rules across the whole width read as
   // clutter over the profile, so the numbers sit alone at the left edge. They
@@ -337,9 +333,7 @@ export default function WorkoutGraph({
     return y(p0 + ((p1 - p0) * (t - p.t0)) / span);
   };
   const ridden =
-    hovered && selected !== null
-      ? riddenSummary(passes, polys[selected].t0, polys[selected].t1)
-      : null;
+    hovered && hover !== null ? riddenSummary(passes, polys[hover].t0, polys[hover].t1) : null;
 
   const closeMenu = () => {
     setMenu(null);
@@ -610,20 +604,10 @@ export default function WorkoutGraph({
       {hovered && menu === null && (
         <div
           className="graph-tooltip"
-          style={
-            hover !== null
-              ? {
-                  left: mouse.x > mouse.w * 0.6 ? mouse.x - 250 : mouse.x + 14,
-                  top: mouse.y > mouse.h * 0.55 ? mouse.y - 58 : mouse.y + 14,
-                }
-              : // Not hovering: the label belongs to the interval being ridden,
-                // so park it over that interval rather than at the pointer.
-                {
-                  left: `${anchorPct(polys[selected!])}%`,
-                  bottom: 8,
-                  transform: "translateX(-50%)",
-                }
-          }
+          style={{
+            left: mouse.x > mouse.w * 0.6 ? mouse.x - 250 : mouse.x + 14,
+            top: mouse.y > mouse.h * 0.55 ? mouse.y - 58 : mouse.y + 14,
+          }}
         >
           <div className="graph-tooltip-title">{segmentText(hovered, ftp)}</div>
           {ridden && <div className="graph-tooltip-ridden">{ridden}</div>}
