@@ -13,6 +13,7 @@ pub use encode::encode_activity;
 
 use crate::journal::{ActivitySegment, JournalHeader, Sample, SessionEvent};
 use crate::metrics::SessionTotals;
+use crate::model::ExecutableWorkout;
 
 /// Borrowed view of a completed activity, ready to serialize.
 pub struct FitActivity<'a> {
@@ -24,6 +25,10 @@ pub struct FitActivity<'a> {
     pub totals: &'a SessionTotals,
     /// Precomputed motion from journal replay, absent when disabled.
     pub motion: Option<&'a crate::motion::MotionTrace>,
+    /// The workout the ride executed, serialized as workout + workout_step
+    /// messages; `laps` link to its steps by `workout_segment_index`. Absent
+    /// when the plan is unknown, in which case laps carry no step link.
+    pub workout: Option<&'a ExecutableWorkout>,
 }
 
 #[derive(Debug, thiserror::Error)]
