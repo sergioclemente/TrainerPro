@@ -514,7 +514,9 @@ mod tests {
         }]))
         .unwrap();
 
-        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let WorkoutPrescription::Cycling { steps } = definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         let [CyclingStep::Repeat { count, steps }] = steps.as_slice() else {
             panic!("expected one repeat step");
         };

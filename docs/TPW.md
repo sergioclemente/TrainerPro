@@ -86,7 +86,8 @@ This is a complete TPW/1 document:
 
 ## Cycling prescription
 
-TPW/1 defines one prescription sport:
+The cycling prescription remains unchanged. A cycling-only consumer must reject
+other sports before caching or execution:
 
 ```json
 {
@@ -174,9 +175,73 @@ Cadence targets use these tagged shapes:
 Cadence values must be integers from 1 through 300 rpm. A range minimum must
 not exceed its maximum.
 
+## Running prescription
+
+TPW is currently a private format shared by TrainerPro and Harness. Running is
+an additive `prescription.sport = "running"` variant within version **1**;
+existing cycling documents keep their exact structure and meaning.
+
+A running prescription has a non-empty `steps` array. Each step is either:
+
+- `{"type":"step", "end":..., "target":...}`: one effort, recovery, or other segment.
+- `{"type":"repeat", "count":3, "steps":[...]}`: repeat a non-empty group, using the same count/depth/resource limits as cycling.
+
+For a leaf step, `end` is required and has exactly one form:
+
+| Type | Fields | Meaning |
+|---|---|---|
+| `time` | `duration_seconds` | Positive whole seconds |
+| `distance` | `distance_meters` | Positive whole meters |
+
+`target` defaults to `{"type":"open"}`. Supported forms are:
+
+| Type | Fields | Meaning |
+|---|---|---|
+| `open` | none | No numerical intensity target |
+| `pace` | `seconds_per_km` | Positive finite seconds per kilometer |
+| `pace_range` | `fast_seconds_per_km`, `slow_seconds_per_km` | Positive finite values, fast ≤ slow |
+| `heart_rate` | `bpm` | Whole beats/minute, 1–300 |
+| `heart_rate_range` | `min_bpm`, `max_bpm` | Ordered inclusive whole-bpm range, 1–300 |
+
+Optional `cadence` is `{"type":"exact","steps_per_minute":175}` or
+`{"type":"range","min_steps_per_minute":170,"max_steps_per_minute":180}`.
+Values are whole steps/minute, counting **both feet**, within 1–400. Cycling
+`rpm` must not be reused for running cadence. These numeric bounds are format
+guardrails, not coaching recommendations.
+
+Optional `role` is one of `warmup`, `work`, `recovery`, `cooldown`, or `rest`.
+It records authored intent; its absence does not authorize inferring a role.
+Optional `cues` use the cue fields below. Time-ended steps support offsets
+within their duration. Distance-ended steps support only `offset_seconds: 0`:
+their duration is unknown, so a time offset cannot be validated from pace intent.
+
+For example, this prescription expresses three timed efforts:
+
+```json
+{
+  "sport": "running",
+  "steps": [{
+    "type": "repeat", "count": 3,
+    "steps": [{
+      "type": "step", "role": "work",
+      "end": {"type": "time", "duration_seconds": 480},
+      "target": {"type": "pace_range", "fast_seconds_per_km": 300, "slow_seconds_per_km": 330}
+    }, {
+      "type": "step", "role": "recovery",
+      "end": {"type": "time", "duration_seconds": 90},
+      "target": {"type": "open"}
+    }]
+  }]
+}
+```
+
+Complete synthetic contract examples live in `testdata/tpw/`. A distance-ended
+prescription has no exact `duration_seconds`; the reader reports unknown
+duration even if a pace target exists. Targets are intent, not execution facts.
+
 ## Coaching cues
 
-A cue belongs to a `steady`, `ramp`, or `free_ride` step:
+A cue belongs to a cycling `steady`, `ramp`, or `free_ride` step, or a running `step`:
 
 | Field | Required | Meaning |
 |---|---:|---|
@@ -196,14 +261,15 @@ A conforming TPW/1 reader rejects:
 - invalid metadata, targets, cues, durations, or ranges;
 - more than eight nested repeat levels;
 - a prescription that expands past 10,000 executable segments; or
-- a compiled duration greater than 4,294,967,295 seconds.
+- expanded time-ended duration greater than 4,294,967,295 seconds; or
+- expanded distance-ended distance greater than 4,294,967,295 meters.
 
 These bounds protect execution and resource use. They are not provider
 defaults or coaching recommendations.
 
 ## Compilation for cycling execution
 
-TrainerPro compiles a validated TPW/1 definition into its flat
+TrainerPro compiles a validated **cycling** TPW/1 definition into its flat
 `ExecutableWorkout` model before starting a session. Compilation is pure and
 deterministic:
 
@@ -218,21 +284,23 @@ The midpoint behavior is an execution policy required by the current ERG
 player, which accepts one power setpoint and one displayed cadence target. It
 does not redefine the semantic range stored in TPW.
 
+Running passes shared format validation but returns an explicit unsupported-sport
+error from the cycling compiler. The desktop checks this capability before saving
+a definition and before starting execution. Format validity does not imply that
+a destination can perform or translate a workout.
+
 ## Versioning and sport extensions
 
 Readers inspect `format` and `version` before interpreting the remainder of a
-document. A reader that supports only TPW/1 rejects another version without
-trying to partially consume it. Changes that add a sport, add fields, or alter
-meaning require a new TPW version; future readers may support multiple
-versions.
+document. Readers reject unsupported versions without trying to partially consume
+them. Because all current producers and consumers are privately controlled,
+additive variants can be coordinated without changing `version: 1`. An older
+cycling-only reader already rejects the unknown running variant. Consumers must
+also enforce their own execution and provider capabilities.
 
-The sport discriminator lives inside `prescription` so each sport can have a
-coherent step and target vocabulary. TPW/1 supports only `cycling`. A future
-version can add a `running` prescription with the commanded speed or pace and
-incline needed for treadmill control, without adding meaningless optional
-running fields to cycling steps. The precise running schema is intentionally
-deferred until a treadmill execution path or selected provider supplies real
-requirements. A `running` prescription is therefore invalid TPW/1 today.
+Breaking existing semantics or supporting independently deployed external
+consumers may require a new version. Keep the current version field for that
+future boundary; no format migration is needed for this running extension.
 
 ## Provider normalization
 
@@ -253,7 +321,7 @@ TPW/1 does not define:
 - schedule dates, recommendation rank, or Next Up placement;
 - workout-session state or recorded activity measurements;
 - a universal superset of every provider format; or
-- running, treadmill, distance-based, heart-rate, or open-duration steps.
+- treadmill control, running power targets, zone lookup, or open-duration steps.
 
 Those concepts either have a different lifecycle or need a later version with
 a real provider or execution consumer.

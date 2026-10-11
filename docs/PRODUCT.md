@@ -90,6 +90,10 @@ workout definition, designed for software, people, and language models. See
 for persistence and compilation. Provider payloads are boundary inputs, never
 a second editable source of truth.
 
+The private format represents cycling and running for shared planning, while
+the TrainerPro desktop accepts only prescriptions its cycling player can execute.
+Running support in the format does not add treadmill or outdoor-running execution.
+
 ## Provider direction
 
 Connected accounts expose the capabilities TrainerPro actually implements:

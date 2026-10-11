@@ -127,6 +127,9 @@ pub fn store_definition(
     definition: &WorkoutDefinition,
     warnings: Vec<String>,
 ) -> R<ImportResult> {
+    // A valid shared prescription need not be executable by this cycling app.
+    // Check before persistence so unsupported sports cannot poison the library.
+    definition.compile()?;
     let tpw_json = definition.to_json_pretty()?;
     let existing = {
         let conn = state.db.lock().unwrap();
@@ -383,4 +386,19 @@ pub fn load_workout_definition(state: &State<'_, AppState>, id: &str) -> R<Worko
             .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
     };
     Ok(WorkoutDefinition::from_json(&tpw_json)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_running_definition_reports_unsupported_desktop_execution() {
+        let definition =
+            WorkoutDefinition::from_json(include_str!("../../../testdata/tpw/running-time.json"))
+                .unwrap();
+        definition.validate().unwrap();
+        let error = summary_from_definition("run".into(), None, &definition, 250).unwrap_err();
+        assert_eq!(error.code, "unsupported_workout_sport");
+    }
 }

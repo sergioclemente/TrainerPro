@@ -1,0 +1,30 @@
+{
+  "format": "TPW",
+  "version": 1,
+  "title": "Synthetic distance repeats",
+  "prescription": {
+    "sport": "running",
+    "steps": [
+      {
+        "type": "repeat",
+        "count": 5,
+        "steps": [
+          {
+            "type": "step",
+            "role": "work",
+            "end": { "type": "distance", "distance_meters": 1000 },
+            "target": { "type": "pace", "seconds_per_km": 315.5 },
+            "cadence": { "type": "exact", "steps_per_minute": 175 },
+            "cues": [{ "offset_seconds": 0, "message": "Controlled effort", "display_seconds": 8 }]
+          },
+          {
+            "type": "step",
+            "role": "recovery",
+            "end": { "type": "time", "duration_seconds": 120 },
+            "target": { "type": "heart_rate", "bpm": 130 }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -403,7 +403,9 @@ mod tests {
         let definition = to_workout_definition(&event).unwrap();
         assert_eq!(definition.title, "TrainerPro API Probe");
         assert_eq!(definition.duration_seconds().unwrap(), 1_740);
-        let WorkoutPrescription::Cycling { steps } = &definition.prescription;
+        let WorkoutPrescription::Cycling { steps } = &definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         assert_eq!(steps.len(), 5);
         assert!(matches!(
             &steps[0],
@@ -460,7 +462,9 @@ mod tests {
         });
         step.text = Some("  Hold good form  ".into());
         let definition = to_workout_definition(&event_with_steps(vec![step], 60)).unwrap();
-        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let WorkoutPrescription::Cycling { steps } = definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         let CyclingStep::Steady { power, cues, .. } = &steps[0] else {
             panic!("expected steady step");
         };
@@ -496,7 +500,9 @@ mod tests {
             step
         };
         let definition = to_workout_definition(&event_with_steps(vec![open_step()], 60)).unwrap();
-        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let WorkoutPrescription::Cycling { steps } = definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         assert!(matches!(
             &steps[0],
             CyclingStep::FreeRide {

@@ -12,6 +12,9 @@ use crate::consts::{
 };
 use crate::model::{ExecutableWorkout, PowerTarget, TextEvent, WorkoutSegment};
 
+pub mod running;
+pub use running::{RunningCadenceTarget, RunningEnd, RunningRole, RunningStep, RunningTarget};
+
 pub const TPW_FORMAT_NAME: &str = "TPW";
 pub const TPW_VERSION: u32 = 1;
 
@@ -38,6 +41,7 @@ pub enum WorkoutFormat {
 #[serde(tag = "sport", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkoutPrescription {
     Cycling { steps: Vec<CyclingStep> },
+    Running { steps: Vec<RunningStep> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -111,6 +115,10 @@ pub enum WorkoutDefinitionError {
     UnsupportedFormat { found: String },
     #[error("unsupported TPW version {found}; supported version is {supported}")]
     UnsupportedVersion { found: u32, supported: u32 },
+    #[error("the cycling player cannot execute a {sport} prescription")]
+    UnsupportedExecutionSport { sport: String },
+    #[error("duration is unknown because the prescription contains distance-ended steps")]
+    UnknownDuration,
     #[error("invalid workout definition at {path}: {message}")]
     Invalid { path: String, message: String },
 }
@@ -118,6 +126,7 @@ pub enum WorkoutDefinitionError {
 #[derive(Debug, Clone, Copy)]
 struct DefinitionStats {
     duration_seconds: u64,
+    distance_meters: u64,
     executable_segments: u64,
 }
 
@@ -279,8 +288,14 @@ impl WorkoutDefinition {
             return invalid("training_focus", "must not be blank when present");
         }
 
-        let WorkoutPrescription::Cycling { steps } = &self.prescription;
-        let stats = validate_steps(steps, "prescription.steps", 0)?;
+        let stats = match &self.prescription {
+            WorkoutPrescription::Cycling { steps } => {
+                validate_steps(steps, "prescription.steps", 0)?
+            }
+            WorkoutPrescription::Running { steps } => {
+                running::validate_steps(steps, "prescription.steps", 0)?
+            }
+        };
         if stats.duration_seconds > u64::from(u32::MAX) {
             return invalid(
                 "prescription.steps",
@@ -295,11 +310,20 @@ impl WorkoutDefinition {
                 ),
             );
         }
+        if stats.distance_meters > u64::from(u32::MAX) {
+            return invalid(
+                "prescription.steps",
+                "expanded distance exceeds the supported range",
+            );
+        }
         Ok(stats)
     }
 
     pub fn duration_seconds(&self) -> Result<u32, WorkoutDefinitionError> {
         let stats = self.validated_stats()?;
+        if stats.distance_meters > 0 {
+            return Err(WorkoutDefinitionError::UnknownDuration);
+        }
         Ok(stats.duration_seconds as u32)
     }
 
@@ -309,7 +333,11 @@ impl WorkoutDefinition {
         let mut segments = Vec::new();
         let mut text_events = Vec::new();
         let mut offset_seconds = 0u32;
-        let WorkoutPrescription::Cycling { steps } = &self.prescription;
+        let WorkoutPrescription::Cycling { steps } = &self.prescription else {
+            return Err(WorkoutDefinitionError::UnsupportedExecutionSport {
+                sport: "running".into(),
+            });
+        };
         compile_steps(steps, &mut offset_seconds, &mut segments, &mut text_events);
         text_events.sort_by_key(|cue| cue.offset_s);
 
@@ -352,6 +380,7 @@ fn validate_steps(
 
     let mut total = DefinitionStats {
         duration_seconds: 0,
+        distance_meters: 0,
         executable_segments: 0,
     };
     for (index, step) in steps.iter().enumerate() {
@@ -403,7 +432,7 @@ fn validate_step(
             if let Some(cadence) = cadence {
                 validate_cadence(cadence, &format!("{path}.cadence"))?;
             }
-            validate_cues(cues, *duration_seconds, path)?;
+            validate_cues(cues, Some(*duration_seconds), path)?;
             Ok(leaf_stats(*duration_seconds))
         }
         CyclingStep::FreeRide {
@@ -415,7 +444,7 @@ fn validate_step(
             if let Some(cadence) = cadence {
                 validate_cadence(cadence, &format!("{path}.cadence"))?;
             }
-            validate_cues(cues, *duration_seconds, path)?;
+            validate_cues(cues, Some(*duration_seconds), path)?;
             Ok(leaf_stats(*duration_seconds))
         }
         CyclingStep::Repeat { count, steps } => {
@@ -448,6 +477,7 @@ fn validate_step(
                 })?;
             Ok(DefinitionStats {
                 duration_seconds,
+                distance_meters: 0,
                 executable_segments,
             })
         }
@@ -457,6 +487,7 @@ fn validate_step(
 fn leaf_stats(duration_seconds: u32) -> DefinitionStats {
     DefinitionStats {
         duration_seconds: u64::from(duration_seconds),
+        distance_meters: 0,
         executable_segments: 1,
     }
 }
@@ -473,7 +504,7 @@ fn validate_leaf(
     if let Some(cadence) = cadence {
         validate_cadence(cadence, &format!("{path}.cadence"))?;
     }
-    validate_cues(cues, duration_seconds, path)
+    validate_cues(cues, Some(duration_seconds), path)
 }
 
 fn validate_duration(duration_seconds: u32, path: &str) -> Result<(), WorkoutDefinitionError> {
@@ -562,15 +593,21 @@ fn validate_rpm(rpm: u16, path: &str) -> Result<(), WorkoutDefinitionError> {
 
 fn validate_cues(
     cues: &[WorkoutCue],
-    duration_seconds: u32,
+    duration_seconds: Option<u32>,
     path: &str,
 ) -> Result<(), WorkoutDefinitionError> {
     for (index, cue) in cues.iter().enumerate() {
         let cue_path = format!("{path}.cues[{index}]");
-        if cue.offset_seconds >= duration_seconds {
+        if duration_seconds.is_some_and(|duration| cue.offset_seconds >= duration) {
             return invalid(
                 format!("{cue_path}.offset_seconds"),
                 "must fall within its step",
+            );
+        }
+        if duration_seconds.is_none() && cue.offset_seconds != 0 {
+            return invalid(
+                format!("{cue_path}.offset_seconds"),
+                "distance-ended steps support step-start cues only",
             );
         }
         if cue.message.trim().is_empty() {
@@ -777,7 +814,9 @@ mod tests {
         let workout = WorkoutDefinition::from_json(json).unwrap();
         assert_eq!(workout.description, "");
         assert_eq!(workout.training_focus, None);
-        let WorkoutPrescription::Cycling { steps } = &workout.prescription;
+        let WorkoutPrescription::Cycling { steps } = &workout.prescription else {
+            panic!("expected cycling prescription");
+        };
         let CyclingStep::Steady { cadence, cues, .. } = &steps[0] else {
             panic!("expected steady step");
         };
@@ -883,7 +922,9 @@ mod tests {
         let definition = WorkoutDefinition::from_executable(executable.clone()).unwrap();
         assert_eq!(definition.title, "Imported workout");
         assert_eq!(definition.compile().unwrap(), executable);
-        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let WorkoutPrescription::Cycling { steps } = definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         let CyclingStep::FreeRide { cues, .. } = &steps[1] else {
             panic!("expected free-ride step");
         };
