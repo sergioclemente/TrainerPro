@@ -63,7 +63,7 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE rides ADD COLUMN icu_activity_id TEXT;
     ",
-    // v6: TPW definitions, session Activities, schedules, provider connections,
+    // v6: WorkoutSpec definitions, session Activities, schedules, provider connections,
     // upload receipts, and controller pairing. Legacy workouts are reset;
     // recorded rides retain their measurements and artifacts. Their IDs are
     // the best available session IDs; workout snapshots cannot be recovered.

@@ -24,12 +24,12 @@ impl From<tp_core::parse::ParseError> for AppError {
     }
 }
 
-impl From<tp_core::workout_definition::WorkoutDefinitionError> for AppError {
-    fn from(e: tp_core::workout_definition::WorkoutDefinitionError) -> Self {
+impl From<tp_core::workout_spec::WorkoutSpecError> for AppError {
+    fn from(e: tp_core::workout_spec::WorkoutSpecError) -> Self {
         let code = match &e {
-            tp_core::workout_definition::WorkoutDefinitionError::UnsupportedExecutionSport {
-                ..
-            } => "unsupported_workout_sport",
+            tp_core::workout_spec::WorkoutSpecError::UnsupportedExecutionSport { .. } => {
+                "unsupported_workout_sport"
+            }
             _ => "invalid_workout",
         };
         AppError::new(code, e.to_string())

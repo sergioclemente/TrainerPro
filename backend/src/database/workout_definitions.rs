@@ -1,4 +1,4 @@
-//! TPW workout-definition persistence.
+//! WorkoutSpec workout-definition persistence.
 
 #![cfg_attr(
     not(test),
@@ -49,14 +49,23 @@ fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkoutDefinitionRow> {
 
 /// Find a reusable definition in TrainerPro's local-library lifecycle.
 /// Provider-scheduled definitions are executable cache entries, not local
-/// copies, even when their canonical TPW happens to be identical.
+/// copies, even when their canonical WorkoutSpec happens to be identical.
+/// The historical `tpw_json` column remains stable. Normalize only the format
+/// discriminator when comparing old and new documents; never rewrite stored JSON.
 pub fn find_local_id_by_tpw_json(
     conn: &Connection,
     tpw_json: &str,
 ) -> rusqlite::Result<Option<String>> {
     conn.query_row(
         "SELECT id FROM workout_definitions
-         WHERE tpw_json = ?1 AND retired_at_unix_ms IS NULL
+         WHERE (tpw_json = ?1 OR CASE
+           WHEN json_valid(tpw_json) AND json_valid(?1) THEN
+             json_extract(tpw_json, '$.format') IN ('TPW', 'WorkoutSpec')
+             AND json_extract(?1, '$.format') IN ('TPW', 'WorkoutSpec')
+             AND json_set(tpw_json, '$.format', 'WorkoutSpec')
+                 = json_set(?1, '$.format', 'WorkoutSpec')
+           ELSE 0 END)
+           AND retired_at_unix_ms IS NULL
            AND NOT EXISTS (
              SELECT 1 FROM scheduled_workouts sw
              WHERE sw.workout_definition_id = workout_definitions.id
@@ -225,6 +234,51 @@ mod tests {
     }
 
     #[test]
+    fn renamed_format_reuses_legacy_workout_without_rewriting_stored_json() {
+        use tp_core::workout_spec::WorkoutSpec;
+        let conn = super::super::test_connection();
+        let mut legacy: serde_json::Value = serde_json::from_str(TPW_JSON).unwrap();
+        legacy["description"] = serde_json::json!("TPW is part of the athlete's text");
+        // Historical documents used the same pretty serializer and defaults.
+        let spec = WorkoutSpec::from_json(&legacy.to_string()).unwrap();
+        let canonical = spec.to_json_pretty().unwrap();
+        // Preserve struct field order, as historical serialization did.
+        let stored = canonical.replacen("\"format\": \"WorkoutSpec\"", "\"format\": \"TPW\"", 1);
+        insert(
+            &conn,
+            &NewWorkoutDefinition {
+                id: "legacy",
+                tpw_json: &stored,
+                created_at_ms: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            find_local_id_by_tpw_json(&conn, &canonical)
+                .unwrap()
+                .as_deref(),
+            Some("legacy")
+        );
+        let row = get(&conn, "legacy").unwrap().unwrap();
+        assert_eq!(row.tpw_json, stored);
+        assert_eq!(
+            WorkoutSpec::from_json(&row.tpw_json)
+                .unwrap()
+                .compile()
+                .unwrap(),
+            spec.compile().unwrap()
+        );
+        let changed = canonical.replace("athlete's text", "different text");
+        assert_eq!(find_local_id_by_tpw_json(&conn, &changed).unwrap(), None);
+        conn.execute(
+            "UPDATE workout_definitions SET retired_at_unix_ms = 2 WHERE id = 'legacy'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(find_local_id_by_tpw_json(&conn, &canonical).unwrap(), None);
+    }
+
+    #[test]
     fn insert_find_list_update_and_delete_definition() {
         let conn = super::super::test_connection();
         insert_fixture(&conn, "older", 10);
@@ -292,7 +346,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            find_local_id_by_tpw_json(&conn, &provider_json).unwrap(),
+            find_local_id_by_tpw_json(&conn, &provider_json.replace("\"TPW\"", "\"WorkoutSpec\""))
+                .unwrap(),
             None
         );
         assert!(list_local(&conn).unwrap().is_empty());

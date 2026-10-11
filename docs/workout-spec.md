@@ -1,25 +1,37 @@
-# TrainerPro Workout (TPW) format
+# WorkoutSpec format
 
-**Purpose:** Define the normative **TPW/1** JSON format and validation rules.
+**Purpose:** Define the normative **WorkoutSpec/1** JSON format and validation rules.
 **Audience:** Producers and consumers of TrainerPro workout definitions.
 
-TrainerPro Workout, abbreviated **TPW**, is TrainerPro's semantic workout
-definition format. It describes what an athlete should do, independent of the
+WorkoutSpec is a declarative JSON format for authoring structured workouts.
+It is TrainerPro's canonical replacement for ZWO as the internal workout format. It describes what an athlete should do, independent of the
 provider that supplied it, when it is scheduled, and whether it has been
-performed. TPW is UTF-8 JSON and is designed to be straightforward for people,
+performed. WorkoutSpec is UTF-8 JSON and is designed to be straightforward for people,
 deterministic software, and LLMs to read and produce.
 
-`WorkoutDefinition` is the in-code representation of a TPW document. When a
-TPW document is exchanged as a file, the suggested suffix is `.tpw.json`.
+`WorkoutSpec` is the in-code representation of a WorkoutSpec document. When a
+WorkoutSpec document is exchanged as a file, the suggested suffix is `.workout-spec.json`.
 Files are not part of TrainerPro's normal workout workflow or identity.
+
+## Naming compatibility
+
+WorkoutSpec replaces the original name TPW without changing version `1` or
+prescription semantics. Writers emit `"format": "WorkoutSpec"`; readers accept
+both `"WorkoutSpec"` and the exact legacy identifier `"TPW"`. Unknown identifiers
+and unsupported versions remain errors. Parsing a legacy document and serializing
+it produces the canonical name. This changes the envelope, not workout intent.
+
+TrainerPro retains existing database columns, IDs, and journal snapshot fields.
+Reading historical data does not rewrite it. Local-library deduplication treats
+the old and new format identifiers as equivalent without modifying workout text.
 
 ## Document envelope
 
-A TPW/1 document is a JSON object with these fields:
+A WorkoutSpec/1 document is a JSON object with these fields:
 
 | Field | Required | Meaning |
 |---|---:|---|
-| `format` | yes | Exact string `"TPW"` |
+| `format` | yes | `"WorkoutSpec"`; readers also accept legacy `"TPW"` |
 | `version` | yes | Integer `1` |
 | `title` | yes | Non-blank workout title |
 | `description` | no | Description; defaults to an empty string |
@@ -27,14 +39,14 @@ A TPW/1 document is a JSON object with these fields:
 | `prescription` | yes | A sport-discriminated prescription |
 
 Unknown fields are invalid. Provider identity, schedule placement, remote
-revision, recommendation metadata, and activity measurements are not TPW
+revision, recommendation metadata, and activity measurements are not WorkoutSpec
 fields.
 
-This is a complete TPW/1 document:
+This is a complete WorkoutSpec/1 document:
 
 ```json
 {
-  "format": "TPW",
+  "format": "WorkoutSpec",
   "version": 1,
   "title": "Aerobic Builder",
   "description": "Smooth, controlled work",
@@ -177,7 +189,7 @@ not exceed its maximum.
 
 ## Running prescription
 
-TPW is currently a private format shared by TrainerPro and Harness. Running is
+WorkoutSpec is currently a private format shared by TrainerPro and Harness. Running is
 an additive `prescription.sport = "running"` variant within version **1**;
 existing cycling documents keep their exact structure and meaning.
 
@@ -235,7 +247,7 @@ For example, this prescription expresses three timed efforts:
 }
 ```
 
-Complete synthetic contract examples live in `testdata/tpw/`. A distance-ended
+Complete synthetic contract examples live in `testdata/workout-spec/`. A distance-ended
 prescription has no exact `duration_seconds`; the reader reports unknown
 duration even if a pace target exists. Targets are intent, not execution facts.
 
@@ -254,7 +266,7 @@ a repeat occur once for every repetition.
 
 ## Validation and resource limits
 
-A conforming TPW/1 reader rejects:
+A conforming WorkoutSpec/1 reader rejects:
 
 - an unsupported `format` or `version`;
 - unknown fields or variants;
@@ -269,7 +281,7 @@ defaults or coaching recommendations.
 
 ## Compilation for cycling execution
 
-TrainerPro compiles a validated **cycling** TPW/1 definition into its flat
+TrainerPro compiles a validated **cycling** WorkoutSpec/1 definition into its flat
 `ExecutableWorkout` model before starting a session. Compilation is pure and
 deterministic:
 
@@ -278,11 +290,11 @@ deterministic:
 - percentage ranges compile to their arithmetic midpoint;
 - integer watt and cadence ranges compile to their midpoint, rounding a `.5`
   midpoint upward; and
-- the original TPW definition retains its ranges and nested structure.
+- the original WorkoutSpec definition retains its ranges and nested structure.
 
 The midpoint behavior is an execution policy required by the current ERG
 player, which accepts one power setpoint and one displayed cadence target. It
-does not redefine the semantic range stored in TPW.
+does not redefine the semantic range stored in WorkoutSpec.
 
 Running passes shared format validation but returns an explicit unsupported-sport
 error from the cycling compiler. The desktop checks this capability before saving
@@ -304,18 +316,18 @@ future boundary; no format migration is needed for this running extension.
 
 ## Provider normalization
 
-A provider adapter maps supported source semantics into TPW and reports
+A provider adapter maps supported source semantics into WorkoutSpec and reports
 unsupported or lossy semantics explicitly. It must not silently discard a
 target or step that changes workout meaning. Provider payloads may be retained
-outside TPW as inert diagnostic or round-trip snapshots.
+outside WorkoutSpec as inert diagnostic or round-trip snapshots.
 
-The provider remains authoritative for a provider-owned definition. TPW is the
+The provider remains authoritative for a provider-owned definition. WorkoutSpec is the
 normalized offline representation, not a claim that TrainerPro owns or can
 write the remote object.
 
 ## Non-goals
 
-TPW/1 does not define:
+WorkoutSpec/1 does not define:
 
 - provider accounts, IDs, revisions, capabilities, or sync state;
 - schedule dates, recommendation rank, or Next Up placement;

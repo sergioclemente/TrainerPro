@@ -2,10 +2,10 @@
 //!
 //! A source is any provider of ridable workouts: the local library, the
 //! WorkoutPlanner server, whatsonzwift.com, or future connectors. Sources
-//! normalize into TPW, then share provenance and player-loading behavior.
+//! normalize into WorkoutSpec, then share provenance and player-loading behavior.
 
 use tauri::{AppHandle, Emitter, State};
-use tp_core::workout_definition::WorkoutDefinition;
+use tp_core::workout_spec::WorkoutSpec;
 
 use crate::app_error::AppError;
 use crate::app_state::AppState;
@@ -13,7 +13,7 @@ use crate::commands::{player, workout};
 use crate::database::workout_definitions as definition_db;
 use crate::player_runtime::PlayerState;
 
-/// ZWO boundary payload → TPW import → provenance tag → loaded player.
+/// ZWO boundary payload → WorkoutSpec import → provenance tag → loaded player.
 pub async fn ride_from_zwo(
     app: AppHandle,
     state: &State<'_, AppState>,
@@ -26,11 +26,11 @@ pub async fn ride_from_zwo(
     tag_and_load(app, state, import, origin, origin_ref, origin_id).await
 }
 
-/// Already-normalized TPW → provenance tag → loaded player.
+/// Already-normalized WorkoutSpec → provenance tag → loaded player.
 pub async fn ride_from_definition(
     app: AppHandle,
     state: &State<'_, AppState>,
-    definition: &WorkoutDefinition,
+    definition: &WorkoutSpec,
     origin: &str,
     origin_ref: &str,
     origin_id: Option<i64>,

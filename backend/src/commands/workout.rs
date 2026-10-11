@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::State;
 use tp_core::model::{ExecutableWorkout, PowerTarget, WorkoutSegment};
 use tp_core::parse::{parse_ergmrc, parse_zwo, Parsed};
-use tp_core::workout_definition::WorkoutDefinition;
+use tp_core::workout_spec::WorkoutSpec;
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
@@ -104,7 +104,7 @@ pub fn import_from_path(state: &State<'_, AppState>, src: &std::path::Path) -> R
     import_content(state, &content, &ext, Vec::new())
 }
 
-/// Parse a boundary format and normalize it into the canonical TPW store.
+/// Parse a boundary format and normalize it into the canonical WorkoutSpec store.
 pub fn import_content(
     state: &State<'_, AppState>,
     content: &str,
@@ -112,7 +112,7 @@ pub fn import_content(
     extra_warnings: Vec<String>,
 ) -> R<ImportResult> {
     let parsed = parse_by_ext(ext, content)?;
-    let definition = WorkoutDefinition::from_executable(parsed.workout)?;
+    let definition = WorkoutSpec::from_executable(parsed.workout)?;
     let warnings = extra_warnings
         .into_iter()
         .chain(parsed.warnings.into_iter().map(|warning| warning.message))
@@ -120,11 +120,11 @@ pub fn import_content(
     store_definition(state, &definition, warnings)
 }
 
-/// Validate and persist one TPW definition. This is the shared entry point for
+/// Validate and persist one WorkoutSpec definition. This is the shared entry point for
 /// local authoring, boundary imports, and connected workout sources.
 pub fn store_definition(
     state: &State<'_, AppState>,
-    definition: &WorkoutDefinition,
+    definition: &WorkoutSpec,
     warnings: Vec<String>,
 ) -> R<ImportResult> {
     // A valid shared prescription need not be executable by this cycling app.
@@ -163,13 +163,13 @@ pub fn store_definition(
     })
 }
 
-/// Save a locally authored workout directly as TPW.
+/// Save a locally authored workout directly as WorkoutSpec.
 #[tauri::command]
 pub async fn create_workout(
     state: State<'_, AppState>,
     draft: tp_core::build::WorkoutDraft,
 ) -> R<ImportResult> {
-    let definition = tp_core::build::to_workout_definition(&draft)
+    let definition = tp_core::build::to_workout_spec(&draft)
         .map_err(|e| AppError::new("invalid_workout", e.message))?;
     store_definition(&state, &definition, Vec::new())
 }
@@ -187,14 +187,14 @@ pub(crate) fn summary_from_row(
     row: definition_db::WorkoutDefinitionRow,
     ftp: u16,
 ) -> R<WorkoutSummary> {
-    let definition = WorkoutDefinition::from_json(&row.tpw_json)?;
+    let definition = WorkoutSpec::from_json(&row.tpw_json)?;
     summary_from_definition(row.id, row.origin, &definition, ftp)
 }
 
 fn summary_from_definition(
     id: String,
     origin: Option<String>,
-    definition: &WorkoutDefinition,
+    definition: &WorkoutSpec,
     ftp: u16,
 ) -> R<WorkoutSummary> {
     let executable = definition.compile()?;
@@ -224,7 +224,7 @@ pub async fn list_workouts(state: State<'_, AppState>) -> R<Vec<WorkoutSummary>>
         .collect()
 }
 
-/// Removes a TPW definition from TrainerPro. An external source file, if any,
+/// Removes a WorkoutSpec definition from TrainerPro. An external source file, if any,
 /// is never touched.
 #[tauri::command]
 pub async fn delete_workout(state: State<'_, AppState>, id: String) -> R<()> {
@@ -376,16 +376,16 @@ pub async fn get_workout_detail(state: State<'_, AppState>, id: String) -> R<Wor
     })
 }
 
-/// Load and validate the canonical TPW definition from SQLite. Session setup
+/// Load and validate the canonical WorkoutSpec definition from SQLite. Session setup
 /// owns the point-in-time snapshot and compilation used for execution.
-pub fn load_workout_definition(state: &State<'_, AppState>, id: &str) -> R<WorkoutDefinition> {
+pub fn load_workout_definition(state: &State<'_, AppState>, id: &str) -> R<WorkoutSpec> {
     let tpw_json = {
         let conn = state.db.lock().unwrap();
         definition_db::get(&conn, id)?
             .map(|row| row.tpw_json)
             .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
     };
-    Ok(WorkoutDefinition::from_json(&tpw_json)?)
+    Ok(WorkoutSpec::from_json(&tpw_json)?)
 }
 
 #[cfg(test)]
@@ -394,9 +394,10 @@ mod tests {
 
     #[test]
     fn valid_running_definition_reports_unsupported_desktop_execution() {
-        let definition =
-            WorkoutDefinition::from_json(include_str!("../../../testdata/tpw/running-time.json"))
-                .unwrap();
+        let definition = WorkoutSpec::from_json(include_str!(
+            "../../../testdata/workout-spec/running-time.json"
+        ))
+        .unwrap();
         definition.validate().unwrap();
         let error = summary_from_definition("run".into(), None, &definition, 250).unwrap_err();
         assert_eq!(error.code, "unsupported_workout_sport");

@@ -220,7 +220,7 @@ mod tests {
     use std::path::Path;
 
     use tp_core::model::{ExecutableWorkout, PowerTarget, WorkoutSegment};
-    use tp_core::workout_definition::WorkoutDefinition;
+    use tp_core::workout_spec::WorkoutSpec;
 
     use super::profile_for_session;
     use crate::database::workout_definitions::{self, ProviderWorkoutDefinition};
@@ -229,7 +229,7 @@ mod tests {
     fn player_profile_stays_on_loaded_workout_after_provider_update() {
         let conn = crate::database::open(Path::new(":memory:")).unwrap();
         let definition_id = "provider-workout";
-        let old = WorkoutDefinition::from_executable(ExecutableWorkout {
+        let old = WorkoutSpec::from_executable(ExecutableWorkout {
             name: "Original".into(),
             description: String::new(),
             segments: vec![WorkoutSegment::Steady {
@@ -240,7 +240,7 @@ mod tests {
             text_events: vec![],
         })
         .unwrap();
-        let updated = WorkoutDefinition::from_executable(ExecutableWorkout {
+        let updated = WorkoutSpec::from_executable(ExecutableWorkout {
             name: "Updated".into(),
             description: String::new(),
             segments: vec![WorkoutSegment::Steady {
@@ -251,7 +251,12 @@ mod tests {
             text_events: vec![],
         })
         .unwrap();
-        let old_json = old.to_json_pretty().unwrap();
+        // A historical TPW row remains playable after the format rename.
+        let old_json = old.to_json_pretty().unwrap().replacen(
+            "\"format\": \"WorkoutSpec\"",
+            "\"format\": \"TPW\"",
+            1,
+        );
         workout_definitions::insert_provider_copy(
             &conn,
             &ProviderWorkoutDefinition {
@@ -270,7 +275,7 @@ mod tests {
         let loaded_row = workout_definitions::get(&conn, definition_id)
             .unwrap()
             .unwrap();
-        let captured = WorkoutDefinition::from_json(&loaded_row.tpw_json)
+        let captured = WorkoutSpec::from_json(&loaded_row.tpw_json)
             .unwrap()
             .compile()
             .unwrap();
@@ -291,7 +296,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            WorkoutDefinition::from_json(&current_row.tpw_json)
+            WorkoutSpec::from_json(&current_row.tpw_json)
                 .unwrap()
                 .compile()
                 .unwrap()

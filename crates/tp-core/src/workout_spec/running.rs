@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{invalid, validate_cues, DefinitionStats, WorkoutCue, WorkoutDefinitionError};
+use super::{invalid, validate_cues, DefinitionStats, WorkoutCue, WorkoutSpecError};
 use crate::consts::{WORKOUT_REPEAT_COUNT_MAX, WORKOUT_REPEAT_DEPTH_MAX};
 
 /// Representation guardrails, not recommended training targets.
@@ -83,14 +83,14 @@ pub(super) fn validate_steps(
     steps: &[RunningStep],
     path: &str,
     repeat_depth: usize,
-) -> Result<DefinitionStats, WorkoutDefinitionError> {
+) -> Result<DefinitionStats, WorkoutSpecError> {
     if steps.is_empty() {
         return invalid(path, "must contain at least one step");
     }
     let mut total = DefinitionStats {
         duration_seconds: 0,
         distance_meters: 0,
-        executable_segments: 0,
+        expanded_steps: 0,
     };
     for (index, step) in steps.iter().enumerate() {
         let path = format!("{path}[{index}]");
@@ -132,7 +132,7 @@ pub(super) fn validate_steps(
                 DefinitionStats {
                     duration_seconds,
                     distance_meters,
-                    executable_segments: 1,
+                    expanded_steps: 1,
                 }
             }
             RunningStep::Repeat { count, steps } => {
@@ -150,35 +150,34 @@ pub(super) fn validate_steps(
                 }
                 let inner = validate_steps(steps, &format!("{path}.steps"), repeat_depth + 1)?;
                 let scale = |value: u64| {
-                    value.checked_mul(u64::from(*count)).ok_or_else(|| {
-                        WorkoutDefinitionError::Invalid {
+                    value
+                        .checked_mul(u64::from(*count))
+                        .ok_or_else(|| WorkoutSpecError::Invalid {
                             path: path.clone(),
                             message: "expanded prescription overflows".into(),
-                        }
-                    })
+                        })
                 };
                 DefinitionStats {
                     duration_seconds: scale(inner.duration_seconds)?,
                     distance_meters: scale(inner.distance_meters)?,
-                    executable_segments: scale(inner.executable_segments)?,
+                    expanded_steps: scale(inner.expanded_steps)?,
                 }
             }
         };
         let add = |a: u64, b: u64| {
-            a.checked_add(b)
-                .ok_or_else(|| WorkoutDefinitionError::Invalid {
-                    path: path.clone(),
-                    message: "expanded prescription overflows".into(),
-                })
+            a.checked_add(b).ok_or_else(|| WorkoutSpecError::Invalid {
+                path: path.clone(),
+                message: "expanded prescription overflows".into(),
+            })
         };
         total.duration_seconds = add(total.duration_seconds, stats.duration_seconds)?;
         total.distance_meters = add(total.distance_meters, stats.distance_meters)?;
-        total.executable_segments = add(total.executable_segments, stats.executable_segments)?;
+        total.expanded_steps = add(total.expanded_steps, stats.expanded_steps)?;
     }
     Ok(total)
 }
 
-fn validate_target(target: &RunningTarget, path: &str) -> Result<(), WorkoutDefinitionError> {
+fn validate_target(target: &RunningTarget, path: &str) -> Result<(), WorkoutSpecError> {
     match target {
         RunningTarget::Open => Ok(()),
         RunningTarget::Pace { seconds_per_km } => validate_pace(*seconds_per_km, path),
@@ -208,14 +207,14 @@ fn validate_target(target: &RunningTarget, path: &str) -> Result<(), WorkoutDefi
     }
 }
 
-fn validate_pace(seconds_per_km: f64, path: &str) -> Result<(), WorkoutDefinitionError> {
+fn validate_pace(seconds_per_km: f64, path: &str) -> Result<(), WorkoutSpecError> {
     if !seconds_per_km.is_finite() || seconds_per_km <= 0.0 {
         return invalid(path, "pace must be positive finite seconds per kilometer");
     }
     Ok(())
 }
 
-fn validate_bpm(bpm: u16, path: &str) -> Result<(), WorkoutDefinitionError> {
+fn validate_bpm(bpm: u16, path: &str) -> Result<(), WorkoutSpecError> {
     if bpm == 0 || bpm > HEART_RATE_BPM_MAX {
         return invalid(
             path,
@@ -225,10 +224,7 @@ fn validate_bpm(bpm: u16, path: &str) -> Result<(), WorkoutDefinitionError> {
     Ok(())
 }
 
-fn validate_cadence(
-    cadence: &RunningCadenceTarget,
-    path: &str,
-) -> Result<(), WorkoutDefinitionError> {
+fn validate_cadence(cadence: &RunningCadenceTarget, path: &str) -> Result<(), WorkoutSpecError> {
     let (min, max) = match cadence {
         RunningCadenceTarget::Exact { steps_per_minute } => (*steps_per_minute, *steps_per_minute),
         RunningCadenceTarget::Range {

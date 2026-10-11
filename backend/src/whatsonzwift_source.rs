@@ -506,7 +506,7 @@ pub async fn woz_ride(
             }
         }
     };
-    let definition = tp_core::workout_definition::WorkoutDefinition::from_executable(workout)?;
+    let definition = tp_core::workout_spec::WorkoutSpec::from_executable(workout)?;
     let origin_ref = format!("{collection}#{idx}");
     sources::ride_from_definition(app, &state, &definition, "whatsonzwift", &origin_ref, None).await
 }

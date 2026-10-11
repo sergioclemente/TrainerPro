@@ -84,9 +84,9 @@ owned local copy.
 
 ## Workout representation
 
-**TrainerPro Workout (TPW)** is the versioned semantic JSON representation of a
+**WorkoutSpec** is the versioned semantic JSON representation of a
 workout definition, designed for software, people, and language models. See
-[TPW/1](TPW.md) for the normative contract and [architecture](architecture.md)
+[WorkoutSpec/1](workout-spec.md) for the normative contract and [architecture](architecture.md)
 for persistence and compilation. Provider payloads are boundary inputs, never
 a second editable source of truth.
 
