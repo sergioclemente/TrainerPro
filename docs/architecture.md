@@ -25,8 +25,12 @@ flowchart TD
 ## Ownership boundaries
 
 - **`tp-core`** owns TPW validation/compilation, the workout engine, journal replay,
-  metrics, motion calculation, and FIT encoding. It is deterministic and pure:
+  metrics, motion calculation, and FIT encoding/decoding. It is deterministic and pure:
   no I/O, async runtime, BLE, Tauri, or wall-clock access.
+  The reader accepts bytes and returns validated activity records, laps and timer
+  events with explicit units. It keeps missing fields distinct from zeros and
+  normalizes running cadence to both-feet steps/minute. Applications own artifact
+  storage, provider identity checks, imports and sample-support analysis policy.
 - **`tp-ble`** owns transport contracts, drivers, scanning, and simulators.
   `DeviceManager` serializes adapter initialization, scan cancellation, and
   connection setup. Established links operate concurrently.
