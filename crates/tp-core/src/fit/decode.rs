@@ -1,5 +1,6 @@
 //! Decode the standard activity subset without filesystem, clock, or timezone access.
-//! fitparser owns binary framing, definitions, base types, invalid sentinels and CRCs.
+//! fitparser owns message framing, definitions, base types and invalid sentinels.
+//! Extended file headers are CRC-validated and adapted before message decoding.
 //! We interpret raw standard fields explicitly: profile component expansion must not
 //! replace an explicitly recorded enhanced speed or confuse developer fields with it.
 
@@ -11,6 +12,9 @@ use fitparser::{
 use serde::{Deserialize, Serialize};
 
 pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/1;fitparser/0.11.0";
+const MIN_HEADER_SIZE: usize = 12;
+const CRC_HEADER_SIZE: usize = 14;
+const CRC_SIZE: usize = 2;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RECORDS: usize = 200_000;
 const MAX_MESSAGES: usize = 500_000;
@@ -152,17 +156,41 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     if bytes.len() > MAX_BYTES {
         return Err(LimitExceeded);
     }
-    if bytes.len() < 14 || !matches!(bytes[0], 12 | 14) || &bytes[8..12] != b".FIT" {
+    if bytes.len() < MIN_HEADER_SIZE + CRC_SIZE
+        || usize::from(bytes[0]) < MIN_HEADER_SIZE
+        || &bytes[8..12] != b".FIT"
+    {
         return Err(InvalidEncoding);
     }
     let data_size = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-    if usize::from(bytes[0])
+    let header_size = usize::from(bytes[0]);
+    if header_size
         .checked_add(data_size)
-        .and_then(|n| n.checked_add(2))
+        .and_then(|n| n.checked_add(CRC_SIZE))
         != Some(bytes.len())
     {
         return Err(InvalidEncoding);
     }
+    // fitparser 0.11 reads only 12 or 14 header bytes, even when the declared
+    // size is larger. Like Garmin's C++ decoder, treat unknown header bytes as
+    // opaque and validate the CRC over the entire original file. Only then
+    // adapt the envelope to a legacy header; message bytes remain unchanged.
+    // https://github.com/garmin/fit-cpp-sdk/blob/main/src/fit_decode.cpp
+    let mut normalized;
+    let bytes = if header_size != MIN_HEADER_SIZE && header_size != CRC_HEADER_SIZE {
+        if super::checksum(bytes) != 0 {
+            return Err(InvalidEncoding);
+        }
+        normalized = Vec::with_capacity(MIN_HEADER_SIZE + data_size + CRC_SIZE);
+        normalized.extend_from_slice(&bytes[..MIN_HEADER_SIZE]);
+        normalized[0] = MIN_HEADER_SIZE as u8;
+        normalized.extend_from_slice(&bytes[header_size..bytes.len() - CRC_SIZE]);
+        let crc = super::checksum(&normalized);
+        normalized.extend_from_slice(&crc.to_le_bytes());
+        normalized.as_slice()
+    } else {
+        bytes
+    };
     let mut processor = FitStreamProcessor::new();
     let mut remaining = bytes;
     let mut session = None;

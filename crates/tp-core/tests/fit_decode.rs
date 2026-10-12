@@ -100,3 +100,76 @@ fn more_than_one_session_is_rejected() {
         Err(FitDecodeError::UnsupportedActivity)
     ));
 }
+
+/// Change only the file envelope; record definitions and data come from the SDK.
+fn with_header_size(size: u8) -> Vec<u8> {
+    const BASE_HEADER_SIZE: usize = 12;
+    const STANDARD_HEADER_SIZE: usize = 14;
+    const CRC_SIZE: usize = 2;
+    let mut bytes = CYCLING[..BASE_HEADER_SIZE].to_vec();
+    bytes[0] = size;
+    if usize::from(size) >= STANDARD_HEADER_SIZE {
+        let crc = checksum(&bytes);
+        bytes.extend_from_slice(&crc.to_le_bytes());
+    }
+    // Nonzero opaque extension bytes must neither become records nor evade CRC.
+    bytes.resize(usize::from(size), 0xa5);
+    bytes.extend_from_slice(&CYCLING[STANDARD_HEADER_SIZE..CYCLING.len() - CRC_SIZE]);
+    let crc = checksum(&bytes);
+    bytes.extend_from_slice(&crc.to_le_bytes());
+    bytes
+}
+
+#[test]
+fn variable_length_headers_preserve_the_decoded_activity() {
+    let expected = serde_json::to_value(decode_activity(CYCLING).unwrap()).unwrap();
+    for size in [12, 13, 14, 16, 64, 255] {
+        let bytes = with_header_size(size);
+        let actual = decode_activity(&bytes).unwrap_or_else(|e| panic!("header {size}: {e}"));
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            expected,
+            "header {size}"
+        );
+    }
+}
+
+#[test]
+fn extended_header_corruption_and_invalid_lengths_are_rejected() {
+    const EXTENDED_HEADER_SIZE: usize = 16;
+    let valid = with_header_size(EXTENDED_HEADER_SIZE as u8);
+    for offset in [1, 12, 14, EXTENDED_HEADER_SIZE + 20, valid.len() - 1] {
+        let mut corrupt = valid.clone();
+        corrupt[offset] ^= 1;
+        assert!(matches!(
+            decode_activity(&corrupt),
+            Err(FitDecodeError::InvalidEncoding)
+        ));
+    }
+    for length in [12, 14, 15, 16, valid.len() - 1] {
+        assert!(decode_activity(&valid[..length]).is_err());
+    }
+    for declared_size in [0, 11, 15, 17, 255] {
+        let mut corrupt = valid.clone();
+        corrupt[0] = declared_size;
+        // A correct checksum must not mask an inconsistent declared length.
+        let end = corrupt.len() - 2;
+        let crc = checksum(&corrupt[..end]);
+        corrupt[end..].copy_from_slice(&crc.to_le_bytes());
+        assert!(decode_activity(&corrupt).is_err());
+    }
+    assert!(decode_activity(&[valid.as_slice(), valid.as_slice()].concat()).is_err());
+}
+
+#[test]
+fn standard_header_crc_validation_and_optional_zero_are_preserved() {
+    const HEADER_CRC_OFFSET: usize = 12;
+    for stored_crc in [0_u16, 1_u16] {
+        let mut bytes = CYCLING.to_vec();
+        bytes[HEADER_CRC_OFFSET..HEADER_CRC_OFFSET + 2].copy_from_slice(&stored_crc.to_le_bytes());
+        let end = bytes.len() - 2;
+        let crc = checksum(&bytes[..end]);
+        bytes[end..].copy_from_slice(&crc.to_le_bytes());
+        assert_eq!(decode_activity(&bytes).is_ok(), stored_crc == 0);
+    }
+}
