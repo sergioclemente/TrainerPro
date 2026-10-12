@@ -5,7 +5,7 @@
 //! - `IntervalsT` expands to Repeat × (Steady on, Steady off).
 //! - Cadence: `Cadence` is an exact rpm. `CadenceLow`/`CadenceHigh` (planner
 //!   and Zwift range spelling) collapse to their midpoint when `Cadence` is
-//!   absent, the same rule TPW applies when compiling a cadence range.
+//!   absent, the same rule WorkoutSpec applies when compiling a cadence range.
 //! - Warmup/Ramp ramp PowerLow→PowerHigh; Cooldown ramps PowerHigh→PowerLow
 //!   (known ambiguity — see spec; keep the rule in one place).
 //! - `<textevent>` offsets are relative to the parent segment's start;
@@ -20,7 +20,7 @@ use roxmltree::Node;
 use super::{ParseError, ParseWarning, Parsed, SourceFormat};
 use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN, TEXT_EVENT_DEFAULT_S};
 use crate::model::{ExecutableWorkout, PowerTarget, TextEvent, WorkoutSegment};
-use crate::workout_definition::midpoint;
+use crate::workout_spec::midpoint;
 
 pub fn parse_zwo(input: &str) -> Result<Parsed, ParseError> {
     // Real-world exporters emit unescaped '&' in titles/messages
@@ -333,7 +333,7 @@ fn optional_cadence(el: Node, attr: &str, warnings: &mut Vec<ParseWarning>) -> O
 
 /// Cadence prescription for a segment: an exact `Cadence` wins; otherwise a
 /// `CadenceLow`/`CadenceHigh` range collapses to its midpoint (a lone bound is
-/// used as-is). Range rounding matches TPW's cadence-range compilation.
+/// used as-is). Range rounding matches WorkoutSpec's cadence-range compilation.
 fn cadence_target(el: Node, warnings: &mut Vec<ParseWarning>) -> Option<u16> {
     let exact = optional_cadence(el, "Cadence", warnings);
     let low = optional_cadence(el, "CadenceLow", warnings);

@@ -503,12 +503,7 @@ export default function Builder() {
       const res = await ipc.createWorkout(toDraft(name, "", nodes));
       await refreshWorkouts();
       for (const w of res.warnings) pushToast("info", w);
-      pushToast(
-        "info",
-        res.already_existed
-          ? `“${res.summary.name}” is already in the library — nothing to save`
-          : `Saved “${res.summary.name}”`,
-      );
+      pushToast("info", `Saved “${res.summary.name}”`);
       go("library");
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));

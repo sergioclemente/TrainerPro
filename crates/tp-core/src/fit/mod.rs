@@ -1,14 +1,19 @@
-//! FIT Activity file encoder.
+//! Pure FIT activity encoding and decoding.
 //!
-//! Input is everything already computed by journal replay + metrics; this
-//! module only serializes bytes. Output must decode with Garmin FitCSVTool
-//! with zero errors (CI gate, M4).
+//! The writer serializes journal replay and precomputed metrics. The reader
+//! validates bytes and exposes the standard activity subset without provider,
+//! storage, timezone or sample-support policy dependencies.
 
 mod crc;
+mod decode;
 mod encode;
 mod profile;
 
 pub use crc::checksum;
+pub use decode::{
+    decode_activity, DecodedActivity, DecodedLap, DecodedRecord, FitDecodeError, FitSport,
+    FitSummary, TimerEvent, TimerState, FIT_DECODER_VERSION,
+};
 pub use encode::encode_activity;
 
 use crate::journal::{ActivitySegment, JournalHeader, Sample, SessionEvent};

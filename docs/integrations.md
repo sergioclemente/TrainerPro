@@ -43,7 +43,7 @@ successfully fetched window are retired locally; failed requests preserve the
 last-good cache.
 
 Provider-owned workouts stay outside the local Library's deletion and
-deduplication rules. Importing or cloning a local copy gives it independent
+catalog identity rules. Importing or cloning a local copy gives it independent
 ownership. Disconnecting removes the credential and retires provider schedules
 and cached definitions while preserving Activity history.
 

@@ -25,12 +25,8 @@ export default function Library() {
     for (const path of Array.isArray(picked) ? picked : [picked]) {
       try {
         const r = await ipc.importWorkout(path as string);
-        if (r.already_existed) {
-          pushToast("info", `${r.summary.name}: already in library`);
-        } else {
-          pushToast("info", `Imported ${r.summary.name}`);
-          r.warnings.slice(0, 3).forEach((w) => pushToast("warn", w));
-        }
+        pushToast("info", `Imported ${r.summary.name}`);
+        r.warnings.slice(0, 3).forEach((w) => pushToast("warn", w));
       } catch (e) {
         pushToast("error", (e as AppError).message ?? String(e));
       }

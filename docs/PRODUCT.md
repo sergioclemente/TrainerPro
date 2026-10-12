@@ -80,15 +80,21 @@ from later provider edits.
 The Library remains available for deliberate browsing and local ownership.
 Provider-owned schedule cache entries do not become removable local-library
 items. Cloning or importing an identical definition creates an independently
-owned local copy.
+owned local copy. Content equality does not establish workout identity. Builder
+creation and file import always create new entries; catalog launches reuse source
+identity. Scheduling and plan delivery use their own explicit identities.
 
 ## Workout representation
 
-**TrainerPro Workout (TPW)** is the versioned semantic JSON representation of a
+**WorkoutSpec** is the versioned semantic JSON representation of a
 workout definition, designed for software, people, and language models. See
-[TPW/1](TPW.md) for the normative contract and [architecture](architecture.md)
+[WorkoutSpec/1](workout-spec.md) for the normative contract and [architecture](architecture.md)
 for persistence and compilation. Provider payloads are boundary inputs, never
 a second editable source of truth.
+
+The private format represents cycling and running for shared planning, while
+the TrainerPro desktop accepts only prescriptions its cycling player can execute.
+Running support in the format does not add treadmill or outdoor-running execution.
 
 ## Provider direction
 

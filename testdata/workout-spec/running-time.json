@@ -1,0 +1,42 @@
+{
+  "format": "WorkoutSpec",
+  "version": 1,
+  "title": "Synthetic timed run",
+  "prescription": {
+    "sport": "running",
+    "steps": [
+      {
+        "type": "step",
+        "role": "warmup",
+        "end": { "type": "time", "duration_seconds": 600 },
+        "target": { "type": "heart_rate_range", "min_bpm": 120, "max_bpm": 140 }
+      },
+      {
+        "type": "repeat",
+        "count": 3,
+        "steps": [
+          {
+            "type": "step",
+            "role": "work",
+            "end": { "type": "time", "duration_seconds": 180 },
+            "target": { "type": "pace_range", "fast_seconds_per_km": 300, "slow_seconds_per_km": 330 },
+            "cadence": { "type": "range", "min_steps_per_minute": 170, "max_steps_per_minute": 180 },
+            "cues": [{ "offset_seconds": 0, "message": "Relax your shoulders" }]
+          },
+          {
+            "type": "step",
+            "role": "recovery",
+            "end": { "type": "time", "duration_seconds": 120 },
+            "target": { "type": "open" }
+          }
+        ]
+      },
+      {
+        "type": "step",
+        "role": "cooldown",
+        "end": { "type": "time", "duration_seconds": 300 },
+        "target": { "type": "open" }
+      }
+    ]
+  }
+}

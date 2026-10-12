@@ -38,7 +38,7 @@ The React frontend talks to a Rust Tauri backend. `tp-core` contains pure
 workout, engine, recording, metrics, and FIT logic. `tp-ble` owns BLE drivers,
 connection traits, scanning, and simulators. `tp-integrations` provides reusable
 Garmin and Intervals.icu clients independently of the app and domain model.
-SQLite is authoritative for TPW workout definitions, schedules, provider state,
+SQLite is authoritative for WorkoutSpec workout definitions, schedules, provider state,
 and the Activity index; session journals and FIT files remain durable activity
 artifacts.
 
@@ -52,7 +52,7 @@ See [the architecture guide](docs/architecture.md) for boundaries and flows.
 | [Behavior spec](docs/SPEC.md) | Current user-visible behavior and acceptance expectations |
 | [Architecture](docs/architecture.md) | Technical ownership, invariants, and system flows |
 | [Voice developer guide](docs/voice.md) | Voice pipeline entry points and development workflows |
-| [TPW](docs/TPW.md) | Normative TrainerPro Workout JSON format |
+| [WorkoutSpec](docs/workout-spec.md) | Normative WorkoutSpec JSON format |
 | [Roadmap](docs/ROADMAP.md) | Unfinished work and external gates |
 | [Integrations](docs/integrations.md) | Garmin and Intervals.icu account, upload, and schedule behavior |
 | [WorkoutPlanner](docs/feature-workoutplanner.md) | Connected-library contract |
