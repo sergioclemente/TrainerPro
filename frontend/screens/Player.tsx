@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppError, PlayerWorkoutProfile, fmtDuration, ipc } from "../ipc";
 import { useStore } from "../state";
 import WorkoutGraph from "../components/WorkoutGraph";
-import { BoltIcon, CadenceIcon, HeartIcon } from "../components/MetricIcons";
+import { BoltIcon, CadenceIcon, HeartIcon, MiniIcon } from "../components/MetricIcons";
 import {
   COUNTDOWN_LEAD_S,
   isMuted,
@@ -94,6 +94,8 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
         settlePlayerAction(playerActions.setErg(!player.erg_enabled));
       } else if (e.key === "d") {
         toggleStats();
+      } else if (e.key === "m") {
+        if (player.phase !== "ready") void ipc.openMiniHud().catch(() => undefined);
       } else if (e.key === "ArrowUp") {
         settlePlayerAction(playerActions.setIntensity(player.intensity + 0.01));
       } else if (e.key === "ArrowDown") {
@@ -268,6 +270,8 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
       useStore.setState({ summary, screen: "summary", player: null, measurement: null });
       clearRideTimeline();
       void useStore.getState().refreshActivities();
+      // Ended from here, so the HUD has nothing left to show.
+      void ipc.closeMiniHud().catch(() => undefined);
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
     }
@@ -450,13 +454,21 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
           <span className="erg-dot" aria-hidden="true" />
           ERG{player.erg_enabled ? "" : " off"}
         </button>
+        <button
+          className="mini-toggle"
+          onClick={() => void ipc.openMiniHud().catch(() => undefined)}
+          disabled={player.phase === "ready"}
+          title="Shrink to a small always-on-top HUD (m)"
+        >
+          <MiniIcon /> Mini
+        </button>
         <button className="danger" onClick={endRide}>
           End ride
         </button>
       </div>
       <p className="muted footnote">
-        hold space to talk · s skip · e ERG · d stats · ↑/↓ intensity · right-click
-        an interval to go to it
+        hold space to talk · s skip · e ERG · d stats · m mini · ↑/↓ intensity ·
+        right-click an interval to go to it
       </p>
     </div>
   );

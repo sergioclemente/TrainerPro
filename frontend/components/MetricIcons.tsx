@@ -38,3 +38,29 @@ export function HeartIcon() {
     </svg>
   );
 }
+
+const small = { ...props, width: 15, height: 15, strokeWidth: 2.2, className: "metric-icon small" };
+
+/** Arrows pulling inward: shrink the Player to the mini HUD. */
+export function MiniIcon() {
+  return (
+    <svg {...small}>
+      <path d="M4 14v6h6" />
+      <path d="M10 14l-6 6" />
+      <path d="M20 10V4h-6" />
+      <path d="M14 10l6-6" />
+    </svg>
+  );
+}
+
+/** Arrows pushing outward: the HUD's way back to the full Player. */
+export function ExpandIcon() {
+  return (
+    <svg {...small}>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-7 7" />
+      <path d="M10 20H4v-6" />
+      <path d="M4 20l7-7" />
+    </svg>
+  );
+}

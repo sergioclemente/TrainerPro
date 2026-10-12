@@ -74,8 +74,21 @@ an interval and passing over others records skips; revisiting records another
 attempt and, when ridden, another activity segment.
 
 Keyboard controls: hold Space to talk, `s` to skip, `e` to toggle ERG, `d` to
-show/hide detailed stats, and Up/Down for intensity. Space never starts, pauses,
-or resumes a ride.
+show/hide detailed stats, `m` for the mini HUD, and Up/Down for intensity.
+Space never starts, pauses, or resumes a ride.
+
+### Mini HUD
+
+Once a ride has started, **Mini** opens a small transparent window that stays
+above other apps and shows watts, target, rpm, bpm, and interval remaining. It
+parks in the screen's top-right corner and can be dragged. Hovering reveals a
+control bar: back to the Player, pause or resume, skip, intensity, and ERG. The
+bar stays up while paused, while the trainer reconnects, and after the ride
+ends, when the cells switch to ride totals and the bar offers the summary.
+Amber marks something the rider changed (pause, intensity, ERG off), red marks
+a sensor problem, and the zone colour appears only on the power number. Workout
+cues show in the bar for their display time. Escape, `m`, a double-click, or
+ending the ride from the Player closes the HUD and focuses the main window.
 The Player shows interval and ride clocks, targets, power, cadence, heart rate,
 work, average/normalized power, intensity factor, and training stress.
 

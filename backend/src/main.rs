@@ -81,6 +81,8 @@ fn main() {
             commands::player::clear_ride,
             commands::player::get_player_state,
             commands::player::get_player_workout_profile,
+            commands::mini_hud::open_mini_hud,
+            commands::mini_hud::close_mini_hud,
             commands::providers::list_provider_connections,
             commands::providers::refresh_provider_plans,
             commands::providers::disconnect_provider,

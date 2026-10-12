@@ -1949,3 +1949,194 @@ button.go:hover {
   align-items: center;
   justify-content: center;
 }
+
+/* --- mini HUD window --- */
+/* Its own transparent window: the strip is the only thing painted. */
+html.hud-window,
+html.hud-window body {
+  background: transparent;
+  overflow: hidden;
+}
+html.hud-window #root {
+  width: 100vw;
+  height: 100vh;
+}
+.hud {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(13, 17, 23, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+  font-family: -apple-system, "SF Pro Display", "Segoe UI", sans-serif;
+  color: var(--fg);
+  cursor: default;
+}
+.hud-cells {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+  height: 100%;
+}
+.hud-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 18px 0 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  min-width: 0;
+}
+.hud-cell-last {
+  border-right: 0;
+}
+.hud-dimmed {
+  opacity: 0.45;
+}
+.hud-value {
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hud-cell:first-child .hud-value {
+  font-weight: 700;
+}
+.hud-struck {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: rgba(210, 153, 34, 0.8);
+}
+.hud-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.hud-fault-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+/* Control bar: slides up over the labels on hover, pinned when the next
+   action is obvious (paused, reconnecting, done). */
+.hud-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 0 6px 3px;
+  background: rgba(13, 17, 23, 0.92);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  transform: translateY(100%);
+  transition: transform 160ms ease;
+}
+.hud:hover .hud-bar,
+.hud:focus-within .hud-bar,
+.hud-bar-pinned .hud-bar {
+  transform: translateY(0);
+}
+.hud-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 26px;
+  min-width: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.hud-btn:hover:enabled {
+  background: rgba(255, 255, 255, 0.1);
+}
+.hud-btn .metric-icon {
+  margin: 0;
+  vertical-align: 0;
+  opacity: 1;
+}
+.hud-primary {
+  height: 24px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--warn);
+  color: var(--bg);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hud-primary:hover:enabled {
+  background: #e3ab35;
+}
+.hud-primary-done {
+  background: var(--ok);
+}
+.hud-primary-done:hover:enabled {
+  background: #56c364;
+}
+.hud-intensity {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.hud-intensity .hud-btn {
+  font-size: 15px;
+}
+.hud-intensity-value {
+  min-width: 36px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.hud-erg.on {
+  color: var(--ok);
+}
+.hud-erg.off {
+  color: var(--warn);
+  text-decoration: line-through;
+}
+.hud-status {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.hud-progress-fill {
+  height: 3px;
+}
