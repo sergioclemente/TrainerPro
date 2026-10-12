@@ -286,7 +286,7 @@ export interface WozCollection {
 }
 
 export interface WozWorkout {
-  idx: number;
+  workout_ref: string;
   title: string;
   duration_s: number;
   est_if: number;
@@ -392,8 +392,8 @@ export const ipc = {
   wozCollections: (force = false) => invoke<WozCollection[]>("woz_collections", { force }),
   wozWorkouts: (collection: string, force = false) =>
     invoke<WozWorkout[]>("woz_workouts", { collection, force }),
-  wozRide: (collection: string, idx: number) =>
-    invoke<PlayerState>("woz_ride", { collection, idx }),
+  wozRide: (collection: string, workoutRef: string) =>
+    invoke<PlayerState>("woz_ride", { collection, workoutRef }),
   wozOpenPage: (collection: string) => invoke<void>("woz_open_page", { collection }),
 
   getSettings: () => invoke<Settings>("get_settings"),

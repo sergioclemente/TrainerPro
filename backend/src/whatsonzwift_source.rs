@@ -2,8 +2,8 @@
 //! /workouts lists ~150 collections; each collection page carries every
 //! workout's full interval structure inline as `textbar` lines
 //! ("3x 2min @ 105% FTP, 1min @ 90% FTP"), which we parse into the normal
-//! Workout model. Riding serializes via tp_core's ZWO writer into the shared
-//! source pipeline. Results are cached in-memory per collection.
+//! executable model. Riding converts to WorkoutSpec through the shared source
+//! pipeline. Source workout paths identify cached entries across refreshes.
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -29,8 +29,8 @@ pub struct WozCollection {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct WozWorkout {
-    /// Index within its collection (stable per fetch; rides reference it).
-    pub idx: usize,
+    /// Canonical source path, independent of collection order or parsed content.
+    pub workout_ref: String,
     pub title: String,
     pub duration_s: u32,
     pub est_if: f64,
@@ -266,35 +266,47 @@ pub fn parse_textbar(line: &str) -> Option<Vec<WorkoutSegment>> {
     Some(out)
 }
 
-/// Parse a collection page: h3-titled workout sections, each with textbars.
-/// Workouts with any unparseable line (e.g. running pace) are skipped.
+/// Parse source workout paths and structures from individual article cards.
+/// Workouts without a source link or with unparseable lines are skipped.
 pub fn parse_collection_page(html: &str) -> Vec<(String, ExecutableWorkout)> {
-    let h3 = regex::Regex::new(r"<h3[^>]*>(.*?)</h3>").unwrap();
+    let article = regex::Regex::new(r"(?s)<article\b([^>]*)>(.*?)</article>").unwrap();
+    let article_id = regex::Regex::new(r#"\bid="([^"]+)""#).unwrap();
+    let h3 = regex::Regex::new(r"(?s)<h3\b[^>]*>(.*?)</h3>").unwrap();
+    let link = regex::Regex::new(
+        r##"<a\b[^>]*\bhref="(?:https://whatsonzwift\.com)?(/workouts/[^/"?#]+/[^"?#]+)""##,
+    )
+    .unwrap();
     let bar = regex::Regex::new(r#"<div class="textbar"[^>]*>(.*?)</div>"#).unwrap();
 
-    // Section boundaries: h3 positions.
-    let mut sections: Vec<(String, usize, usize)> = Vec::new();
-    let matches: Vec<_> = h3.captures_iter(html).collect();
-    for (i, cap) in matches.iter().enumerate() {
-        let title = strip_tags(&cap[1]);
-        let start = cap.get(0).unwrap().end();
-        let end = matches
-            .get(i + 1)
-            .map(|c| c.get(0).unwrap().start())
-            .unwrap_or(html.len());
-        if !title.is_empty() {
-            sections.push((title, start, end));
-        }
-    }
-
     let mut out = Vec::new();
-    for (title, start, end) in sections {
-        let slice = &html[start..end];
+    for card in article.captures_iter(html) {
+        let Some(id) = article_id.captures(&card[1]) else {
+            continue;
+        };
+        let section = &card[2];
+        let Some(heading) = h3.captures(section) else {
+            continue;
+        };
+        let title = strip_tags(&heading[1]);
+        if title.is_empty() {
+            continue;
+        }
+        // The final breadcrumb before the title links to this workout. Keep
+        // lookup inside its article and match its slug so a missing link cannot
+        // borrow a neighbor's identity or a parent collection breadcrumb.
+        let Some(source) = link
+            .captures_iter(&section[..heading.get(0).unwrap().start()])
+            .last()
+        else {
+            continue;
+        };
+        if source[1].rsplit('/').next() != Some(&id[1]) {
+            continue;
+        }
+        let workout_ref = source[1].to_owned();
         let mut segments: Vec<WorkoutSegment> = Vec::new();
         let mut ok = true;
-        let mut any = false;
-        for cap in bar.captures_iter(slice) {
-            any = true;
+        for cap in bar.captures_iter(&section[heading.get(0).unwrap().end()..]) {
             match parse_textbar(&strip_tags(&cap[1])) {
                 Some(mut segs) => segments.append(&mut segs),
                 None => {
@@ -303,14 +315,14 @@ pub fn parse_collection_page(html: &str) -> Vec<(String, ExecutableWorkout)> {
                 }
             }
         }
-        if ok && any && !segments.is_empty() {
+        if ok && !segments.is_empty() {
             let w = ExecutableWorkout {
-                name: title.clone(),
+                name: title,
                 description: String::new(),
                 segments,
                 text_events: vec![],
             };
-            out.push((title, w));
+            out.push((workout_ref, w));
         }
     }
     out
@@ -398,6 +410,13 @@ pub async fn woz_collections(
 
 type CollectionEntries = Vec<(ExecutableWorkout, WozWorkout)>;
 
+fn cached_workout(entries: &CollectionEntries, workout_ref: &str) -> Option<ExecutableWorkout> {
+    entries
+        .iter()
+        .find(|(_, meta)| meta.workout_ref == workout_ref)
+        .map(|(workout, _)| workout.clone())
+}
+
 fn load_collection_from_db(
     state: &State<'_, AppState>,
     collection: &str,
@@ -447,12 +466,11 @@ pub async fn woz_workouts(
     }
     let entries: Vec<(ExecutableWorkout, WozWorkout)> = parsed
         .into_iter()
-        .enumerate()
-        .map(|(idx, (title, w))| {
+        .map(|(workout_ref, w)| {
             let (est_if, est_tss) = tp_core::metrics::estimate_if_tss(&w, ftp);
             let meta = WozWorkout {
-                idx,
-                title,
+                workout_ref,
+                title: w.name.clone(),
                 duration_s: w.duration_s(),
                 est_if,
                 est_tss,
@@ -477,7 +495,7 @@ pub async fn woz_ride(
     app: AppHandle,
     state: State<'_, AppState>,
     collection: String,
-    idx: usize,
+    workout_ref: String,
 ) -> Result<PlayerState, AppError> {
     let workout = {
         let hit = state
@@ -485,17 +503,14 @@ pub async fn woz_ride(
             .lock()
             .unwrap()
             .get(&collection)
-            .and_then(|v| v.get(idx))
-            .map(|(w, _)| w.clone());
+            .and_then(|entries| cached_workout(entries, &workout_ref));
         match hit {
             Some(w) => w,
             None => {
                 let entries = load_collection_from_db(&state, &collection).ok_or_else(|| {
                     AppError::new("woz_stale", "workout not in cache — re-open the collection")
                 })?;
-                let w = entries
-                    .get(idx)
-                    .map(|(w, _)| w.clone())
+                let w = cached_workout(&entries, &workout_ref)
                     .ok_or_else(|| AppError::new("woz_stale", "workout not in cache"))?;
                 state
                     .woz_cache
@@ -507,8 +522,8 @@ pub async fn woz_ride(
         }
     };
     let definition = tp_core::workout_spec::WorkoutSpec::from_executable(workout)?;
-    let origin_ref = format!("{collection}#{idx}");
-    sources::ride_from_definition(app, &state, &definition, "whatsonzwift", &origin_ref, None).await
+    sources::ride_from_definition(app, &state, &definition, "whatsonzwift", &workout_ref, None)
+        .await
 }
 
 /// Attribution / browse-out: open the collection on whatsonzwift.com.
@@ -597,23 +612,130 @@ mod tests {
         assert!(parse_textbar("2min @ 80% 5k pace").is_none());
     }
 
+    fn card(slug: &str, title: &str, bars: &str) -> String {
+        format!(
+            r#"<article id="{slug}"><header>
+            <a href="https://whatsonzwift.com/workouts/test#top">Test</a>
+            <a href="https://whatsonzwift.com/workouts/test/{slug}">{title}</a>
+            <h3 class="x">{title}</h3></header><section>{bars}</section></article>"#
+        )
+    }
+
     #[test]
     fn parses_collection_page_sections() {
-        let html = r#"
-          <h3 class="x"> Over-Unders</h3>
-          <div class="textbar" style="a">5min from <span>40</span> to <span>105</span>% FTP</div>
-          <div class="textbar">3x 2min @ <span>105</span>% FTP,<br /> 1min @ <span>90</span>% FTP</div>
-          <h3> Run Section</h3>
-          <div class="textbar">2min @ 80% 5k pace</div>
-          <h3> Another Bike</h3>
-          <div class="textbar">10min @ 55% FTP</div>
-        "#;
-        let out = parse_collection_page(html);
+        let html = [
+            card("over-unders", "Over-Unders", r#"
+                <div class="textbar" style="a">5min from <span>40</span> to <span>105</span>% FTP</div>
+                <div class="textbar">3x 2min @ <span>105</span>% FTP,<br /> 1min @ <span>90</span>% FTP</div>"#),
+            card("run", "Run Section", r#"<div class="textbar">2min @ 80% 5k pace</div>"#),
+            card("bike", "Another Bike", r#"<div class="textbar">10min @ 55% FTP</div>"#),
+        ].concat();
+        let out = parse_collection_page(&html);
         assert_eq!(out.len(), 2, "run section skipped");
-        assert_eq!(out[0].0, "Over-Unders");
+        assert_eq!(out[0].0, "/workouts/test/over-unders");
+        assert_eq!(out[0].1.name, "Over-Unders");
         assert_eq!(out[0].1.segments.len(), 1 + 6);
         assert_eq!(out[0].1.duration_s(), 300 + 3 * 180);
-        assert_eq!(out[1].0, "Another Bike");
+        assert_eq!(out[1].1.name, "Another Bike");
+    }
+
+    fn cache_entries(html: &str) -> CollectionEntries {
+        parse_collection_page(html)
+            .into_iter()
+            .map(|(workout_ref, workout)| {
+                let meta = WozWorkout {
+                    workout_ref,
+                    title: workout.name.clone(),
+                    duration_s: workout.duration_s(),
+                    est_if: 0.0,
+                    est_tss: 0.0,
+                    graph: vec![],
+                    segments: vec![],
+                };
+                (workout, meta)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn source_identity_survives_reorder_skipped_entries_and_offline_cache_reload() {
+        // Identical titles must not collapse distinct source workouts either.
+        let first = card(
+            "first",
+            "Same title",
+            r#"<div class="textbar">5min @ 55% FTP</div>"#,
+        );
+        let second = card(
+            "second",
+            "Same title",
+            r#"<div class="textbar">10min @ 75% FTP</div>"#,
+        );
+        let original = cache_entries(&format!("{first}{second}"));
+        let selected_ref = &original[1].1.workout_ref;
+        let skipped = card(
+            "run",
+            "Run",
+            r#"<div class="textbar">2min @ 80% 5k pace</div>"#,
+        );
+        let refreshed = cache_entries(&format!("{skipped}{second}{first}"));
+        let conn = crate::database::test_connection();
+        crate::database::source_cache::put(
+            &conn,
+            "woz",
+            "collection:test",
+            None,
+            &serde_json::to_string(&refreshed).unwrap(),
+            0,
+        )
+        .unwrap();
+        let stored = crate::database::source_cache::get(&conn, "woz", "collection:test")
+            .unwrap()
+            .unwrap();
+        let restored: CollectionEntries = serde_json::from_str(&stored.value).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(
+            cached_workout(&restored, selected_ref)
+                .unwrap()
+                .duration_s(),
+            600
+        );
+        assert_eq!(
+            cached_workout(&restored, &original[0].1.workout_ref)
+                .unwrap()
+                .duration_s(),
+            300
+        );
+        let removed = cache_entries(&first);
+        assert!(cached_workout(&removed, selected_ref).is_none());
+    }
+
+    #[test]
+    fn legacy_positional_cache_requires_refresh() {
+        let entries = cache_entries(&card(
+            "first",
+            "Bike",
+            r#"<div class="textbar">5min @ 55% FTP</div>"#,
+        ));
+        let mut legacy = serde_json::to_value(&entries).unwrap();
+        let meta = legacy[0][1].as_object_mut().unwrap();
+        meta.remove("workout_ref");
+        meta.insert("idx".to_owned(), serde_json::json!(0));
+        assert!(serde_json::from_value::<CollectionEntries>(legacy).is_err());
+    }
+
+    #[test]
+    fn missing_workout_link_never_borrows_neighbor_or_parent_identity() {
+        let missing = r#"<article id="missing"><header>
+            <a href="https://whatsonzwift.com/workouts/test/week-1">Week 1</a>
+            <h3>Missing link</h3></header><div class="textbar">5min @ 55% FTP</div></article>"#;
+        let neighbor = card(
+            "next",
+            "Next",
+            r#"<div class="textbar">10min @ 75% FTP</div>"#,
+        );
+        let parsed = parse_collection_page(&format!("{missing}{neighbor}"));
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].0, "/workouts/test/next");
     }
 
     #[test]

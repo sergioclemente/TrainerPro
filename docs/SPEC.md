@@ -42,7 +42,10 @@ Opt-in WorkoutPlanner and What's on Zwift libraries have separate tabs and
 normalize workouts to WorkoutSpec. Repeated launches reuse an active catalog entry
 by source and workout reference, refreshing its content while preserving its ID.
 Identical content from different sources or references remains separate. Provider-
-scheduled entries are excluded. Cached content can remain available offline.
+scheduled entries are excluded. What's on Zwift uses each workout's source URL,
+so collection reordering does not change workout identity. Existing positional
+cache entries require an online refresh; previously saved library entries remain
+unchanged. Cached content can remain available offline.
 Build supports steady intervals, ramps, free ride, and repetitions, with
 validation, duration, graph, and estimated metrics before saving. Detail and
 Build show relative targets with watts resolved from current FTP.
