@@ -47,7 +47,6 @@ export type NextUpItem =
 export interface ImportResult {
   summary: WorkoutSummary;
   warnings: string[];
-  already_existed: boolean;
 }
 
 export interface DeviceSlot {

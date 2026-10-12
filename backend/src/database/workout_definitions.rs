@@ -47,35 +47,42 @@ fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkoutDefinitionRow> {
     })
 }
 
-/// Find a reusable definition in TrainerPro's local-library lifecycle.
-/// Provider-scheduled definitions are executable cache entries, not local
-/// copies, even when their canonical WorkoutSpec happens to be identical.
-/// The historical `tpw_json` column remains stable. Normalize only the format
-/// discriminator when comparing old and new documents; never rewrite stored JSON.
-pub fn find_local_id_by_tpw_json(
-    conn: &Connection,
-    tpw_json: &str,
-) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT id FROM workout_definitions
-         WHERE (tpw_json = ?1 OR CASE
-           WHEN json_valid(tpw_json) AND json_valid(?1) THEN
-             json_extract(tpw_json, '$.format') IN ('TPW', 'WorkoutSpec')
-             AND json_extract(?1, '$.format') IN ('TPW', 'WorkoutSpec')
-             AND json_set(tpw_json, '$.format', 'WorkoutSpec')
-                 = json_set(?1, '$.format', 'WorkoutSpec')
-           ELSE 0 END)
-           AND retired_at_unix_ms IS NULL
+/// Refresh a catalog entry by source identity, independently of workout content.
+/// An immediate transaction serializes concurrent lookup/create operations.
+pub fn save_catalog_entry(
+    conn: &mut Connection,
+    definition: &ProviderWorkoutDefinition<'_>,
+) -> rusqlite::Result<String> {
+    let transaction = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let existing: Option<String> = transaction
+        .query_row(
+            "SELECT id FROM workout_definitions
+         WHERE origin = ?1 AND origin_ref = ?2 AND retired_at_unix_ms IS NULL
            AND NOT EXISTS (
              SELECT 1 FROM scheduled_workouts sw
              WHERE sw.workout_definition_id = workout_definitions.id
                AND sw.provider_connection_id IS NOT NULL
            )
-         ORDER BY created_at DESC LIMIT 1",
-        [tpw_json],
-        |row| row.get(0),
-    )
-    .optional()
+         ORDER BY created_at DESC, id ASC LIMIT 1",
+            rusqlite::params![definition.origin, definition.origin_ref],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let id = if let Some(id) = existing {
+        update_provider_copy(
+            &transaction,
+            &ProviderWorkoutDefinition {
+                id: &id,
+                ..*definition
+            },
+        )?;
+        id
+    } else {
+        insert_provider_copy(&transaction, definition)?;
+        definition.id.to_owned()
+    };
+    transaction.commit()?;
+    Ok(id)
 }
 
 pub fn insert(conn: &Connection, definition: &NewWorkoutDefinition<'_>) -> rusqlite::Result<()> {
@@ -198,23 +205,6 @@ pub fn delete(conn: &Connection, id: &str) -> rusqlite::Result<DeleteResult> {
     })
 }
 
-pub fn set_origin(
-    conn: &Connection,
-    id: &str,
-    origin: &str,
-    origin_id: Option<i64>,
-    origin_ref: &str,
-    updated_at_ms: i64,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE workout_definitions
-         SET origin = ?1, origin_id = ?2, origin_ref = ?3, updated_at = ?4
-         WHERE id = ?5",
-        rusqlite::params![origin, origin_id, origin_ref, updated_at_ms, id,],
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,63 +224,12 @@ mod tests {
     }
 
     #[test]
-    fn renamed_format_reuses_legacy_workout_without_rewriting_stored_json() {
-        use tp_core::workout_spec::WorkoutSpec;
-        let conn = super::super::test_connection();
-        let mut legacy: serde_json::Value = serde_json::from_str(TPW_JSON).unwrap();
-        legacy["description"] = serde_json::json!("TPW is part of the athlete's text");
-        // Historical documents used the same pretty serializer and defaults.
-        let spec = WorkoutSpec::from_json(&legacy.to_string()).unwrap();
-        let canonical = spec.to_json_pretty().unwrap();
-        // Preserve struct field order, as historical serialization did.
-        let stored = canonical.replacen("\"format\": \"WorkoutSpec\"", "\"format\": \"TPW\"", 1);
-        insert(
-            &conn,
-            &NewWorkoutDefinition {
-                id: "legacy",
-                tpw_json: &stored,
-                created_at_ms: 1,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            find_local_id_by_tpw_json(&conn, &canonical)
-                .unwrap()
-                .as_deref(),
-            Some("legacy")
-        );
-        let row = get(&conn, "legacy").unwrap().unwrap();
-        assert_eq!(row.tpw_json, stored);
-        assert_eq!(
-            WorkoutSpec::from_json(&row.tpw_json)
-                .unwrap()
-                .compile()
-                .unwrap(),
-            spec.compile().unwrap()
-        );
-        let changed = canonical.replace("athlete's text", "different text");
-        assert_eq!(find_local_id_by_tpw_json(&conn, &changed).unwrap(), None);
-        conn.execute(
-            "UPDATE workout_definitions SET retired_at_unix_ms = 2 WHERE id = 'legacy'",
-            [],
-        )
-        .unwrap();
-        assert_eq!(find_local_id_by_tpw_json(&conn, &canonical).unwrap(), None);
-    }
-
-    #[test]
-    fn insert_find_list_update_and_delete_definition() {
+    fn insert_list_update_and_delete_definition() {
         let conn = super::super::test_connection();
         insert_fixture(&conn, "older", 10);
         insert_fixture(&conn, "newer", 20);
 
         let older_json = TPW_JSON.replace("Endurance", "older");
-        assert_eq!(
-            find_local_id_by_tpw_json(&conn, &older_json)
-                .unwrap()
-                .as_deref(),
-            Some("older")
-        );
         assert_eq!(
             list_local(&conn)
                 .unwrap()
@@ -300,7 +239,18 @@ mod tests {
             vec!["newer", "older"]
         );
 
-        set_origin(&conn, "older", "planner", Some(42), "42", 30).unwrap();
+        update_provider_copy(
+            &conn,
+            &ProviderWorkoutDefinition {
+                id: "older",
+                tpw_json: &older_json,
+                origin: "planner",
+                origin_id: Some(42),
+                origin_ref: "42",
+                synced_at_unix_ms: 30,
+            },
+        )
+        .unwrap();
         let row = get(&conn, "older").unwrap().unwrap();
         assert_eq!(row.tpw_json, older_json);
         assert_eq!(row.origin.as_deref(), Some("planner"));
@@ -311,8 +261,8 @@ mod tests {
     }
 
     #[test]
-    fn provider_scheduled_definitions_are_not_local_library_duplicates() {
-        let conn = super::super::test_connection();
+    fn provider_scheduled_definitions_are_not_local_library_entries() {
+        let mut conn = super::super::test_connection();
         let provider_json = TPW_JSON.replace("Endurance", "shared");
         insert_provider_copy(
             &conn,
@@ -345,11 +295,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            find_local_id_by_tpw_json(&conn, &provider_json.replace("\"TPW\"", "\"WorkoutSpec\""))
-                .unwrap(),
-            None
-        );
         assert!(list_local(&conn).unwrap().is_empty());
         assert_eq!(
             delete(&conn, "provider-definition").unwrap(),
@@ -367,12 +312,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            find_local_id_by_tpw_json(&conn, &provider_json)
-                .unwrap()
-                .as_deref(),
-            Some("local-copy")
-        );
-        assert_eq!(
             list_local(&conn)
                 .unwrap()
                 .iter()
@@ -380,6 +319,186 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["local-copy"]
         );
+        let catalog_id = save_catalog_entry(
+            &mut conn,
+            &catalog("catalog-copy", &provider_json, "intervals_icu", "42", 40),
+        )
+        .unwrap();
+        assert_eq!(catalog_id, "catalog-copy");
+        assert_eq!(
+            get(&conn, "provider-definition").unwrap().unwrap().tpw_json,
+            provider_json
+        );
+    }
+
+    fn catalog<'a>(
+        id: &'a str,
+        json: &'a str,
+        origin: &'a str,
+        reference: &'a str,
+        time: i64,
+    ) -> ProviderWorkoutDefinition<'a> {
+        ProviderWorkoutDefinition {
+            id,
+            tpw_json: json,
+            origin,
+            origin_id: None,
+            origin_ref: reference,
+            synced_at_unix_ms: time,
+        }
+    }
+
+    #[test]
+    fn identical_local_creations_remain_independent() {
+        let conn = super::super::test_connection();
+        for id in ["first", "second"] {
+            insert(
+                &conn,
+                &NewWorkoutDefinition {
+                    id,
+                    tpw_json: TPW_JSON,
+                    created_at_ms: 1,
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(list_local(&conn).unwrap().len(), 2);
+        assert_eq!(
+            get(&conn, "first").unwrap().unwrap().tpw_json,
+            get(&conn, "second").unwrap().unwrap().tpw_json
+        );
+    }
+
+    #[test]
+    fn catalog_refresh_preserves_identity_creation_time_and_activity_snapshot() {
+        let mut conn = super::super::test_connection();
+        let first = save_catalog_entry(&mut conn, &catalog("first", TPW_JSON, "planner", "42", 10))
+            .unwrap();
+        conn.execute("INSERT INTO activities (
+            id, workout_definition_id, workout_name, started_at_unix_ms,
+            elapsed_s, timer_s, ftp_used_w, final_intensity_multiplier,
+            fit_path, journal_path, completed_pct, workout_definition_snapshot_json)
+            VALUES ('ride',?1,'Original',10,60,60,250,1.0,'/synthetic.fit','/synthetic.jsonl',100,?2)",
+            rusqlite::params![first, TPW_JSON]).unwrap();
+        let changed = TPW_JSON.replace("Endurance", "Updated");
+        let second =
+            save_catalog_entry(&mut conn, &catalog("unused", &changed, "planner", "42", 20))
+                .unwrap();
+        assert_eq!(first, second);
+        assert!(get(&conn, "unused").unwrap().is_none());
+        assert_eq!(get(&conn, &first).unwrap().unwrap().tpw_json, changed);
+        let times: (i64, i64) = conn
+            .query_row(
+                "SELECT created_at, updated_at FROM workout_definitions WHERE id = ?1",
+                [&first],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(times, (10, 20));
+        let snapshot: String = conn
+            .query_row(
+                "SELECT workout_definition_snapshot_json FROM activities WHERE id = 'ride'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshot, TPW_JSON);
+        assert_eq!(
+            save_catalog_entry(
+                &mut conn,
+                &catalog("also-unused", &changed, "planner", "42", 30)
+            )
+            .unwrap(),
+            first
+        );
+        assert_eq!(list_local(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn catalog_identity_does_not_merge_other_sources_local_or_retired_entries() {
+        let mut conn = super::super::test_connection();
+        insert(
+            &conn,
+            &NewWorkoutDefinition {
+                id: "local",
+                tpw_json: TPW_JSON,
+                created_at_ms: 1,
+            },
+        )
+        .unwrap();
+        for (id, origin, reference) in [
+            ("planner", "planner", "42"),
+            ("other", "whatsonzwift", "42"),
+            ("other-ref", "planner", "43"),
+        ] {
+            assert_eq!(
+                save_catalog_entry(&mut conn, &catalog(id, TPW_JSON, origin, reference, 2))
+                    .unwrap(),
+                id
+            );
+        }
+        conn.execute(
+            "UPDATE workout_definitions SET retired_at_unix_ms = 3 WHERE id = 'planner'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            save_catalog_entry(
+                &mut conn,
+                &catalog("replacement", TPW_JSON, "planner", "42", 4)
+            )
+            .unwrap(),
+            "replacement"
+        );
+        assert_eq!(get(&conn, "local").unwrap().unwrap().origin, None);
+        assert!(get(&conn, "planner").unwrap().is_some());
+    }
+
+    #[test]
+    fn historical_catalog_duplicates_choose_newest_then_id_without_merging() {
+        let mut conn = super::super::test_connection();
+        for (id, time) in [("old", 1), ("b", 2), ("a", 2)] {
+            insert_provider_copy(&conn, &catalog(id, TPW_JSON, "planner", "42", time)).unwrap();
+        }
+        assert_eq!(
+            save_catalog_entry(&mut conn, &catalog("unused", TPW_JSON, "planner", "42", 3))
+                .unwrap(),
+            "a"
+        );
+        assert_eq!(list_local(&conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn concurrent_catalog_saves_reuse_one_entry() {
+        use std::sync::{Arc, Barrier};
+        use std::time::Duration;
+        const LOCK_WAIT: Duration = Duration::from_secs(5);
+        let directory =
+            std::env::temp_dir().join(format!("trainerpro-catalog-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("test.sqlite");
+        drop(super::super::open(&path).unwrap());
+        let barrier = Arc::new(Barrier::new(2));
+        let threads: Vec<_> = ["first", "second"]
+            .into_iter()
+            .map(|id| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut conn = Connection::open(path).unwrap();
+                    conn.busy_timeout(LOCK_WAIT).unwrap();
+                    barrier.wait();
+                    save_catalog_entry(&mut conn, &catalog(id, TPW_JSON, "planner", "42", 1))
+                        .unwrap()
+                })
+            })
+            .collect();
+        let ids: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        assert_eq!(ids[0], ids[1]);
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(list_local(&conn).unwrap().len(), 1);
+        drop(conn);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

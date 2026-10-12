@@ -33,12 +33,16 @@ Both item types share detail and execution; schedule identity follows the ride.
 
 The local Library contains TrainerPro-owned definitions. Provider-scheduled
 cache entries remain executable through Next Up but are excluded from local
-listing, deduplication, and deletion. Importing ZWO, ERG, or MRC converts to WorkoutSpec,
-reports warnings, and deduplicates equivalent local definitions without managing
-or deleting the original file.
+listing, catalog-entry reuse, and deletion. Each file import and builder creation
+creates a new local entry, even when its content matches an existing workout.
+Importing ZWO, ERG, or MRC converts to WorkoutSpec and reports warnings without
+managing or deleting the original file.
 
 Opt-in WorkoutPlanner and What's on Zwift libraries have separate tabs and
-normalize workouts to WorkoutSpec. Cached content can remain available offline.
+normalize workouts to WorkoutSpec. Repeated launches reuse an active catalog entry
+by source and workout reference, refreshing its content while preserving its ID.
+Identical content from different sources or references remains separate. Provider-
+scheduled entries are excluded. Cached content can remain available offline.
 Build supports steady intervals, ramps, free ride, and repetitions, with
 validation, duration, graph, and estimated metrics before saving. Detail and
 Build show relative targets with watts resolved from current FTP.

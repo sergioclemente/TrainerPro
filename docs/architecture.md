@@ -58,7 +58,7 @@ WorkoutSpec -> validate, compile, snapshot -> ExecutableWorkout
 
 A ScheduledWorkout references a definition but owns placement and provider
 identity separately. Provider-scheduled definitions are executable cache entries,
-excluded from local Library listing and deduplication. Cloning creates an
+excluded from local Library listing and catalog-entry reuse. Cloning creates an
 independently owned local definition. Activities retain the workout snapshot and
 optional schedule identity, so subsequent edits cannot rewrite history.
 

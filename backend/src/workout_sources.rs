@@ -13,7 +13,7 @@ use crate::commands::{player, workout};
 use crate::database::workout_definitions as definition_db;
 use crate::player_runtime::PlayerState;
 
-/// ZWO boundary payload → WorkoutSpec import → provenance tag → loaded player.
+/// ZWO boundary payload → WorkoutSpec → catalog entry → loaded player.
 pub async fn ride_from_zwo(
     app: AppHandle,
     state: &State<'_, AppState>,
@@ -22,11 +22,20 @@ pub async fn ride_from_zwo(
     origin_ref: &str,
     origin_id: Option<i64>,
 ) -> Result<PlayerState, AppError> {
-    let import = workout::import_content(state, zwo, "zwo", Vec::new())?;
-    tag_and_load(app, state, import, origin, origin_ref, origin_id).await
+    let (definition, warnings) = workout::normalize_content(zwo, "zwo")?;
+    save_and_load(
+        app,
+        state,
+        &definition,
+        warnings,
+        origin,
+        origin_ref,
+        origin_id,
+    )
+    .await
 }
 
-/// Already-normalized WorkoutSpec → provenance tag → loaded player.
+/// Already-normalized WorkoutSpec → catalog entry → loaded player.
 pub async fn ride_from_definition(
     app: AppHandle,
     state: &State<'_, AppState>,
@@ -35,36 +44,49 @@ pub async fn ride_from_definition(
     origin_ref: &str,
     origin_id: Option<i64>,
 ) -> Result<PlayerState, AppError> {
-    let import = workout::store_definition(state, definition, Vec::new())?;
-    tag_and_load(app, state, import, origin, origin_ref, origin_id).await
+    save_and_load(
+        app,
+        state,
+        definition,
+        Vec::new(),
+        origin,
+        origin_ref,
+        origin_id,
+    )
+    .await
 }
 
-async fn tag_and_load(
+async fn save_and_load(
     app: AppHandle,
     state: &State<'_, AppState>,
-    import: workout::ImportResult,
+    definition: &WorkoutSpec,
+    warnings: Vec<String>,
     origin: &str,
     origin_ref: &str,
     origin_id: Option<i64>,
 ) -> Result<PlayerState, AppError> {
-    // Deduplication may reuse a definition from another local source. Preserve
-    // that row's existing provenance instead of relabeling it as this source.
-    if !import.already_existed {
-        let conn = state.db.lock().unwrap();
-        definition_db::set_origin(
-            &conn,
-            &import.summary.id,
-            origin,
-            origin_id,
-            origin_ref,
-            crate::app_state::now_unix_ms() as i64,
-        )?;
-    }
-    for w in import.warnings.iter().take(3) {
+    // Reject unsupported execution before changing the catalog cache.
+    definition.compile()?;
+    let json = definition.to_json_pretty()?;
+    let id = {
+        let mut conn = state.db.lock().unwrap();
+        definition_db::save_catalog_entry(
+            &mut conn,
+            &definition_db::ProviderWorkoutDefinition {
+                id: &uuid::Uuid::new_v4().to_string(),
+                tpw_json: &json,
+                origin,
+                origin_id,
+                origin_ref,
+                synced_at_unix_ms: crate::app_state::now_unix_ms() as i64,
+            },
+        )?
+    };
+    for warning in warnings.iter().take(3) {
         let _ = app.emit(
             "toast",
-            serde_json::json!({ "level": "warn", "message": w }),
+            serde_json::json!({ "level": "warn", "message": warning }),
         );
     }
-    player::load_workout_into_player(app.clone(), state, &import.summary.id, None).await
+    player::load_workout_into_player(app, state, &id, None).await
 }

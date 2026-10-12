@@ -22,8 +22,8 @@ and unsupported versions remain errors. Parsing a legacy document and serializin
 it produces the canonical name. This changes the envelope, not workout intent.
 
 TrainerPro retains existing database columns, IDs, and journal snapshot fields.
-Reading historical data does not rewrite it. Local-library deduplication treats
-the old and new format identifiers as equivalent without modifying workout text.
+Reading historical data does not rewrite it. Format aliases affect parsing only;
+workout identity belongs to the application and is not inferred from content.
 
 ## Document envelope
 

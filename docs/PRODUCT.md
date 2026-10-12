@@ -80,7 +80,9 @@ from later provider edits.
 The Library remains available for deliberate browsing and local ownership.
 Provider-owned schedule cache entries do not become removable local-library
 items. Cloning or importing an identical definition creates an independently
-owned local copy.
+owned local copy. Content equality does not establish workout identity. Builder
+creation and file import always create new entries; catalog launches reuse source
+identity. Scheduling and plan delivery use their own explicit identities.
 
 ## Workout representation
 

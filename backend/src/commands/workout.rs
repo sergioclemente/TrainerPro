@@ -36,7 +36,6 @@ pub struct WorkoutSummary {
 pub struct ImportResult {
     pub summary: WorkoutSummary,
     pub warnings: Vec<String>,
-    pub already_existed: bool,
 }
 
 /// Graph polyline for thumbnails/player: `(t_s, %FTP)` breakpoints.
@@ -111,17 +110,26 @@ pub fn import_content(
     ext: &str,
     extra_warnings: Vec<String>,
 ) -> R<ImportResult> {
-    let parsed = parse_by_ext(ext, content)?;
-    let definition = WorkoutSpec::from_executable(parsed.workout)?;
-    let warnings = extra_warnings
-        .into_iter()
-        .chain(parsed.warnings.into_iter().map(|warning| warning.message))
-        .collect();
+    let (definition, parsed_warnings) = normalize_content(content, ext)?;
+    let warnings = extra_warnings.into_iter().chain(parsed_warnings).collect();
     store_definition(state, &definition, warnings)
 }
 
+/// Normalize boundary data without persisting it; local imports and catalog
+/// launches have distinct identity rules.
+pub(crate) fn normalize_content(content: &str, ext: &str) -> R<(WorkoutSpec, Vec<String>)> {
+    let parsed = parse_by_ext(ext, content)?;
+    let definition = WorkoutSpec::from_executable(parsed.workout)?;
+    let warnings = parsed
+        .warnings
+        .into_iter()
+        .map(|warning| warning.message)
+        .collect();
+    Ok((definition, warnings))
+}
+
 /// Validate and persist one WorkoutSpec definition. This is the shared entry point for
-/// local authoring, boundary imports, and connected workout sources.
+/// local authoring and boundary imports. Each call creates a new library entry.
 pub fn store_definition(
     state: &State<'_, AppState>,
     definition: &WorkoutSpec,
@@ -131,18 +139,6 @@ pub fn store_definition(
     // Check before persistence so unsupported sports cannot poison the library.
     definition.compile()?;
     let tpw_json = definition.to_json_pretty()?;
-    let existing = {
-        let conn = state.db.lock().unwrap();
-        definition_db::find_local_id_by_tpw_json(&conn, &tpw_json)?
-    };
-    if let Some(id) = existing {
-        return Ok(ImportResult {
-            summary: get_workout_summary(state, &id)?,
-            warnings,
-            already_existed: true,
-        });
-    }
-
     let id = uuid::Uuid::new_v4().to_string();
     {
         let conn = state.db.lock().unwrap();
@@ -159,7 +155,6 @@ pub fn store_definition(
     Ok(ImportResult {
         summary: summary_from_definition(id, None, definition, state.settings().profile.ftp)?,
         warnings,
-        already_existed: false,
     })
 }
 
