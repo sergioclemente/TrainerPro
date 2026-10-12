@@ -84,7 +84,7 @@ const MIGRATIONS: &[&str] = &[
       provider TEXT NOT NULL CHECK(length(provider) > 0),
       external_account_id TEXT NOT NULL CHECK(length(external_account_id) > 0),
       display_name TEXT,
-      time_zone TEXT CHECK(time_zone IS NULL OR length(time_zone) > 0),
+      time_zone TEXT NOT NULL CHECK(length(time_zone) > 0),
       last_sync_succeeded_at_unix_ms INTEGER,
       last_sync_error TEXT,
       created_at_unix_ms INTEGER NOT NULL,
@@ -167,14 +167,6 @@ const MIGRATIONS: &[&str] = &[
     DROP TABLE rides;
     DROP TABLE workouts;
 
-    CREATE TABLE activity_uploads (
-      activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
-      provider_connection_id TEXT NOT NULL REFERENCES provider_connections(id) ON DELETE RESTRICT,
-      remote_activity_id TEXT NOT NULL CHECK(length(remote_activity_id) > 0),
-      uploaded_at_unix_ms INTEGER NOT NULL,
-      PRIMARY KEY(activity_id, provider_connection_id)
-    );
-
     CREATE TABLE devices_with_controller (
       role TEXT PRIMARY KEY CHECK(role IN ('trainer','hrm','controller')),
       platform_id TEXT NOT NULL, name TEXT NOT NULL, last_connected_at INTEGER);
@@ -183,7 +175,65 @@ const MIGRATIONS: &[&str] = &[
     DROP TABLE devices;
     ALTER TABLE devices_with_controller RENAME TO devices;
     ",
+    // v7-v12: released databases reached user_version 12 through the
+    // incremental history that the v6 entry above now squashes. These entries
+    // are intentionally empty so new migrations line up with that version.
+    SQUASHED_MIGRATION_PLACEHOLDER,
+    SQUASHED_MIGRATION_PLACEHOLDER,
+    SQUASHED_MIGRATION_PLACEHOLDER,
+    SQUASHED_MIGRATION_PLACEHOLDER,
+    SQUASHED_MIGRATION_PLACEHOLDER,
+    SQUASHED_MIGRATION_PLACEHOLDER,
+    // v13: providers such as Garmin do not report an account time zone, so
+    // the column becomes optional. SQLite cannot drop NOT NULL in place; the
+    // table is rebuilt while foreign keys are disabled by the runner, and
+    // tables referencing provider_connections keep pointing at the new copy.
+    "
+    CREATE TABLE provider_connections_optional_time_zone (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL CHECK(length(provider) > 0),
+      external_account_id TEXT NOT NULL CHECK(length(external_account_id) > 0),
+      display_name TEXT,
+      time_zone TEXT CHECK(time_zone IS NULL OR length(time_zone) > 0),
+      last_sync_succeeded_at_unix_ms INTEGER,
+      last_sync_error TEXT,
+      created_at_unix_ms INTEGER NOT NULL,
+      updated_at_unix_ms INTEGER NOT NULL,
+      disconnected_at_unix_ms INTEGER,
+      UNIQUE(provider, external_account_id)
+    );
+    INSERT INTO provider_connections_optional_time_zone (
+      id, provider, external_account_id, display_name, time_zone,
+      last_sync_succeeded_at_unix_ms, last_sync_error,
+      created_at_unix_ms, updated_at_unix_ms, disconnected_at_unix_ms)
+    SELECT
+      id, provider, external_account_id, display_name, time_zone,
+      last_sync_succeeded_at_unix_ms, last_sync_error,
+      created_at_unix_ms, updated_at_unix_ms, disconnected_at_unix_ms
+    FROM provider_connections;
+    DROP TABLE provider_connections;
+    ALTER TABLE provider_connections_optional_time_zone RENAME TO provider_connections;
+    CREATE UNIQUE INDEX provider_connections_one_active_account
+      ON provider_connections(provider)
+      WHERE disconnected_at_unix_ms IS NULL;
+    ",
+    // v14: upload receipts for activities pushed to a provider account.
+    // Databases created between the history squash and this entry already
+    // hold the table, hence IF NOT EXISTS.
+    "
+    CREATE TABLE IF NOT EXISTS activity_uploads (
+      activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+      provider_connection_id TEXT NOT NULL REFERENCES provider_connections(id) ON DELETE RESTRICT,
+      remote_activity_id TEXT NOT NULL CHECK(length(remote_activity_id) > 0),
+      uploaded_at_unix_ms INTEGER NOT NULL,
+      PRIMARY KEY(activity_id, provider_connection_id)
+    );
+    ",
 ];
+
+/// Schema versions whose incremental steps were folded into an earlier entry.
+/// Running them performs no work; they only advance `user_version`.
+const SQUASHED_MIGRATION_PLACEHOLDER: &str = "";
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
@@ -192,16 +242,35 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 fn prepare(mut conn: Connection) -> rusqlite::Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
     let version: i64 = conn.query_row("SELECT user_version FROM pragma_user_version", [], |r| {
         r.get(0)
     })?;
+    // Migrations that rebuild a referenced table must run with foreign keys
+    // disabled, as SQLite documents; the pragma only takes effect outside a
+    // transaction. Integrity is verified before enforcement is switched on.
+    conn.pragma_update(None, "foreign_keys", "OFF")?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
         let transaction = conn.transaction()?;
         transaction.execute_batch(sql)?;
         transaction.pragma_update(None, "user_version", (i + 1) as i64)?;
         transaction.commit()?;
     }
+    if (version as usize) < MIGRATIONS.len() {
+        let violations: i64 =
+            conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })?;
+        if violations > 0 {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
+                Some(format!(
+                    "{violations} foreign key violation(s) after migrating to schema {}",
+                    MIGRATIONS.len()
+                )),
+            ));
+        }
+    }
+    conn.pragma_update(None, "foreign_keys", "ON")?;
     Ok(conn)
 }
 
@@ -285,6 +354,105 @@ mod tests {
             .unwrap()
             .time_zone
             .is_none());
+    }
+
+    /// `user_version` of databases created before the migration history was
+    /// squashed; their schema is what the v6 entry produces.
+    const SQUASHED_RELEASED_VERSION: usize = 12;
+
+    #[test]
+    fn released_databases_gain_optional_provider_time_zones() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in super::MIGRATIONS.iter().take(6) {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", SQUASHED_RELEASED_VERSION as i64)
+            .unwrap();
+        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, display_name, time_zone, last_sync_succeeded_at_unix_ms, last_sync_error, created_at_unix_ms, updated_at_unix_ms) VALUES ('icu', 'intervals_icu', 'i123', 'Rider', 'Europe/Zurich', 5, 'late', 1, 2);
+            INSERT INTO workout_definitions(id, tpw_json, created_at, updated_at) VALUES ('definition', '{}', 1, 1);
+            INSERT INTO scheduled_workouts(id, workout_definition_id, scheduled_date_local, created_at_unix_ms, updated_at_unix_ms, provider_connection_id, external_event_id) VALUES ('scheduled', 'definition', '2030-01-01', 1, 1, 'icu', 'event');
+            INSERT INTO activities(id, workout_name, started_at_unix_ms, elapsed_s, timer_s, ftp_used_w, final_intensity_multiplier, fit_path, journal_path, completed_pct) VALUES ('ride', 'Test', 1, 30, 30, 200, 1, '/missing.fit', '/missing.jsonl', 100);").unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO provider_connections(id, provider, external_account_id, created_at_unix_ms, updated_at_unix_ms) VALUES ('garmin', 'garmin', '123', 1, 1)",
+                [],
+            )
+            .is_err());
+        assert!(conn.prepare("SELECT * FROM activity_uploads").is_err());
+
+        let conn = super::prepare(conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("SELECT user_version FROM pragma_user_version", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version as usize, super::MIGRATIONS.len());
+        let icu = super::provider_connections::get(&conn, "icu")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            icu,
+            super::provider_connections::ProviderConnectionRow {
+                id: "icu".into(),
+                provider: "intervals_icu".into(),
+                external_account_id: "i123".into(),
+                display_name: Some("Rider".into()),
+                time_zone: Some("Europe/Zurich".into()),
+                last_sync_succeeded_at_unix_ms: Some(5),
+                last_sync_error: Some("late".into()),
+                disconnected_at_unix_ms: None,
+            }
+        );
+        let garmin = super::provider_connections::connect(
+            &conn,
+            &super::provider_connections::ConnectedProvider {
+                id: "garmin",
+                provider: "garmin",
+                external_account_id: "123",
+                display_name: None,
+                time_zone: None,
+                connected_at_unix_ms: 1,
+            },
+        )
+        .unwrap();
+        assert!(super::provider_connections::get(&conn, &garmin)
+            .unwrap()
+            .unwrap()
+            .time_zone
+            .is_none());
+        super::activity_uploads::record(
+            &conn,
+            &super::activity_uploads::ActivityUpload {
+                activity_id: "ride".into(),
+                connection_id: garmin.clone(),
+                remote_activity_id: "456".into(),
+                uploaded_at_unix_ms: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+        // Referencing tables point at the rebuilt table.
+        assert!(conn
+            .execute("DELETE FROM provider_connections WHERE id='icu'", [])
+            .is_err());
+        assert!(conn
+            .execute("DELETE FROM provider_connections WHERE id=?1", [&garmin])
+            .is_err());
+        // The one-active-account index survived the rebuild.
+        assert!(conn
+            .execute(
+                "INSERT INTO provider_connections(id, provider, external_account_id, created_at_unix_ms, updated_at_unix_ms) VALUES ('icu2', 'intervals_icu', 'other', 1, 1)",
+                [],
+            )
+            .is_err());
     }
 
     #[test]
