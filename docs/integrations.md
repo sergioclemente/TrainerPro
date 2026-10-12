@@ -84,3 +84,13 @@ are reported separately and do not create a successful upload marker.
 Disconnecting removes local session credentials but preserves Activities and
 upload history; it does not revoke tokens at Garmin. Deleting a local Activity
 removes its local artifacts and upload record, never the Activity in Garmin.
+
+### Shared activity reads
+
+The `tp-integrations` Garmin client also provides bounded activity discovery and
+selected summary, lap, chart-detail, and original-file reads for Harness. These
+are read-only protocol operations, not a desktop history-sync feature. The caller
+owns encrypted credentials, refresh serialization, capture provenance, ZIP/FIT
+verification, and persistence. Responses are size-bounded; credentials are never
+forwarded through redirects, and failures do not trigger hidden retries. Original
+bytes are returned unchanged for independent verification.
