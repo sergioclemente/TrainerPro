@@ -185,6 +185,16 @@ impl GarminClient {
                 ("maxPolylineSize", "0"),
             ]);
         }
+        // The download endpoint serves ZIP bytes and rejects JSON-only Accept
+        // negotiation with HTTP 406. Keep JSON headers on structured reads.
+        if matches!(resource, ActivityResource::Original) {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::ACCEPT,
+                reqwest::header::HeaderValue::from_static("*/*"),
+            );
+            request = request.headers(headers);
+        }
         let maximum = if matches!(resource, ActivityResource::Original) {
             MAX_ORIGINAL_BYTES
         } else {
@@ -748,6 +758,14 @@ mod tests {
             "GET /activity-service/activity/42/details?maxChartSize=2000&maxPolylineSize=0 "
         ));
         assert!(requests[4].starts_with("GET /download-service/files/activity/42 "));
+        assert!(requests[4].to_ascii_lowercase().contains("accept: */*\r\n"));
+        assert!(!requests[4]
+            .to_ascii_lowercase()
+            .contains("accept: application/json"));
+        assert!(requests[..4].iter().all(|r| r
+            .to_ascii_lowercase()
+            .contains("accept: application/json\r\n")));
+
         assert!(requests.iter().all(|r| r
             .to_ascii_lowercase()
             .contains("authorization: bearer test-access")));
