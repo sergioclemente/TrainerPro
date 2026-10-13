@@ -2,8 +2,12 @@
 //! ride's five live fields while another app has the screen. It loads the
 //! same frontend bundle with `?view=hud`, so it consumes the same Tauri
 //! events as the Player and sends the same player commands.
+//!
+//! The HUD is a mode of the app, not a second app: opening it hides the
+//! main window, closing it brings the main window back, and the two windows
+//! close together.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::app_error::AppError;
 
@@ -25,9 +29,9 @@ fn window_error(e: tauri::Error) -> AppError {
     AppError::new("window", e.to_string())
 }
 
-/// Show the HUD, creating it on first use. The main window stays as it is:
-/// hiding it would also stop controller and voice input, which key off the
-/// main window being active.
+/// Show the HUD, creating it on first use, and hide the main window. The
+/// HUD takes over controller pause/resume while the main window is hidden;
+/// voice capture stays with the main window and is unavailable meanwhile.
 #[tauri::command]
 pub async fn open_mini_hud(app: AppHandle) -> R<()> {
     match app.get_webview_window(HUD_WINDOW_LABEL) {
@@ -55,8 +59,19 @@ pub async fn open_mini_hud(app: AppHandle) -> R<()> {
             if let Some((x, y)) = top_right_position(&app) {
                 builder = builder.position(x, y);
             }
-            builder.build().map_err(window_error)?;
+            let hud = builder.build().map_err(window_error)?;
+            // Closed by any other route (Cmd+W, the OS): the main window
+            // must come back or the app would seem to have vanished.
+            let handle = app.clone();
+            hud.on_window_event(move |event| {
+                if let WindowEvent::Destroyed = event {
+                    show_main_window(&handle);
+                }
+            });
         }
+    }
+    if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        main.hide().map_err(window_error)?;
     }
     Ok(())
 }
@@ -67,12 +82,31 @@ pub async fn close_mini_hud(app: AppHandle) -> R<()> {
     if let Some(hud) = app.get_webview_window(HUD_WINDOW_LABEL) {
         hud.close().map_err(window_error)?;
     }
-    if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        main.unminimize().map_err(window_error)?;
-        main.show().map_err(window_error)?;
-        main.set_focus().map_err(window_error)?;
-    }
+    show_main_window(&app);
     Ok(())
+}
+
+/// Closing the main window takes the HUD with it; wire this at startup.
+pub fn close_hud_with_main_window(app: &AppHandle) {
+    let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    let handle = app.clone();
+    main.on_window_event(move |event| {
+        if let WindowEvent::Destroyed = event {
+            if let Some(hud) = handle.get_webview_window(HUD_WINDOW_LABEL) {
+                let _ = hud.close();
+            }
+        }
+    });
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = main.unminimize();
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
 }
 
 /// Logical position that parks the HUD in the primary screen's top-right

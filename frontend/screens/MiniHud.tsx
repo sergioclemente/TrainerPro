@@ -6,8 +6,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ipc, type AppError, type WorkoutSegmentRow } from "../ipc";
+import { ipc, type AppError, type ControllerInputEvent, type WorkoutSegmentRow } from "../ipc";
 import { useStore } from "../state";
+import { createControllerInputHandler } from "../voice/controllerInput";
 import { ExpandIcon } from "../components/MetricIcons";
 import { hudView, type HudCell } from "../miniHud";
 import { playerActions } from "./Player.actions";
@@ -93,6 +94,33 @@ export default function MiniHud() {
     };
   }, []);
 
+  // The main window is hidden while the HUD is up, so its controller
+  // handler ignores input; pause/resume lands here instead. Push-to-talk
+  // needs the main window's voice capture and is not available in mini mode.
+  useEffect(() => {
+    let disposed = false;
+    const noop = () => undefined;
+    const input = createControllerInputHandler({
+      begin: noop,
+      finish: noop,
+      cancel: noop,
+      visible: () => document.visibilityState === "visible",
+      pauseResume: () => {
+        const current = useStore.getState().player;
+        if (current?.phase === "riding") act(playerActions.pauseRide());
+        else if (current?.phase === "paused") act(playerActions.resumeRide());
+      },
+    });
+    const subscription = listen<ControllerInputEvent>("controller_input", ({ payload }) => {
+      if (!disposed) input(payload);
+    });
+    return () => {
+      disposed = true;
+      void subscription.then((unlisten) => unlisten());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     return () => {
       if (errorTimer.current !== null) window.clearTimeout(errorTimer.current);
@@ -103,6 +131,10 @@ export default function MiniHud() {
     setError(message);
     if (errorTimer.current !== null) window.clearTimeout(errorTimer.current);
     errorTimer.current = window.setTimeout(() => setError(null), ERROR_DISPLAY_MS);
+  }
+
+  function act(action: Promise<void>) {
+    settle(action, showError);
   }
 
   function backToPlayer() {
@@ -129,8 +161,6 @@ export default function MiniHud() {
     cue: cue !== null && cue.until > Date.now() ? cue.message : null,
     error,
   });
-
-  const act = (action: Promise<void>) => settle(action, showError);
 
   return (
     <div

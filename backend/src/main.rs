@@ -53,6 +53,7 @@ fn main() {
                 woz_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
             device_hub::spawn_startup_reconnect(app.handle().clone());
+            commands::mini_hud::close_hud_with_main_window(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
