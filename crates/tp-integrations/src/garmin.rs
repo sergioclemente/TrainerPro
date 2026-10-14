@@ -1,4 +1,4 @@
-//! Garmin's unofficial mobile SSO and Connect activity-upload protocol.
+//! Garmin's unofficial mobile SSO and Connect activity read/upload protocols.
 //! Callers own credential persistence and account/transfer coordination.
 //! Uploads return only confirmed remote activity IDs and never resend the file.
 
@@ -34,9 +34,28 @@ const DUPLICATE_ACTIVITY_MESSAGE_CODE: u64 = 202;
 const FIT_SIGNATURE_OFFSET: usize = 8;
 const FIT_SIGNATURE_END: usize = 12;
 const MIN_FIT_HEADER_SIZE: usize = 12;
+const MAX_ACTIVITY_ID_DIGITS: usize = 20;
+const MAX_PAGE_SIZE: u32 = 100;
+const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ORIGINAL_BYTES: usize = 32 * 1024 * 1024;
+const CAPTURE_CHART_POINTS: &str = "2000";
+const CAPTURE_POLYLINE_POINTS: &str = "0";
+
+/// The caller persists exact response bytes and owns capture provenance.
+#[derive(Clone, Copy)]
+pub enum ActivityResource {
+    Summary,
+    Laps,
+    Details,
+    Original,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum GarminError {
+    #[error("Invalid Garmin activity ID or page bounds.")]
+    InvalidRequest,
+    #[error("Garmin response exceeds the supported size limit.")]
+    ResponseTooLarge,
     #[error("Could not reach Garmin.")]
     Network,
     #[error("Garmin authentication expired or was rejected.")]
@@ -105,6 +124,102 @@ pub struct GarminClient {
 }
 
 impl GarminClient {
+    /// Fetch one bounded page. Never implies a complete activity history.
+    pub async fn list_activities(
+        &self,
+        tokens: &Tokens,
+        start: u32,
+        limit: u32,
+    ) -> Result<Value, GarminError> {
+        if !(1..=MAX_PAGE_SIZE).contains(&limit) {
+            return Err(GarminError::InvalidRequest);
+        }
+        let response = native_headers(self.http.get(format!(
+            "{}/activitylist-service/activities/search/activities",
+            self.api_base
+        )))
+        .bearer_auth(&tokens.access_token)
+        .query(&[("start", start), ("limit", limit)])
+        .send()
+        .await
+        .map_err(|_| GarminError::Network)?;
+        let bytes = bounded_response(response, MAX_JSON_BYTES).await?;
+        let body: Value = serde_json::from_slice(&bytes).map_err(|_| GarminError::Protocol)?;
+        let activities = body.as_array().ok_or(GarminError::Protocol)?;
+        if activities.len() > limit as usize
+            || activities
+                .iter()
+                .any(|v| v.get("activityId").and_then(positive_id).is_none())
+        {
+            return Err(GarminError::Protocol);
+        }
+        Ok(body)
+    }
+
+    /// Read a selected resource once, without refresh, retry, or filesystem access.
+    /// JSON is validated but returned unchanged. Original ZIP/FIT verification is
+    /// the caller's responsibility; redirects are never followed with credentials.
+    pub async fn read_activity(
+        &self,
+        tokens: &Tokens,
+        activity_id: &str,
+        resource: ActivityResource,
+    ) -> Result<Vec<u8>, GarminError> {
+        if activity_id.is_empty()
+            || activity_id.len() > MAX_ACTIVITY_ID_DIGITS
+            || activity_id.starts_with('0')
+            || !activity_id.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(GarminError::InvalidRequest);
+        }
+        let path = match resource {
+            ActivityResource::Summary => format!("{ACTIVITY_PATH}{activity_id}"),
+            ActivityResource::Laps => format!("{ACTIVITY_PATH}{activity_id}/splits"),
+            ActivityResource::Details => format!("{ACTIVITY_PATH}{activity_id}/details"),
+            ActivityResource::Original => format!("/download-service/files/activity/{activity_id}"),
+        };
+        let mut request = native_headers(self.http.get(format!("{}{path}", self.api_base)))
+            .bearer_auth(&tokens.access_token);
+        if matches!(resource, ActivityResource::Details) {
+            request = request.query(&[
+                ("maxChartSize", CAPTURE_CHART_POINTS),
+                ("maxPolylineSize", CAPTURE_POLYLINE_POINTS),
+            ]);
+        }
+        // The download endpoint serves ZIP bytes and rejects JSON-only Accept
+        // negotiation with HTTP 406. Keep JSON headers on structured reads.
+        if matches!(resource, ActivityResource::Original) {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::ACCEPT,
+                reqwest::header::HeaderValue::from_static("*/*"),
+            );
+            request = request.headers(headers);
+        }
+        let maximum = if matches!(resource, ActivityResource::Original) {
+            MAX_ORIGINAL_BYTES
+        } else {
+            MAX_JSON_BYTES
+        };
+        let response = request.send().await.map_err(|_| GarminError::Network)?;
+        let bytes = bounded_response(response, maximum).await?;
+        if !matches!(resource, ActivityResource::Original) {
+            let body: Value = serde_json::from_slice(&bytes).map_err(|_| GarminError::Protocol)?;
+            if !body.is_object() {
+                return Err(GarminError::Protocol);
+            }
+            if matches!(resource, ActivityResource::Summary | ActivityResource::Laps)
+                && body.get("activityId").and_then(positive_id).as_deref() != Some(activity_id)
+            {
+                return Err(GarminError::Protocol);
+            }
+            if matches!(resource, ActivityResource::Laps) && !body["lapDTOs"].is_array() {
+                return Err(GarminError::Protocol);
+            }
+        }
+        Ok(bytes)
+    }
+
     /// Create a client for Garmin's production services with a private cookie jar.
     pub fn new() -> Result<Self, GarminError> {
         Self::with_endpoints(SSO_BASE, API_BASE, TOKEN_URL)
@@ -379,13 +494,32 @@ fn native_headers(request: RequestBuilder) -> RequestBuilder {
 }
 
 async fn json_response(response: Response) -> Result<Value, GarminError> {
+    let bytes = bounded_response(response, MAX_JSON_BYTES).await?;
+    serde_json::from_slice(&bytes).map_err(|_| GarminError::Protocol)
+}
+
+async fn bounded_response(mut response: Response, maximum: usize) -> Result<Vec<u8>, GarminError> {
     match response.status() {
-        StatusCode::UNAUTHORIZED => Err(GarminError::Authentication),
-        StatusCode::FORBIDDEN => Err(GarminError::Challenge),
-        StatusCode::TOO_MANY_REQUESTS => Err(GarminError::RateLimited),
-        status if !status.is_success() => Err(GarminError::Protocol),
-        _ => response.json().await.map_err(|_| GarminError::Protocol),
+        StatusCode::UNAUTHORIZED => return Err(GarminError::Authentication),
+        StatusCode::FORBIDDEN => return Err(GarminError::Challenge),
+        StatusCode::TOO_MANY_REQUESTS => return Err(GarminError::RateLimited),
+        status if !status.is_success() => return Err(GarminError::Protocol),
+        _ => {}
     }
+    if response
+        .content_length()
+        .is_some_and(|size| size > maximum as u64)
+    {
+        return Err(GarminError::ResponseTooLarge);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| GarminError::Network)? {
+        if chunk.len() > maximum.saturating_sub(bytes.len()) {
+            return Err(GarminError::ResponseTooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 fn login_status(body: &Value) -> Result<&str, GarminError> {
@@ -574,6 +708,158 @@ mod tests {
 
     fn tokens() -> Tokens {
         serde_json::from_value(json!({"access_token":"test-access", "refresh_token":"test-refresh", "client_id":"test-client"})).unwrap()
+    }
+
+    #[tokio::test]
+    async fn reads_one_bounded_page_and_preserves_resource_bytes() {
+        let summary = json!({"activityId":42,"summaryDTO":{"averagePower":null}});
+        let (client, requests) = server(vec![
+            ("200 OK", json!([{"activityId":42}]), ""),
+            ("200 OK", summary.clone(), ""),
+            ("200 OK", json!({"activityId":42,"lapDTOs":[]}), ""),
+            ("200 OK", json!({"metrics":[]}), ""),
+            ("200 OK", json!({"opaque":"original response"}), ""),
+        ]);
+        assert_eq!(
+            client
+                .list_activities(&tokens(), 20, 2)
+                .await
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            client
+                .read_activity(&tokens(), "42", ActivityResource::Summary)
+                .await
+                .unwrap(),
+            summary.to_string().as_bytes()
+        );
+        client
+            .read_activity(&tokens(), "42", ActivityResource::Laps)
+            .await
+            .unwrap();
+        client
+            .read_activity(&tokens(), "42", ActivityResource::Details)
+            .await
+            .unwrap();
+        client
+            .read_activity(&tokens(), "42", ActivityResource::Original)
+            .await
+            .unwrap();
+        let requests = requests.join().unwrap();
+        assert!(requests[0].starts_with(
+            "GET /activitylist-service/activities/search/activities?start=20&limit=2 "
+        ));
+        assert!(requests[1].starts_with("GET /activity-service/activity/42 "));
+        assert!(requests[2].starts_with("GET /activity-service/activity/42/splits "));
+        assert!(requests[3].starts_with(
+            "GET /activity-service/activity/42/details?maxChartSize=2000&maxPolylineSize=0 "
+        ));
+        assert!(requests[4].starts_with("GET /download-service/files/activity/42 "));
+        assert!(requests[4].to_ascii_lowercase().contains("accept: */*\r\n"));
+        assert!(!requests[4]
+            .to_ascii_lowercase()
+            .contains("accept: application/json"));
+        assert!(requests[..4].iter().all(|r| r
+            .to_ascii_lowercase()
+            .contains("accept: application/json\r\n")));
+
+        assert!(requests.iter().all(|r| r
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-access")));
+    }
+
+    #[tokio::test]
+    async fn response_limits_cover_declared_and_chunked_bodies() {
+        for headers_and_body in [
+            "Content-Length: 99999999\r\n\r\n",
+            "Transfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n0\r\n\r\n",
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let response = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n{headers_and_body}");
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(SOCKET_TIMEOUT)).unwrap();
+                let mut request = [0; READ_BUFFER_BYTES];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                stream.write_all(response.as_bytes()).unwrap();
+            });
+            let client = GarminClient::with_endpoints(&base, &base, &base).unwrap();
+            let response = client.http.get(&base).send().await.unwrap();
+            assert_eq!(
+                bounded_response(response, 3).await.unwrap_err(),
+                GarminError::ResponseTooLarge
+            );
+            handle.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_bounds_and_paths_before_contacting_garmin() {
+        let client = GarminClient::with_endpoints(
+            "http://127.0.0.1:1",
+            "http://127.0.0.1:1",
+            "http://127.0.0.1:1",
+        )
+        .unwrap();
+        for limit in [0, 101] {
+            assert_eq!(
+                client
+                    .list_activities(&tokens(), 0, limit)
+                    .await
+                    .unwrap_err(),
+                GarminError::InvalidRequest
+            );
+        }
+        for id in ["", "0", "01", "../42", "42?secret", "123456789012345678901"] {
+            assert_eq!(
+                client
+                    .read_activity(&tokens(), id, ActivityResource::Summary)
+                    .await
+                    .unwrap_err(),
+                GarminError::InvalidRequest
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn read_failures_are_sanitized_and_never_retried() {
+        for (status, body, expected) in [
+            (
+                "401 Unauthorized",
+                json!({"secret":"private"}),
+                GarminError::Authentication,
+            ),
+            ("403 Forbidden", json!({}), GarminError::Challenge),
+            ("429 Too Many Requests", json!({}), GarminError::RateLimited),
+            ("302 Found", json!({}), GarminError::Protocol),
+            ("200 OK", json!({"activityId":99}), GarminError::Protocol),
+            ("200 OK", json!([]), GarminError::Protocol),
+        ] {
+            let (client, requests) = server(vec![(status, body, "")]);
+            assert_eq!(
+                client
+                    .read_activity(&tokens(), "42", ActivityResource::Summary)
+                    .await
+                    .unwrap_err(),
+                expected
+            );
+            assert_eq!(requests.join().unwrap().len(), 1);
+        }
+        let (client, requests) = server(vec![(
+            "200 OK",
+            json!([{"activityId":1},{"activityId":2}]),
+            "",
+        )]);
+        assert_eq!(
+            client.list_activities(&tokens(), 0, 1).await.unwrap_err(),
+            GarminError::Protocol
+        );
+        requests.join().unwrap();
     }
 
     #[tokio::test]
