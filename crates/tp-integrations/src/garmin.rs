@@ -39,6 +39,7 @@ const MAX_PAGE_SIZE: u32 = 100;
 const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ORIGINAL_BYTES: usize = 32 * 1024 * 1024;
 const CAPTURE_CHART_POINTS: &str = "2000";
+const CAPTURE_POLYLINE_POINTS: &str = "0";
 
 /// The caller persists exact response bytes and owns capture provenance.
 #[derive(Clone, Copy)]
@@ -182,7 +183,7 @@ impl GarminClient {
         if matches!(resource, ActivityResource::Details) {
             request = request.query(&[
                 ("maxChartSize", CAPTURE_CHART_POINTS),
-                ("maxPolylineSize", "0"),
+                ("maxPolylineSize", CAPTURE_POLYLINE_POINTS),
             ]);
         }
         // The download endpoint serves ZIP bytes and rejects JSON-only Accept
