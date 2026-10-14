@@ -71,6 +71,8 @@ export interface HudInput {
   cue: string | null;
   /** The latest error from a HUD action, shown in the bar slot. */
   error: string | null;
+  /** Interval clock counts up instead of down (click to toggle). */
+  showIntervalElapsed: boolean;
 }
 
 const EMPTY_PROGRESS = { fraction: 0, color: HUD_COLOR_MUTED, dashed: false };
@@ -112,7 +114,18 @@ function doneView(summary: ActivitySummary): HudView {
 }
 
 export function hudView(input: HudInput): HudView {
-  const { player, measurement, ftpW, segmentDurationS, trainer, hrm, summary, cue, error } = input;
+  const {
+    player,
+    measurement,
+    ftpW,
+    segmentDurationS,
+    trainer,
+    hrm,
+    summary,
+    cue,
+    error,
+    showIntervalElapsed,
+  } = input;
   if (summary !== null && player === null) return doneView(summary);
   if (player === null) {
     return {
@@ -150,7 +163,20 @@ export function hudView(input: HudInput): HudView {
 
   const ending =
     live && player.seg_idx !== null && player.seg_remaining_s <= HUD_ENDING_LEAD_S;
-  const intervalLabel = reconnecting || paused ? "paused" : mode === "ready" ? "ready" : "interval";
+  // Elapsed needs the interval's planned length; without it the clock
+  // stays on remaining.
+  const intervalElapsedS =
+    showIntervalElapsed && segmentDurationS !== null
+      ? Math.max(0, segmentDurationS - player.seg_remaining_s)
+      : null;
+  const intervalLabel =
+    reconnecting || paused
+      ? "paused"
+      : mode === "ready"
+        ? "ready"
+        : intervalElapsedS !== null
+          ? "elapsed"
+          : "interval";
   const intervalLabelColor = reconnecting || paused ? HUD_COLOR_CHANGED : HUD_COLOR_MUTED;
 
   const cells: HudCell[] = [
@@ -178,7 +204,7 @@ export function hudView(input: HudInput): HudView {
       ? { value: "–", label: "hrm lost", color: HUD_COLOR_MUTED, labelColor: HUD_COLOR_FAULT, fault: true }
       : { value: dash(heartRate), label: "bpm", color: heartRate === null ? HUD_COLOR_MUTED : HUD_COLOR_NEUTRAL, dimmed: paused },
     {
-      value: fmtDuration(Math.max(0, player.seg_remaining_s)),
+      value: fmtDuration(intervalElapsedS ?? Math.max(0, player.seg_remaining_s)),
       label: intervalLabel,
       color: ending ? HUD_COLOR_CHANGED : HUD_COLOR_NEUTRAL,
       labelColor: intervalLabelColor,

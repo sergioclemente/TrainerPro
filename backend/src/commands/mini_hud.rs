@@ -7,7 +7,7 @@
 //! main window, closing it brings the main window back, and the two windows
 //! close together.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::app_error::AppError;
 
@@ -86,19 +86,45 @@ pub async fn close_mini_hud(app: AppHandle) -> R<()> {
     Ok(())
 }
 
-/// Closing the main window takes the HUD with it; wire this at startup.
-pub fn close_hud_with_main_window(app: &AppHandle) {
+/// Hide the HUD without bringing the main window back: the rider wants
+/// TrainerPro out of the way entirely. The Dock icon restores the app.
+#[tauri::command]
+pub async fn hide_mini_hud(app: AppHandle) -> R<()> {
+    if let Some(hud) = app.get_webview_window(HUD_WINDOW_LABEL) {
+        hud.hide().map_err(window_error)?;
+    }
+    Ok(())
+}
+
+/// Keep the two windows one app; wire this at startup. Closing the main
+/// window takes the HUD with it, and the main window coming back by any
+/// route (Dock thumbnail, Mission Control) dismisses the HUD.
+pub fn couple_windows(app: &AppHandle) {
     let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         return;
     };
     let handle = app.clone();
-    main.on_window_event(move |event| {
-        if let WindowEvent::Destroyed = event {
-            if let Some(hud) = handle.get_webview_window(HUD_WINDOW_LABEL) {
-                let _ = hud.close();
-            }
-        }
+    main.on_window_event(move |event| match event {
+        WindowEvent::Destroyed | WindowEvent::Focused(true) => close_hud(&handle),
+        _ => {}
     });
+}
+
+/// Clicking the Dock icon means "show me TrainerPro": the full window, with
+/// the HUD dismissed, whether the HUD was showing or hidden.
+pub fn on_run_event(app: &AppHandle, event: &RunEvent) {
+    if let RunEvent::Reopen { .. } = event {
+        if app.get_webview_window(HUD_WINDOW_LABEL).is_some() {
+            close_hud(app);
+            show_main_window(app);
+        }
+    }
+}
+
+fn close_hud(app: &AppHandle) {
+    if let Some(hud) = app.get_webview_window(HUD_WINDOW_LABEL) {
+        let _ = hud.close();
+    }
 }
 
 fn show_main_window(app: &AppHandle) {

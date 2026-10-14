@@ -79,12 +79,15 @@ Space never starts, pauses, or resumes a ride.
 
 ### Mini HUD
 
-Once a ride has started, **Mini** hides the main window and opens a small
-transparent window that stays above other apps and shows watts, target, rpm,
-bpm, and interval remaining. It parks in the screen's top-right corner and can
-be dragged. The HUD is a mode, not a second app: closing either window closes
-or restores the other, and a paired controller's pause/resume button keeps
-working while push-to-talk waits for the full Player. Hovering reveals a
+Once a ride has started, **Mini** or minimizing the main window hides it and
+opens a small transparent window that stays above other apps and shows watts,
+target, rpm, bpm, and the interval clock, which clicks between remaining and
+elapsed. It parks in the screen's top-right corner and can be dragged. The HUD
+is a mode, not a second app: closing either window closes or restores the
+other, the Dock icon always brings the full window back, and a paired
+controller's pause/resume button keeps working while push-to-talk waits for
+the full Player. The bar's hide button puts the HUD away as well, for riders
+who want TrainerPro out of sight entirely. Hovering reveals a
 control bar: back to the Player, pause or resume, skip, intensity, and ERG. The
 bar stays up while paused, while the trainer reconnects, and after the ride
 ends, when the cells switch to ride totals and the bar offers the summary.

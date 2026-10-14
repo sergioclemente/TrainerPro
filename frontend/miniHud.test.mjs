@@ -51,6 +51,7 @@ function input(overrides = {}) {
     summary: null,
     cue: null,
     error: null,
+    showIntervalElapsed: false,
     ...overrides,
   };
 }
@@ -86,6 +87,16 @@ test("ERG off strikes the target through; an open interval shows a dash", () => 
   assert.equal(open.cells[1].label, "open · ride free");
   assert.equal(open.cells[2].label, "rpm · 85 target");
   assert.equal(open.progress.dashed, true);
+});
+
+test("clicking the clock shows interval elapsed instead of remaining", () => {
+  const v = hudView(input({ showIntervalElapsed: true }));
+  assert.equal(v.cells[4].value, "5:28", "600 s interval, 272 s left");
+  assert.equal(v.cells[4].label, "elapsed");
+  // Without the interval's length there is nothing to count up from.
+  const unknown = hudView(input({ showIntervalElapsed: true, segmentDurationS: null }));
+  assert.equal(unknown.cells[4].value, "4:32");
+  assert.equal(unknown.cells[4].label, "interval");
 });
 
 test("the interval clock turns amber inside the last five seconds", () => {

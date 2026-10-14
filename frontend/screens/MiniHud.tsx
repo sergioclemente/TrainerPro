@@ -15,6 +15,8 @@ import { playerActions } from "./Player.actions";
 
 /** How long an action error stays in the bar slot. */
 const ERROR_DISPLAY_MS = 6_000;
+/** The interval clock's direction sticks across rides, like the Player's. */
+const INTERVAL_ELAPSED_KEY = "trainerpro.hud.intervalElapsed";
 
 interface Cue {
   message: string;
@@ -27,9 +29,14 @@ function settle(action: Promise<void>, onError: (message: string) => void): void
   });
 }
 
-function Cell({ cell, last }: { cell: HudCell; last: boolean }) {
+function Cell({ cell, last, onClick }: { cell: HudCell; last: boolean; onClick?: () => void }) {
   return (
-    <div className={`hud-cell ${last ? "hud-cell-last" : ""} ${cell.dimmed ? "hud-dimmed" : ""}`} data-tauri-drag-region>
+    <div
+      className={`hud-cell ${last ? "hud-cell-last" : ""} ${cell.dimmed ? "hud-dimmed" : ""} ${onClick ? "hud-cell-clickable" : ""}`}
+      onClick={onClick}
+      title={onClick ? "Click to switch between remaining and elapsed" : undefined}
+      data-tauri-drag-region
+    >
       <span
         className={`hud-value ${cell.struck ? "hud-struck" : ""}`}
         style={{ color: cell.color }}
@@ -51,6 +58,9 @@ export default function MiniHud() {
   const [ftpW, setFtpW] = useState<number | null>(null);
   const [cue, setCue] = useState<Cue | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showIntervalElapsed, setShowIntervalElapsed] = useState(
+    () => localStorage.getItem(INTERVAL_ELAPSED_KEY) === "1",
+  );
   const [, setTick] = useState(0);
   const errorTimer = useRef<number | null>(null);
 
@@ -141,6 +151,17 @@ export default function MiniHud() {
     void ipc.closeMiniHud().catch(() => undefined);
   }
 
+  function hideHud() {
+    void ipc.hideMiniHud().catch(() => undefined);
+  }
+
+  function toggleIntervalClock() {
+    setShowIntervalElapsed((v) => {
+      localStorage.setItem(INTERVAL_ELAPSED_KEY, v ? "0" : "1");
+      return !v;
+    });
+  }
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" || e.key === "m") backToPlayer();
@@ -160,7 +181,9 @@ export default function MiniHud() {
     summary,
     cue: cue !== null && cue.until > Date.now() ? cue.message : null,
     error,
+    showIntervalElapsed,
   });
+  const intervalCellIndex = view.cells.length - 1;
 
   return (
     <div
@@ -171,7 +194,12 @@ export default function MiniHud() {
     >
       <div className="hud-cells" data-tauri-drag-region>
         {view.cells.map((cell, i) => (
-          <Cell key={i} cell={cell} last={i === view.cells.length - 1} />
+          <Cell
+            key={i}
+            cell={cell}
+            last={i === intervalCellIndex}
+            onClick={i === intervalCellIndex && view.mode !== "done" ? toggleIntervalClock : undefined}
+          />
         ))}
       </div>
 
@@ -273,6 +301,17 @@ export default function MiniHud() {
               onClick={() => act(playerActions.setErg(!view.ergEnabled))}
             >
               ERG
+            </button>
+            <button
+              className="hud-btn"
+              type="button"
+              aria-label="Hide HUD; the Dock icon brings TrainerPro back"
+              title="Hide HUD (Dock icon brings TrainerPro back)"
+              onClick={hideHud}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 9l7 7 7-7" />
+              </svg>
             </button>
           </>
         )}

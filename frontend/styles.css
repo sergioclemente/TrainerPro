@@ -1994,6 +1994,9 @@ html.hud-window #root {
 .hud-cell-last {
   border-right: 0;
 }
+.hud-cell-clickable {
+  cursor: pointer;
+}
 .hud-dimmed {
   opacity: 0.45;
 }

@@ -13,6 +13,7 @@ import {
   setMuted,
 } from "../sounds";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ControllerInputEvent } from "../ipc";
 import { createControllerInputHandler, isPushToTalkKey, isInteractiveTarget } from "../voice/controllerInput";
 import { useVoice, useVoiceSurface } from "../voice/VoiceController";
@@ -105,6 +106,25 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [player, toggleStats]);
+
+  // Minimizing mid-ride means "out of my way, keep riding": switch to the
+  // mini HUD. A minimized webview reports itself hidden; the window check
+  // keeps a merely covered window from triggering it.
+  const ridePhase = player?.phase ?? null;
+  useEffect(() => {
+    if (ridePhase !== "riding" && ridePhase !== "paused") return;
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      void getCurrentWindow()
+        .isMinimized()
+        .then((minimized) => {
+          if (minimized) return ipc.openMiniHud();
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [ridePhase]);
 
   useEffect(() => {
     let down = false;
