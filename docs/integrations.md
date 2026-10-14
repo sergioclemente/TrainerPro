@@ -88,7 +88,9 @@ removes its local artifacts and upload record, never the Activity in Garmin.
 ### Shared activity reads
 
 The `tp-integrations` Garmin client also provides bounded activity discovery and
-selected summary, lap, chart-detail, and original-file reads for Harness. These
+selected summary, lap, chart-detail, and original-file reads for Harness. Date-filtered
+pages accept Garmin calendar bounds; callers pad those bounds and filter UTC start
+timestamps themselves. The client performs one bounded request without pagination. These
 are read-only protocol operations, not a desktop history-sync feature. The caller
 owns encrypted credentials, refresh serialization, capture provenance, ZIP/FIT
 verification, and persistence. Responses are size-bounded; credentials are never
