@@ -131,18 +131,56 @@ impl GarminClient {
         start: u32,
         limit: u32,
     ) -> Result<Value, GarminError> {
+        self.activity_page(tokens, start, limit, None).await
+    }
+
+    /// Fetch a single date-filtered page using Garmin calendar dates. Callers
+    /// must pad for provider-local dates and independently filter UTC timestamps.
+    pub async fn list_activities_by_date(
+        &self,
+        tokens: &Tokens,
+        start: u32,
+        limit: u32,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<Value, GarminError> {
+        let valid = |date: &str| {
+            date.len() == 10
+                && date.bytes().enumerate().all(|(i, b)| {
+                    if i == 4 || i == 7 {
+                        b == b'-'
+                    } else {
+                        b.is_ascii_digit()
+                    }
+                })
+        };
+        if !valid(start_date) || !valid(end_date) || start_date > end_date {
+            return Err(GarminError::InvalidRequest);
+        }
+        self.activity_page(tokens, start, limit, Some((start_date, end_date)))
+            .await
+    }
+
+    async fn activity_page(
+        &self,
+        tokens: &Tokens,
+        start: u32,
+        limit: u32,
+        dates: Option<(&str, &str)>,
+    ) -> Result<Value, GarminError> {
         if !(1..=MAX_PAGE_SIZE).contains(&limit) {
             return Err(GarminError::InvalidRequest);
         }
-        let response = native_headers(self.http.get(format!(
+        let mut request = native_headers(self.http.get(format!(
             "{}/activitylist-service/activities/search/activities",
             self.api_base
         )))
         .bearer_auth(&tokens.access_token)
-        .query(&[("start", start), ("limit", limit)])
-        .send()
-        .await
-        .map_err(|_| GarminError::Network)?;
+        .query(&[("start", start), ("limit", limit)]);
+        if let Some((start_date, end_date)) = dates {
+            request = request.query(&[("startDate", start_date), ("endDate", end_date)]);
+        }
+        let response = request.send().await.map_err(|_| GarminError::Network)?;
         let bytes = bounded_response(response, MAX_JSON_BYTES).await?;
         let body: Value = serde_json::from_slice(&bytes).map_err(|_| GarminError::Protocol)?;
         let activities = body.as_array().ok_or(GarminError::Protocol)?;
@@ -708,6 +746,26 @@ mod tests {
 
     fn tokens() -> Tokens {
         serde_json::from_value(json!({"access_token":"test-access", "refresh_token":"test-refresh", "client_id":"test-client"})).unwrap()
+    }
+
+    #[tokio::test]
+    async fn date_page_preserves_bounds_and_does_not_paginate() {
+        let (client, requests) = server(vec![("200 OK", json!([]), "")]);
+        client
+            .list_activities_by_date(&tokens(), 100, 100, "2026-01-01", "2026-01-05")
+            .await
+            .unwrap();
+        let requests = requests.join().unwrap();
+        assert!(requests[0].starts_with("GET /activitylist-service/activities/search/activities?start=100&limit=100&startDate=2026-01-01&endDate=2026-01-05 "));
+        for (start, end) in [("bad", "2026-01-05"), ("2026-01-06", "2026-01-05")] {
+            assert_eq!(
+                client
+                    .list_activities_by_date(&tokens(), 0, 100, start, end)
+                    .await
+                    .unwrap_err(),
+                GarminError::InvalidRequest
+            );
+        }
     }
 
     #[tokio::test]
