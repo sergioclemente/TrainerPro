@@ -144,15 +144,12 @@ impl GarminClient {
         start_date: &str,
         end_date: &str,
     ) -> Result<Value, GarminError> {
+        const CALENDAR_DATE_FORMAT: &str = "%Y-%m-%d";
+        const CALENDAR_DATE_LENGTH: usize = 10;
         let valid = |date: &str| {
-            date.len() == 10
-                && date.bytes().enumerate().all(|(i, b)| {
-                    if i == 4 || i == 7 {
-                        b == b'-'
-                    } else {
-                        b.is_ascii_digit()
-                    }
-                })
+            date.len() == CALENDAR_DATE_LENGTH
+                && chrono::NaiveDate::parse_from_str(date, CALENDAR_DATE_FORMAT)
+                    .is_ok_and(|parsed| parsed.format(CALENDAR_DATE_FORMAT).to_string() == date)
         };
         if !valid(start_date) || !valid(end_date) || start_date > end_date {
             return Err(GarminError::InvalidRequest);
@@ -750,14 +747,31 @@ mod tests {
 
     #[tokio::test]
     async fn date_page_preserves_bounds_and_does_not_paginate() {
-        let (client, requests) = server(vec![("200 OK", json!([]), "")]);
+        let (client, requests) = server(vec![("200 OK", json!([]), ""), ("200 OK", json!([]), "")]);
         client
             .list_activities_by_date(&tokens(), 100, 100, "2026-01-01", "2026-01-05")
             .await
             .unwrap();
+        client
+            .list_activities_by_date(&tokens(), 0, 100, "2000-02-29", "2024-02-29")
+            .await
+            .unwrap();
         let requests = requests.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].contains("startDate=2000-02-29&endDate=2024-02-29"));
         assert!(requests[0].starts_with("GET /activitylist-service/activities/search/activities?start=100&limit=100&startDate=2026-01-01&endDate=2026-01-05 "));
-        for (start, end) in [("bad", "2026-01-05"), ("2026-01-06", "2026-01-05")] {
+        for (start, end) in [
+            ("bad", "2026-01-05"),
+            ("2026-01-06", "2026-01-05"),
+            ("2026-02-31", "2026-03-01"),
+            ("2026-13-01", "2027-01-01"),
+            ("2026-02-29", "2026-03-01"),
+            ("1900-02-29", "1900-03-01"),
+            ("2026-01-01", "2026-04-31"),
+            ("2026-00-01", "2026-01-01"),
+            ("2026-01-00", "2026-01-01"),
+            ("2026-1-01", "2026-01-01"),
+        ] {
             assert_eq!(
                 client
                     .list_activities_by_date(&tokens(), 0, 100, start, end)
