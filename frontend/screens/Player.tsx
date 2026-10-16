@@ -107,12 +107,13 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
     return () => window.removeEventListener("keydown", onKey);
   }, [player, toggleStats]);
 
-  // Minimizing mid-ride means "out of my way, keep riding": switch to the
-  // mini HUD. A minimized webview reports itself hidden; the window check
-  // keeps a merely covered window from triggering it.
+  // Minimizing while riding means "out of my way, keep riding": switch to
+  // the mini HUD. Paused, ready, or finished, minimize just minimizes. A
+  // minimized webview reports itself hidden; the window check keeps a
+  // merely covered window from triggering it.
   const ridePhase = player?.phase ?? null;
   useEffect(() => {
-    if (ridePhase !== "riding" && ridePhase !== "paused") return;
+    if (ridePhase !== "riding") return;
     const onVisibility = () => {
       if (document.visibilityState !== "hidden") return;
       void getCurrentWindow()

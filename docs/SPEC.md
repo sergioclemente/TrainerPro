@@ -79,8 +79,9 @@ Space never starts, pauses, or resumes a ride.
 
 ### Mini HUD
 
-Once a ride has started, **Mini** or minimizing the main window hides it and
-opens a small transparent window that stays above other apps and shows watts,
+Once a ride has started, **Mini** hides the main window and opens the HUD;
+minimizing the main window does the same while riding, and only then. The HUD
+is a small transparent window that stays above other apps and shows watts,
 rpm, bpm, and the interval clock, which clicks between remaining and elapsed.
 There is no target cell: a glyph before the watts says push, ease, or hold
 against the target (within 5 %), and the rpm cell does the same for a cadence
