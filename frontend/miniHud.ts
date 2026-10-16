@@ -13,6 +13,8 @@ import { zoneColor } from "./zones";
 
 /** Seconds before an interval boundary at which its clock turns amber. */
 export const HUD_ENDING_LEAD_S = 5;
+/** A reading within this fraction of its target is "hold", as in the Player. */
+export const HUD_ON_TARGET_TOLERANCE = 0.05;
 /** Colours shared with the app theme (`styles.css` tokens). */
 export const HUD_COLOR_NEUTRAL = "#e6edf3";
 export const HUD_COLOR_MUTED = "#8b949e";
@@ -23,15 +25,20 @@ const PERCENT_SCALE = 100;
 
 export type HudMode = "empty" | "ready" | "riding" | "paused" | "reconnecting" | "done";
 
+/** What the rider should do to meet the target: more, less, or stay. */
+export type HudGuidance = "up" | "down" | "hold";
+
 export interface HudCell {
   value: string;
   label: string;
+  /** Direction glyph before the value, when a target exists and a reading
+      is live. Shape carries it, so it never competes with the colours. */
+  guidance?: HudGuidance;
   /** Colour of the value; the label takes `labelColor` when set. */
   color: string;
   labelColor?: string;
   /** Dim the whole cell (paused sensors, a target ERG is not holding). */
   dimmed?: boolean;
-  struck?: boolean;
   /** A red dot before the label marks a sensor fault. */
   fault?: boolean;
 }
@@ -80,6 +87,18 @@ const EMPTY_PROGRESS = { fraction: 0, color: HUD_COLOR_MUTED, dashed: false };
 function dash(value: number | null | undefined): string {
   return value === null || value === undefined ? "–" : String(value);
 }
+
+/** Up when the reading is short of the target, down when over, else hold. */
+export function guidance(reading: number | null, target: number | null): HudGuidance | undefined {
+  if (reading === null || target === null || target <= 0) return undefined;
+  const tolerance = target * HUD_ON_TARGET_TOLERANCE;
+  if (reading < target - tolerance) return "up";
+  if (reading > target + tolerance) return "down";
+  return "hold";
+}
+
+const POWER_WORDS: Record<HudGuidance, string> = { up: "push", down: "ease", hold: "hold" };
+const CADENCE_WORDS: Record<HudGuidance, string> = { up: "spin up", down: "slow", hold: "hold" };
 
 function powerColor(power: number | null, ftpW: number | null): string {
   if (power === null) return HUD_COLOR_MUTED;
@@ -157,7 +176,6 @@ export function hudView(input: HudInput): HudView {
   const heartRate = hrmLost ? null : (measurement?.heart_rate_bpm ?? null);
   const target = player.target_power_w;
   const intensityPct = Math.round(player.intensity * PERCENT_SCALE);
-  const intensityChanged = intensityPct !== PERCENT_SCALE;
   const open = target === null;
   const zone = live ? powerColor(power, ftpW) : HUD_COLOR_MUTED;
 
@@ -179,24 +197,42 @@ export function hudView(input: HudInput): HudView {
           : "interval";
   const intervalLabelColor = reconnecting || paused ? HUD_COLOR_CHANGED : HUD_COLOR_MUTED;
 
+  const powerGuidance = guidance(power, target);
+  const cadenceTarget = player.target_cadence_rpm;
+  const cadenceGuidance = guidance(cadence, cadenceTarget);
+  // The target cell is gone: the watts and rpm cells say what to do about
+  // it. ERG off replaces the word, since the rider is steering by hand.
+  const powerLabel = reconnecting
+    ? "trainer"
+    : !player.erg_enabled && !open
+      ? "watts · erg off"
+      : open
+        ? "watts · open"
+        : powerGuidance !== undefined
+          ? `watts · ${POWER_WORDS[powerGuidance]}`
+          : "watts";
+  const cadenceLabel =
+    cadenceTarget !== null && cadenceGuidance !== undefined
+      ? `rpm · ${CADENCE_WORDS[cadenceGuidance]}`
+      : cadenceTarget !== null
+        ? `rpm · ${cadenceTarget} target`
+        : "rpm";
+
   const cells: HudCell[] = [
     reconnecting
-      ? { value: "–", label: "trainer", color: HUD_COLOR_MUTED, labelColor: HUD_COLOR_FAULT, fault: true }
-      : { value: dash(power), label: "watts", color: zone, dimmed: paused },
-    !player.erg_enabled && !open
-      ? { value: dash(target), label: "erg off", color: HUD_COLOR_MUTED, labelColor: HUD_COLOR_CHANGED, struck: true }
-      : open
-        ? { value: "–", label: "open · ride free", color: HUD_COLOR_MUTED }
-        : {
-            value: dash(target),
-            label: intensityChanged ? `target · ${intensityPct}%` : "target",
-            color: HUD_COLOR_NEUTRAL,
-            labelColor: intensityChanged ? HUD_COLOR_CHANGED : undefined,
-            dimmed: paused || reconnecting,
-          },
+      ? { value: "–", label: powerLabel, color: HUD_COLOR_MUTED, labelColor: HUD_COLOR_FAULT, fault: true }
+      : {
+          value: dash(power),
+          label: powerLabel,
+          guidance: powerGuidance,
+          color: zone,
+          labelColor: !player.erg_enabled && !open ? HUD_COLOR_CHANGED : undefined,
+          dimmed: paused,
+        },
     {
       value: dash(cadence),
-      label: player.target_cadence_rpm !== null ? `rpm · ${player.target_cadence_rpm} target` : "rpm",
+      label: cadenceLabel,
+      guidance: cadenceGuidance,
       color: cadence === null ? HUD_COLOR_MUTED : HUD_COLOR_NEUTRAL,
       dimmed: paused,
     },

@@ -56,54 +56,80 @@ function input(overrides = {}) {
   };
 }
 
-test("riding: five cells, zone colour on power only, bar hidden", () => {
+test("riding: four cells, zone colour on power only, bar hidden", () => {
   const v = hudView(input());
   assert.equal(v.mode, "riding");
-  assert.deepEqual(v.cells.map((c) => c.value), ["238", "230", "92", "152", "4:32"]);
-  assert.deepEqual(v.cells.map((c) => c.label), ["watts", "target", "rpm", "bpm", "interval"]);
+  assert.deepEqual(v.cells.map((c) => c.value), ["238", "92", "152", "4:32"]);
+  assert.deepEqual(v.cells.map((c) => c.label), ["watts · hold", "rpm", "bpm", "interval"]);
   assert.equal(v.cells[0].color, AMBER, "238 W at FTP 250 is Z4");
-  assert.notEqual(v.cells[1].color, AMBER);
+  assert.equal(v.cells[0].guidance, "hold", "238 is within 5 % of 230");
+  assert.equal(v.cells[1].guidance, undefined, "no cadence target");
   assert.equal(v.barPinned, false);
   assert.equal(v.status, null);
   assert.ok(Math.abs(v.progress.fraction - (1 - 272 / 600)) < 1e-9);
   assert.equal(v.progress.color, AMBER, "progress takes the zone colour");
 });
 
-test("intensity off 100 % marks the target label amber and reports the percent", () => {
-  const v = hudView(input({ player: player({ intensity: 0.95, target_power_w: 219 }) }));
-  assert.equal(v.intensityPct, 95);
-  assert.equal(v.cells[1].label, "target · 95%");
-  assert.equal(v.cells[1].labelColor, AMBER);
+test("the watts cell says push, ease, or hold against the target", () => {
+  const push = hudView(input({ measurement: { power_w: 212, cadence_rpm: 92, heart_rate_bpm: 148, power_smoothed_3s_w: 212 } }));
+  assert.equal(push.cells[0].guidance, "up");
+  assert.equal(push.cells[0].label, "watts · push");
+  const ease = hudView(input({ measurement: { power_w: 251, cadence_rpm: 92, heart_rate_bpm: 156, power_smoothed_3s_w: 251 } }));
+  assert.equal(ease.cells[0].guidance, "down");
+  assert.equal(ease.cells[0].label, "watts · ease");
+  // No reading, no advice.
+  const none = hudView(input({ measurement: null }));
+  assert.equal(none.cells[0].guidance, undefined);
+  assert.equal(none.cells[0].label, "watts");
 });
 
-test("ERG off strikes the target through; an open interval shows a dash", () => {
+test("the rpm cell steers toward a cadence target the same way", () => {
+  const slow = hudView(input({ player: player({ target_cadence_rpm: 90 }), measurement: { power_w: 238, cadence_rpm: 82, heart_rate_bpm: 152, power_smoothed_3s_w: 238 } }));
+  assert.equal(slow.cells[1].guidance, "up");
+  assert.equal(slow.cells[1].label, "rpm · spin up");
+  const fast = hudView(input({ player: player({ target_cadence_rpm: 90 }), measurement: { power_w: 238, cadence_rpm: 97, heart_rate_bpm: 152, power_smoothed_3s_w: 238 } }));
+  assert.equal(fast.cells[1].guidance, "down");
+  assert.equal(fast.cells[1].label, "rpm · slow");
+  const hold = hudView(input({ player: player({ target_cadence_rpm: 90 }) }));
+  assert.equal(hold.cells[1].guidance, "hold");
+  assert.equal(hold.cells[1].label, "rpm · hold");
+});
+
+test("intensity off 100 % shows only in the bar", () => {
+  const v = hudView(input({ player: player({ intensity: 0.95, target_power_w: 219 }) }));
+  assert.equal(v.intensityPct, 95);
+  assert.equal(v.cells[0].label, "watts · ease", "238 against the adjusted 219");
+});
+
+test("ERG off keeps the glyph but says so; an open interval has no advice", () => {
   const off = hudView(input({ player: player({ erg_enabled: false }) }));
-  assert.equal(off.cells[1].label, "erg off");
-  assert.equal(off.cells[1].struck, true);
+  assert.equal(off.cells[0].label, "watts · erg off");
+  assert.equal(off.cells[0].labelColor, AMBER);
+  assert.equal(off.cells[0].guidance, "hold", "steering by hand still wants the hint");
   assert.equal(off.ergEnabled, false);
 
   const open = hudView(input({ player: player({ target_power_w: null, target_cadence_rpm: 85 }) }));
-  assert.equal(open.cells[1].value, "–");
-  assert.equal(open.cells[1].label, "open · ride free");
-  assert.equal(open.cells[2].label, "rpm · 85 target");
+  assert.equal(open.cells[0].guidance, undefined);
+  assert.equal(open.cells[0].label, "watts · open");
+  assert.equal(open.cells[1].label, "rpm · slow", "92 against 85");
   assert.equal(open.progress.dashed, true);
 });
 
 test("clicking the clock shows interval elapsed instead of remaining", () => {
   const v = hudView(input({ showIntervalElapsed: true }));
-  assert.equal(v.cells[4].value, "5:28", "600 s interval, 272 s left");
-  assert.equal(v.cells[4].label, "elapsed");
+  assert.equal(v.cells[3].value, "5:28", "600 s interval, 272 s left");
+  assert.equal(v.cells[3].label, "elapsed");
   // Without the interval's length there is nothing to count up from.
   const unknown = hudView(input({ showIntervalElapsed: true, segmentDurationS: null }));
-  assert.equal(unknown.cells[4].value, "4:32");
-  assert.equal(unknown.cells[4].label, "interval");
+  assert.equal(unknown.cells[3].value, "4:32");
+  assert.equal(unknown.cells[3].label, "interval");
 });
 
 test("the interval clock turns amber inside the last five seconds", () => {
   const v = hudView(input({ player: player({ seg_remaining_s: 4 }) }));
-  assert.equal(v.cells[4].value, "0:04");
-  assert.equal(v.cells[4].color, AMBER);
-  assert.equal(v.cells[4].label, "interval", "no next-target preview");
+  assert.equal(v.cells[3].value, "0:04");
+  assert.equal(v.cells[3].color, AMBER);
+  assert.equal(v.cells[3].label, "interval", "no next-target preview");
 });
 
 test("paused: sensors dim, label says paused, bar pinned, amber accent", () => {
@@ -113,26 +139,27 @@ test("paused: sensors dim, label says paused, bar pinned, amber accent", () => {
   assert.equal(v.barPinned, true);
   assert.equal(v.accent, AMBER);
   assert.equal(v.cells[0].value, "–", "no live power while paused");
+  assert.equal(v.cells[0].guidance, undefined);
   assert.equal(v.cells[0].dimmed, true);
-  assert.equal(v.cells[4].label, "paused");
+  assert.equal(v.cells[3].label, "paused");
 });
 
 test("HRM lost touches only the bpm cell", () => {
   const v = hudView(input({ hrm: { role: "hrm", status: "reconnecting", name: "HRM-Dual" } }));
   assert.equal(v.mode, "riding");
-  assert.equal(v.cells[3].value, "–");
-  assert.equal(v.cells[3].label, "hrm lost");
-  assert.equal(v.cells[3].fault, true);
-  assert.equal(v.cells[3].labelColor, RED);
+  assert.equal(v.cells[2].value, "–");
+  assert.equal(v.cells[2].label, "hrm lost");
+  assert.equal(v.cells[2].fault, true);
+  assert.equal(v.cells[2].labelColor, RED);
   assert.equal(v.cells[0].value, "238");
   assert.equal(v.barPinned, false);
 });
 
 test("no HRM paired is not a fault", () => {
   const v = hudView(input({ hrm: { role: "hrm", status: "disconnected", name: null }, measurement: { power_w: 240, cadence_rpm: 92, heart_rate_bpm: null, power_smoothed_3s_w: 238 } }));
-  assert.equal(v.cells[3].value, "–");
-  assert.equal(v.cells[3].label, "bpm");
-  assert.equal(v.cells[3].fault, undefined);
+  assert.equal(v.cells[2].value, "–");
+  assert.equal(v.cells[2].label, "bpm");
+  assert.equal(v.cells[2].fault, undefined);
 });
 
 test("trainer reconnecting: red accent, status line, bar pinned, paused label", () => {
@@ -145,7 +172,7 @@ test("trainer reconnecting: red accent, status line, bar pinned, paused label", 
   assert.equal(v.barPinned, true);
   assert.equal(v.cells[0].label, "trainer");
   assert.equal(v.cells[0].fault, true);
-  assert.equal(v.cells[4].label, "paused");
+  assert.equal(v.cells[3].label, "paused");
   assert.match(v.status.text, /Reconnecting to KICKR/);
   assert.equal(v.progress.color, RED);
 });

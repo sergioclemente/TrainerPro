@@ -1978,7 +1978,6 @@ html.hud-window #root {
 }
 .hud-cells {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: start;
   height: 100%;
 }
@@ -2001,19 +2000,29 @@ html.hud-window #root {
   opacity: 0.45;
 }
 .hud-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 30px;
   font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* Direction glyphs: shape, not colour, so they never fight the zone colour. */
+.hud-guidance {
+  width: 14px;
+  height: 14px;
+  fill: var(--fg);
+}
+.hud-guidance-hold {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
 .hud-cell:first-child .hud-value {
   font-weight: 700;
-}
-.hud-struck {
-  text-decoration: line-through;
-  text-decoration-thickness: 2px;
-  text-decoration-color: rgba(210, 153, 34, 0.8);
 }
 .hud-label {
   display: inline-flex;

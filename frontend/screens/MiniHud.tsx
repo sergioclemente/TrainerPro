@@ -38,10 +38,21 @@ function Cell({ cell, last, onClick }: { cell: HudCell; last: boolean; onClick?:
       data-tauri-drag-region
     >
       <span
-        className={`hud-value ${cell.struck ? "hud-struck" : ""}`}
+        className="hud-value"
         style={{ color: cell.color }}
         data-tauri-drag-region
       >
+        {cell.guidance === "up" && (
+          <svg className="hud-guidance" viewBox="0 0 24 24" aria-label="more" role="img">
+            <path d="M12 4l8 10H4z" />
+          </svg>
+        )}
+        {cell.guidance === "down" && (
+          <svg className="hud-guidance" viewBox="0 0 24 24" aria-label="less" role="img">
+            <path d="M12 20L4 10h16z" />
+          </svg>
+        )}
+        {cell.guidance === "hold" && <span className="hud-guidance-hold" aria-label="on target" role="img" />}
         {cell.value}
       </span>
       <span className="hud-label" style={{ color: cell.labelColor }} data-tauri-drag-region>
@@ -192,7 +203,11 @@ export default function MiniHud() {
       onDoubleClick={backToPlayer}
       data-tauri-drag-region
     >
-      <div className="hud-cells" data-tauri-drag-region>
+      <div
+        className="hud-cells"
+        style={{ gridTemplateColumns: `repeat(${Math.max(1, view.cells.length)}, minmax(0, 1fr))` }}
+        data-tauri-drag-region
+      >
         {view.cells.map((cell, i) => (
           <Cell
             key={i}

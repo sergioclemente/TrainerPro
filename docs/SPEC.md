@@ -81,8 +81,11 @@ Space never starts, pauses, or resumes a ride.
 
 Once a ride has started, **Mini** or minimizing the main window hides it and
 opens a small transparent window that stays above other apps and shows watts,
-target, rpm, bpm, and the interval clock, which clicks between remaining and
-elapsed. It parks in the screen's top-right corner and can be dragged. The HUD
+rpm, bpm, and the interval clock, which clicks between remaining and elapsed.
+There is no target cell: a glyph before the watts says push, ease, or hold
+against the target (within 5 %), and the rpm cell does the same for a cadence
+target. ERG off and an open interval are named in the watts label; intensity
+shows in the control bar. It parks in the screen's top-right corner and can be dragged. The HUD
 is a mode, not a second app: closing either window closes or restores the
 other, the Dock icon always brings the full window back, and a paired
 controller's pause/resume button keeps working while push-to-talk waits for
