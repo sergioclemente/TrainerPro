@@ -52,7 +52,7 @@ export interface WorkoutDetailView {
   source: "library" | "planner" | "woz";
   id?: string; // library workout id
   wid?: number; // planner workout id
-  wozRef?: { collection: string; idx: number }; // whatsonzwift ref
+  wozRef?: { collection: string; workoutRef: string }; // whatsonzwift ref
   /** Set when a scheduled Next Up item opened this definition. */
   scheduledWorkoutId?: string;
   /** Source content identity (planner: DSL text) for change detection. */

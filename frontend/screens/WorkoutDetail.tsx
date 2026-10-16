@@ -136,7 +136,7 @@ export default function WorkoutDetail() {
         d.source === "planner"
           ? await ipc.plannerRide(d.wid!)
           : d.source === "woz"
-            ? await ipc.wozRide(d.wozRef!.collection, d.wozRef!.idx)
+            ? await ipc.wozRide(d.wozRef!.collection, d.wozRef!.workoutRef)
             : await ipc.loadWorkout(d.id!, d.scheduledWorkoutId ?? null);
       useStore.getState().loadPlayer(ps);
       void useStore.getState().refreshWorkouts();

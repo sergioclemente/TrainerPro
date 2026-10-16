@@ -20,7 +20,7 @@ use tp_core::journal::{
 };
 use tp_core::metrics::{normalized_power, session_totals, tss};
 use tp_core::model::ExecutableWorkout;
-use tp_core::workout_definition::WorkoutDefinition;
+use tp_core::workout_spec::WorkoutSpec;
 
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
@@ -215,7 +215,7 @@ pub async fn spawn(
     app: AppHandle,
     workout_definition_id: String,
     scheduled_workout_id: Option<String>,
-    workout_definition: WorkoutDefinition,
+    workout_definition: WorkoutSpec,
 ) -> Result<PlayerHandle, AppError> {
     let state = app.state::<AppState>();
     let trainer = state.hub.trainer().clone();

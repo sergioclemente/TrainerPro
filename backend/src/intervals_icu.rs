@@ -1,10 +1,10 @@
-//! Convert Intervals.icu structured workouts into TrainerPro TPW definitions.
+//! Convert Intervals.icu structured workouts into TrainerPro WorkoutSpec definitions.
 //! Transport and provider payloads live in tp-integrations; sync policy stays separate.
 
 use tp_core::consts::TEXT_EVENT_DEFAULT_S;
-use tp_core::workout_definition::{
-    CyclingCadenceTarget, CyclingPowerTarget, CyclingStep, WorkoutCue, WorkoutDefinition,
-    WorkoutDefinitionError, WorkoutFormat, WorkoutPrescription, TPW_VERSION,
+use tp_core::workout_spec::{
+    CyclingCadenceTarget, CyclingPowerTarget, CyclingStep, WorkoutCue, WorkoutFormat,
+    WorkoutPrescription, WorkoutSpec, WorkoutSpecError, WORKOUT_SPEC_VERSION,
 };
 
 use tp_integrations::intervals_icu::{IntervalsCalendarEvent, IntervalsStep, IntervalsTarget};
@@ -32,13 +32,13 @@ pub(crate) enum IntervalsWorkoutError {
         provider_seconds: u32,
         definition_seconds: u32,
     },
-    #[error("Intervals.icu workout produced invalid TPW: {0}")]
-    InvalidDefinition(#[from] WorkoutDefinitionError),
+    #[error("Intervals.icu workout produced invalid WorkoutSpec: {0}")]
+    InvalidDefinition(#[from] WorkoutSpecError),
 }
 
-pub(crate) fn to_workout_definition(
+pub(crate) fn to_workout_spec(
     event: &IntervalsCalendarEvent,
-) -> Result<WorkoutDefinition, IntervalsWorkoutError> {
+) -> Result<WorkoutSpec, IntervalsWorkoutError> {
     if event.category != WORKOUT_CATEGORY {
         return Err(IntervalsWorkoutError::NotWorkout {
             event_id: event.id,
@@ -56,9 +56,9 @@ pub(crate) fn to_workout_definition(
         .workout_doc
         .as_ref()
         .ok_or(IntervalsWorkoutError::MissingWorkoutDoc { event_id: event.id })?;
-    let definition = WorkoutDefinition {
-        format: WorkoutFormat::Tpw,
-        version: TPW_VERSION,
+    let definition = WorkoutSpec {
+        format: WorkoutFormat::WorkoutSpec,
+        version: WORKOUT_SPEC_VERSION,
         title: event.name.trim().to_string(),
         description: doc
             .description
@@ -400,10 +400,12 @@ mod tests {
         assert!(event.updated.is_some());
         assert_eq!(event.start_date_local, "2030-01-01T00:00:00");
 
-        let definition = to_workout_definition(&event).unwrap();
+        let definition = to_workout_spec(&event).unwrap();
         assert_eq!(definition.title, "TrainerPro API Probe");
         assert_eq!(definition.duration_seconds().unwrap(), 1_740);
-        let WorkoutPrescription::Cycling { steps } = &definition.prescription;
+        let WorkoutPrescription::Cycling { steps } = &definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         assert_eq!(steps.len(), 5);
         assert!(matches!(
             &steps[0],
@@ -459,8 +461,10 @@ mod tests {
             end: Some(240.0),
         });
         step.text = Some("  Hold good form  ".into());
-        let definition = to_workout_definition(&event_with_steps(vec![step], 60)).unwrap();
-        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let definition = to_workout_spec(&event_with_steps(vec![step], 60)).unwrap();
+        let WorkoutPrescription::Cycling { steps } = definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         let CyclingStep::Steady { power, cues, .. } = &steps[0] else {
             panic!("expected steady step");
         };
@@ -495,8 +499,10 @@ mod tests {
             });
             step
         };
-        let definition = to_workout_definition(&event_with_steps(vec![open_step()], 60)).unwrap();
-        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let definition = to_workout_spec(&event_with_steps(vec![open_step()], 60)).unwrap();
+        let WorkoutPrescription::Cycling { steps } = definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         assert!(matches!(
             &steps[0],
             CyclingStep::FreeRide {
@@ -507,7 +513,7 @@ mod tests {
 
         let mut with_power = open_step();
         with_power.power = Some(pct());
-        assert!(to_workout_definition(&event_with_steps(vec![with_power], 60)).is_err());
+        assert!(to_workout_spec(&event_with_steps(vec![with_power], 60)).is_err());
     }
 
     #[test]
@@ -515,7 +521,7 @@ mod tests {
         let mut event = event_with_steps(Vec::new(), 0);
         event.event_type = "Run".into();
         assert!(matches!(
-            to_workout_definition(&event),
+            to_workout_spec(&event),
             Err(IntervalsWorkoutError::UnsupportedSport { event_type, .. }) if event_type == "Run"
         ));
     }
@@ -532,7 +538,7 @@ mod tests {
             60,
         );
         assert!(matches!(
-            to_workout_definition(&event),
+            to_workout_spec(&event),
             Err(IntervalsWorkoutError::Invalid { path, message })
                 if path == "workout_doc.steps[0].power.units"
                     && message.contains("power_zone")
@@ -552,7 +558,7 @@ mod tests {
         );
         event.moving_time = Some(90);
         assert!(matches!(
-            to_workout_definition(&event),
+            to_workout_spec(&event),
             Err(IntervalsWorkoutError::DurationMismatch {
                 duration_source: "moving_time",
                 provider_seconds: 90,
@@ -574,7 +580,7 @@ mod tests {
         distance_step.distance = Some(1_000.0);
         let distance_event = event_with_steps(vec![distance_step], 60);
         assert!(matches!(
-            to_workout_definition(&distance_event),
+            to_workout_spec(&distance_event),
             Err(IntervalsWorkoutError::Invalid { path, .. })
                 if path == "workout_doc.steps[0].distance"
         ));
@@ -583,7 +589,7 @@ mod tests {
         open_step.until_lap_press = true;
         let open_event = event_with_steps(vec![open_step], 60);
         assert!(matches!(
-            to_workout_definition(&open_event),
+            to_workout_spec(&open_event),
             Err(IntervalsWorkoutError::Invalid { path, .. })
                 if path == "workout_doc.steps[0].until_lap_press"
         ));

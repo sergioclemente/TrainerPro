@@ -19,9 +19,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consts::{POWER_FRACTION_MAX, POWER_FRACTION_MIN, WORKOUT_REPEAT_COUNT_MAX};
-use crate::workout_definition::{
-    CyclingCadenceTarget, CyclingPowerTarget, CyclingStep, WorkoutDefinition, WorkoutFormat,
-    WorkoutPrescription, TPW_VERSION,
+use crate::workout_spec::{
+    CyclingCadenceTarget, CyclingPowerTarget, CyclingStep, WorkoutFormat, WorkoutPrescription,
+    WorkoutSpec, WORKOUT_SPEC_VERSION,
 };
 
 /// Longest single interval the builder accepts (4 h). Guards against a stray
@@ -88,12 +88,12 @@ impl WorkoutDraft {
     }
 }
 
-/// Convert the editor's current cycling vocabulary directly into TPW.
-pub fn to_workout_definition(draft: &WorkoutDraft) -> Result<WorkoutDefinition, BuildError> {
+/// Convert the editor's current cycling vocabulary directly into WorkoutSpec.
+pub fn to_workout_spec(draft: &WorkoutDraft) -> Result<WorkoutSpec, BuildError> {
     validate(draft)?;
-    let definition = WorkoutDefinition {
-        format: WorkoutFormat::Tpw,
-        version: TPW_VERSION,
+    let definition = WorkoutSpec {
+        format: WorkoutFormat::WorkoutSpec,
+        version: WORKOUT_SPEC_VERSION,
         title: draft.name.trim().to_string(),
         description: draft.description.clone(),
         training_focus: None,
@@ -507,14 +507,16 @@ mod tests {
     }
 
     #[test]
-    fn tpw_conversion_preserves_repeat_structure() {
-        let definition = to_workout_definition(&draft(vec![BuildNode::Repeat {
+    fn workout_spec_conversion_preserves_repeat_structure() {
+        let definition = to_workout_spec(&draft(vec![BuildNode::Repeat {
             count: 3,
             children: vec![simple(60, 100.0), simple(30, 55.0)],
         }]))
         .unwrap();
 
-        let WorkoutPrescription::Cycling { steps } = definition.prescription;
+        let WorkoutPrescription::Cycling { steps } = definition.prescription else {
+            panic!("expected cycling prescription");
+        };
         let [CyclingStep::Repeat { count, steps }] = steps.as_slice() else {
             panic!("expected one repeat step");
         };

@@ -58,17 +58,17 @@ application bundles.
   parallel state channels or generic abstractions without multiple consumers,
   a real invariant, or a clear ownership boundary.
 - Treat serialized Rust values and `frontend/ipc.ts` as one API.
-- TPW is the canonical workout definition. ZWO, ERG, MRC, and provider formats
+- WorkoutSpec is the canonical workout definition. ZWO, ERG, MRC, and provider formats
   are boundary adapters, not internal identity.
 
 See [the architecture guide](docs/architecture.md) for ownership and flows,
 [the behavior spec](docs/SPEC.md) for current requirements, and
-[the TPW specification](docs/TPW.md) for the workout format.
+[the WorkoutSpec specification](docs/workout-spec.md) for the workout format.
 
 ## Adding a workout source
 
 The existing library-source extension point consists of a backend adapter that
-produces a `WorkoutDefinition` and a frontend descriptor in
+produces a `WorkoutSpec` and a frontend descriptor in
 `frontend/sources.ts`. Configuration uses the existing source values bag.
 
 Provider schedule sync is a different lifecycle. Add a concrete integration
