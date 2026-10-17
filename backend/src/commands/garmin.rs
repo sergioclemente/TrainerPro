@@ -210,7 +210,7 @@ fn api_error(error: GarminError) -> AppError {
         GarminError::Authentication => ("provider_authentication", "Garmin sign-in expired or was rejected. Sign in again in Settings → Connections."),
         GarminError::Challenge => ("garmin_challenge", "Garmin requires a browser challenge. Use manual FIT import and try connecting later."),
         GarminError::RateLimited => ("garmin_rate_limited", "Garmin is limiting requests. Wait before trying again."),
-        GarminError::Protocol => ("garmin_protocol", "Garmin returned an unexpected response. Try again later or use manual FIT import."),
+        GarminError::Protocol | GarminError::InvalidRequest | GarminError::ResponseTooLarge => ("garmin_protocol", "Garmin returned an unexpected response. Try again later or use manual FIT import."),
         GarminError::MfaRejected => ("garmin_mfa_rejected", "The Garmin verification code was rejected. Check the code and try again."),
         GarminError::MfaExpired => ("garmin_mfa_expired", "Garmin verification expired. Start sign-in again."),
         GarminError::Duplicate => ("activity_duplicate", "Garmin says this activity already exists. Check Garmin Connect before trying again."),

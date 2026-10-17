@@ -13,4 +13,4 @@ pub mod metrics;
 pub mod model;
 pub mod motion;
 pub mod parse;
-pub mod workout_definition;
+pub mod workout_spec;

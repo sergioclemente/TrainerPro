@@ -8,7 +8,7 @@ integration.
 
 WorkoutPlanner owns authoring and its saved workout catalog. TrainerPro lists,
 previews, and executes cycling workouts. TrainerPro never parses the planner's
-DSL or implements its editor; ZWO is the boundary format and TPW is the local
+DSL or implements its editor; ZWO is the boundary format and WorkoutSpec is the local
 canonical definition.
 
 The integration is an optional Library source, not a scheduling authority.
@@ -49,7 +49,7 @@ offline.
 Preview and Ride share the same boundary:
 
 ```text
-WorkoutPlanner DSL -> server-generated ZWO -> TrainerPro parser -> TPW
+WorkoutPlanner DSL -> server-generated ZWO -> TrainerPro parser -> WorkoutSpec
 ```
 
 Ride persists or reuses the local definition, records WorkoutPlanner

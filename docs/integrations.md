@@ -43,7 +43,7 @@ successfully fetched window are retired locally; failed requests preserve the
 last-good cache.
 
 Provider-owned workouts stay outside the local Library's deletion and
-deduplication rules. Importing or cloning a local copy gives it independent
+catalog identity rules. Importing or cloning a local copy gives it independent
 ownership. Disconnecting removes the credential and retires provider schedules
 and cached definitions while preserving Activity history.
 
@@ -84,3 +84,15 @@ are reported separately and do not create a successful upload marker.
 Disconnecting removes local session credentials but preserves Activities and
 upload history; it does not revoke tokens at Garmin. Deleting a local Activity
 removes its local artifacts and upload record, never the Activity in Garmin.
+
+### Shared activity reads
+
+The `tp-integrations` Garmin client also provides bounded activity discovery and
+selected summary, lap, chart-detail, and original-file reads for Harness. Date-filtered
+pages accept Garmin calendar bounds; callers pad those bounds and filter UTC start
+timestamps themselves. The client performs one bounded request without pagination. These
+are read-only protocol operations, not a desktop history-sync feature. The caller
+owns encrypted credentials, refresh serialization, capture provenance, ZIP/FIT
+verification, and persistence. Responses are size-bounded; credentials are never
+forwarded through redirects, and failures do not trigger hidden retries. Original
+bytes are returned unchanged for independent verification.

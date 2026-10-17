@@ -312,7 +312,7 @@ pub async fn planner_list(state: State<'_, AppState>) -> Result<PlannerListResul
     }
 }
 
-/// Fetch ZWO → normalize into TPW → tag origin → load into the player.
+/// Fetch ZWO → normalize into WorkoutSpec → tag origin → load into the player.
 #[tauri::command]
 pub async fn planner_ride(
     app: AppHandle,

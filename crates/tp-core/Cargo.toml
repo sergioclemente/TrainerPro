@@ -2,7 +2,7 @@
 name = "tp-core"
 version = "0.1.0"
 edition = "2021"
-description = "TrainerPro pure domain: workout parsers, engine, metrics, ride journal, FIT encoder"
+description = "TrainerPro pure domain: workout parsers, engine, metrics, ride journal, FIT codec"
 license = "MIT"
 repository = "https://github.com/sergioclemente/TrainerPro"
 
@@ -11,3 +11,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 roxmltree = { workspace = true }
+fitparser = "=0.11.0"

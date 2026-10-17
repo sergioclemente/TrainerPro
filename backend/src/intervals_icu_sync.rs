@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use rusqlite::Connection;
 
 use crate::database::{provider_connections, scheduled_workouts};
-use crate::intervals_icu::{to_workout_definition, IntervalsWorkoutError};
+use crate::intervals_icu::{to_workout_spec, IntervalsWorkoutError};
 use tp_integrations::intervals_icu::{is_iso_date, IntervalsCalendarEvent, PROVIDER_ID};
 
 const ALL_DAY_START_TIME_LOCAL: &str = "00:00:00";
@@ -114,7 +114,7 @@ pub(crate) fn persist_calendar_window(
 
     for event in events {
         let external_event_id = event.id.to_string();
-        let definition = match to_workout_definition(event) {
+        let definition = match to_workout_spec(event) {
             Ok(definition) => definition,
             Err(
                 IntervalsWorkoutError::UnsupportedSport { .. }
@@ -271,7 +271,7 @@ fn is_local_time(value: &str) -> bool {
 mod tests {
     use super::*;
     use crate::database::provider_connections::ConnectedProvider;
-    use tp_core::workout_definition::WorkoutDefinition;
+    use tp_core::workout_spec::WorkoutSpec;
 
     fn connection(conn: &Connection, id: &str, external_account_id: &str) {
         provider_connections::connect(
@@ -394,7 +394,7 @@ mod tests {
         );
         assert_eq!(updated.schedule.last_synced_at_unix_ms, Some(20));
         assert_eq!(
-            WorkoutDefinition::from_json(&updated.definition.tpw_json)
+            WorkoutSpec::from_json(&updated.definition.tpw_json)
                 .unwrap()
                 .title,
             "Edited by provider"

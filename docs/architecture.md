@@ -3,7 +3,7 @@
 **Purpose:** Define technical ownership, dependency boundaries, and major flows. **Audience:** Engineers changing application structure or cross-component behavior.
 
 Observable behavior belongs in [SPEC.md](SPEC.md), product vocabulary and direction
-in [PRODUCT.md](PRODUCT.md), and the workout format in [TPW/1](TPW.md).
+in [PRODUCT.md](PRODUCT.md), and the workout format in [WorkoutSpec/1](workout-spec.md).
 
 ## System map
 
@@ -24,9 +24,13 @@ flowchart TD
 
 ## Ownership boundaries
 
-- **`tp-core`** owns TPW validation/compilation, the workout engine, journal replay,
-  metrics, motion calculation, and FIT encoding. It is deterministic and pure:
+- **`tp-core`** owns WorkoutSpec validation/compilation, the workout engine, journal replay,
+  metrics, motion calculation, and FIT encoding/decoding. It is deterministic and pure:
   no I/O, async runtime, BLE, Tauri, or wall-clock access.
+  The reader accepts bytes and returns validated activity records, laps and timer
+  events with explicit units. It keeps missing fields distinct from zeros and
+  normalizes running cadence to both-feet steps/minute. Applications own artifact
+  storage, provider identity checks, imports and sample-support analysis policy.
 - **`tp-ble`** owns transport contracts, drivers, scanning, and simulators.
   `DeviceManager` serializes adapter initialization, scan cancellation, and
   connection setup. Established links operate concurrently.
@@ -35,7 +39,7 @@ flowchart TD
   domain model, desktop shell, database, or credential vault.
 - **Backend** owns Tauri commands/events, clocks, runtime orchestration, provider
   application adapters, credentials, persistence, and activity artifacts. SQL
-  stays in focused `database` modules. TPW conversion, sync policy, and
+  stays in focused `database` modules. WorkoutSpec conversion, sync policy, and
   library-source clients remain here.
 - **Frontend** owns presentation and transient interaction state. It hydrates
   through commands and receives ongoing state through events. Rust serialization
@@ -44,22 +48,22 @@ flowchart TD
 ## Workout ownership and persistence
 
 SQLite is authoritative for workout definitions, schedules, provider connections,
-source caches, and the Activity index. TPW JSON is the stored semantic definition;
+source caches, and the Activity index. WorkoutSpec JSON is the stored semantic definition;
 ZWO, ERG, MRC, and provider payloads are boundary formats.
 
 ```text
-WorkoutDefinition -> validate, compile, snapshot -> ExecutableWorkout
+WorkoutSpec -> validate, compile, snapshot -> ExecutableWorkout
                   -> WorkoutSession -> record, finalize -> Activity
 ```
 
 A ScheduledWorkout references a definition but owns placement and provider
 identity separately. Provider-scheduled definitions are executable cache entries,
-excluded from local Library listing and deduplication. Cloning creates an
+excluded from local Library listing and catalog-entry reuse. Cloning creates an
 independently owned local definition. Activities retain the workout snapshot and
 optional schedule identity, so subsequent edits cannot rewrite history.
 
 Library sources share a descriptor registry and normalize into
-`WorkoutDefinition`. Scheduled sync has its own account identity, bounded
+`WorkoutSpec`. Scheduled sync has its own account identity, bounded
 reconciliation, and disconnect lifecycle; it does not use that registry.
 
 ## Provider operations
@@ -91,7 +95,7 @@ reports its own outcome. Refresh windows use the account time zone; schedule
 projection uses placement zone, then account zone, then machine-local fallback.
 
 Intervals.icu fetches a bounded calendar window through `tp-integrations`. The
-backend maps structured workouts to TPW before transactionally updating definitions
+backend maps structured workouts to WorkoutSpec before transactionally updating definitions
 and schedules. External event identity is scoped to the provider connection.
 Reconciliation and cache behavior belong in [Integrations](integrations.md#intervalsicu).
 

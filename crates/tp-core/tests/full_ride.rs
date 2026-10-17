@@ -168,4 +168,9 @@ fn zwo_to_fit_end_to_end() {
     let stored = u16::from_le_bytes(fit[fit.len() - 2..].try_into().unwrap());
     let computed = tp_core::fit::checksum(&fit[..fit.len() - 2]);
     assert_eq!(stored, computed, "trailing CRC validates");
+    let decoded = tp_core::fit::decode_activity(&fit).expect("shared reader accepts writer output");
+    assert_eq!(decoded.duration_seconds, 120.0);
+    assert_eq!(decoded.records.len(), data.samples.len());
+    assert_eq!(decoded.laps.len(), activity_segments.len());
+    assert_eq!(decoded.records[0].cadence, Some(90.0));
 }

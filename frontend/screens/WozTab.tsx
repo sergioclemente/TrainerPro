@@ -50,7 +50,7 @@ export default function WozTab() {
     useStore.setState({
       detail: {
         source: "woz",
-        wozRef: { collection: selected!, idx: w.idx },
+        wozRef: { collection: selected!, workoutRef: w.workout_ref },
         name: w.title,
         description: "",
         duration_s: w.duration_s,
@@ -151,7 +151,7 @@ export default function WozTab() {
       {status === "loading" && <p className="empty">Fetching collection…</p>}
       <div className="card-grid">
         {visible.map((w) => (
-          <div key={w.idx} className="card workout-card" onClick={() => openDetail(w)}>
+          <div key={w.workout_ref} className="card workout-card" onClick={() => openDetail(w)}>
             <div className="thumb">
               <WorkoutGraph graph={w.graph} durationS={w.duration_s} height={80} />
             </div>

@@ -242,7 +242,7 @@ mod tests {
                 TPW_JSON.into(),
             )
         );
-        tp_core::workout_definition::WorkoutDefinition::from_json(&context.2).unwrap();
+        tp_core::workout_spec::WorkoutSpec::from_json(&context.2).unwrap();
 
         conn.execute(
             "DELETE FROM scheduled_workouts WHERE id = 'scheduled-present'",
