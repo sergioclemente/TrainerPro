@@ -40,3 +40,39 @@ async fn invalid_fit_is_rejected_before_network_io() {
         Err(GarminError::InvalidFit)
     );
 }
+
+#[test]
+fn browser_callback_recognition_requires_the_exact_credential_destination() {
+    assert!(GarminClient::is_browser_sign_in_callback(
+        "https://sso.garmin.com/sso/embed?ticket=ST-synthetic"
+    ));
+    for input in [
+        "ST-synthetic",
+        "https://sso.garmin.com/sso/embed",
+        "https://sso.garmin.com.attacker.test/sso/embed?ticket=ST-synthetic",
+        "https://sso.garmin.com/sso/embed?ticket=ST-one&ticket=ST-two",
+        "http://sso.garmin.com/sso/embed?ticket=ST-synthetic",
+        "https://sso.garmin.com/sso/embed?ticket=ST-synthetic#fragment",
+    ] {
+        assert!(!GarminClient::is_browser_sign_in_callback(input));
+    }
+}
+
+#[test]
+fn schedule_occurrence_identity_is_independent_of_workout_identity() {
+    use tp_integrations::garmin::workouts::WorkoutSchedule;
+    let first = WorkoutSchedule::from_payload(
+        &json!({"workoutScheduleId":51,"workout":{"workoutId":41},"calendarDate":"2026-10-25"}),
+    )
+    .unwrap();
+    let second = WorkoutSchedule::from_payload(
+        &json!({"workoutScheduleId":"52","workout":{"workoutId":"41"},"calendarDate":"2026-10-26"}),
+    )
+    .unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.workout_id, second.workout_id);
+    assert!(WorkoutSchedule::from_payload(
+        &json!({"workoutScheduleId":51,"workout":{"workoutId":41},"calendarDate":"2026-02-30"})
+    )
+    .is_err());
+}

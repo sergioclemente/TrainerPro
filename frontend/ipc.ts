@@ -219,7 +219,7 @@ export interface ProviderConnection {
   activity_destination: { uploads: ActivityUpload[] } | null;
 }
 
-export type GarminSignInResult = { status: "connected" | "needs_mfa" };
+export type GarminSignInResult = { status: "connected" | "cancelled" };
 
 export interface PlanSyncReport {
   inserted: number;
@@ -378,10 +378,8 @@ export const ipc = {
   uploadActivity: (connectionId: string, activityId: string) =>
     invoke<ActivityUpload>("upload_activity", { connectionId, activityId }),
   openActivityImport: (providerId: string) => invoke<void>("open_activity_import", { providerId }),
-  connectGarmin: (email: string, password: string) =>
-    invoke<GarminSignInResult>("connect_garmin", { email, password }),
-  completeGarminMfa: (code: string) => invoke<void>("complete_garmin_mfa", { code }),
-  cancelGarminSignIn: () => invoke<void>("cancel_garmin_sign_in"),
+  connectGarmin: (attemptId: string) => invoke<GarminSignInResult>("connect_garmin", { attemptId }),
+  cancelGarminSignIn: (attemptId: string) => invoke<void>("cancel_garmin_sign_in", { attemptId }),
   listActivities: () => invoke<ActivityRow[]>("list_activities"),
   deleteActivity: (id: string) => invoke<void>("delete_activity", { id }),
   saveFitAs: (id: string, destPath: string) => invoke<void>("save_fit_as", { id, destPath }),

@@ -44,3 +44,19 @@ test("unconnected providers make no calls and missing credentials produce an ind
   assert.equal(outcomes[0].error.code, "provider_authentication");
   assert.ok(outcomes[1].report);
 });
+
+test("Garmin plans and Intervals.icu plans refresh independently without starting uploads", async () => {
+  const garmin = connection("garmin", ["planning", "activities"]);
+  const intervals = connection("intervals_icu", ["planning"]);
+  for (const failed of ["garmin", "intervals_icu"]) {
+    const calls = [];
+    const outcomes = await refreshPlanConnections([garmin, intervals], async (id) => {
+      calls.push(id);
+      if (id === failed) throw { code: "provider_sync", message: "Unavailable" };
+      return { inserted: 1, issues: [] };
+    });
+    assert.deepEqual(calls, ["garmin", "intervals_icu"]);
+    assert.equal(outcomes.find((item) => item.connection.connection_id === failed).error.code, "provider_sync");
+    assert.equal(outcomes.find((item) => item.connection.connection_id !== failed).report.inserted, 1);
+  }
+});

@@ -11,8 +11,8 @@ Use disposable simulated rides for uploads.
 1. Upgrade an existing QA database to the new packaged app. Verify both account
    identities remain connected and existing Activity upload markers remain.
 2. In Settings → Connections, verify each account has its own status and actions:
-   Intervals.icu offers plan synchronization; Garmin offers Activity uploads.
-   Refresh Intervals.icu and verify its result and sync time without changing
+   Intervals.icu offers plan synchronization; Garmin offers plan synchronization
+   and Activity uploads. Refresh Intervals.icu and verify its result and sync time without changing
    Garmin's connection or receipts.
 3. Open Workouts. Verify cached Next Up items render, refresh completes, and
    existing provider schedules remain executable. Labels use the schedule's
@@ -25,9 +25,10 @@ Use disposable simulated rides for uploads.
    already-confirmed Activities offer no repeated upload action.
 6. On a fresh test account setup, verify each provider's own authentication form
    and the common connection view after sign-in. Continue the provider-specific
-   [Garmin scenario](garmin-activity-upload.md) for MFA, reconnect, and
+   [Garmin scenario](garmin-activity-upload.md) for browser sign-in, reconnect, and
    credential-revocation validation.
 
 Independent-source failures, capability rejection, stale connection IDs,
 per-source date boundaries, and transfer coordination have automated coverage;
-this scenario does not establish multiple live plan-source implementations.
+complete the [Garmin planning scenario](garmin-planning.md) to establish the live
+Garmin schedule boundary.
