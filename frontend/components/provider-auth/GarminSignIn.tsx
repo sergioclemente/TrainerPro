@@ -3,6 +3,26 @@ import { AppError, ipc } from "../../ipc";
 
 import type { SignInProps } from "./index";
 
+function signInAttemptId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+
+  // Older WKWebView versions provide getRandomValues but not randomUUID.
+  const UUID_BYTES = 16;
+  const VERSION_BYTE = 6;
+  const VERSION_PAYLOAD_MASK = 0x0f;
+  const VERSION_4_BITS = 0x40;
+  const VARIANT_BYTE = 8;
+  const VARIANT_PAYLOAD_MASK = 0x3f;
+  const RFC_VARIANT_BITS = 0x80;
+  const HEX_RADIX = 16;
+  const HEX_BYTE_WIDTH = 2;
+  const bytes = crypto.getRandomValues(new Uint8Array(UUID_BYTES));
+  bytes[VERSION_BYTE] = (bytes[VERSION_BYTE] & VERSION_PAYLOAD_MASK) | VERSION_4_BITS;
+  bytes[VARIANT_BYTE] = (bytes[VARIANT_BYTE] & VARIANT_PAYLOAD_MASK) | RFC_VARIANT_BITS;
+  const hex = Array.from(bytes, (byte) => byte.toString(HEX_RADIX).padStart(HEX_BYTE_WIDTH, "0")).join("");
+  return hex.replace(/^(........)(....)(....)(....)(............)$/, "$1-$2-$3-$4-$5");
+}
+
 export default function GarminSignIn({ disabled, onConnected }: SignInProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -20,9 +40,10 @@ export default function GarminSignIn({ disabled, onConnected }: SignInProps) {
     if (busy || disabled || attempt.current) return;
     setBusy(true);
     setError("");
-    const id = crypto.randomUUID();
-    attempt.current = id;
+    let id: string | null = null;
     try {
+      id = signInAttemptId();
+      attempt.current = id;
       const result = await ipc.connectGarmin(id);
       if (mounted.current && result.status === "connected") await onConnected();
     } catch (failure) {
