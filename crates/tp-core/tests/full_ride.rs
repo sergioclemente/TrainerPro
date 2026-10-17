@@ -49,6 +49,7 @@ fn zwo_to_fit_end_to_end() {
         scheduled_workout_id: None,
         workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
         started_unix_ms: START_UNIX_MS,
+        started_utc_offset_s: None,
         workout_name: workout.name.clone(),
         ftp_w: FTP,
         weight_kg: 72.0,

@@ -15,6 +15,7 @@ fn recording(samples: &[(u64, Option<u16>)], events: &[(u64, Event)]) -> Session
             scheduled_workout_id: None,
             workout_definition_snapshot_json: "{}".into(),
             started_unix_ms: 1_700_000_000_000,
+            started_utc_offset_s: None,
             workout_name: "Motion".into(),
             ftp_w: 250,
             weight_kg: 75.0,

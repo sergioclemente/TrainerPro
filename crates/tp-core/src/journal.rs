@@ -26,6 +26,11 @@ pub struct JournalHeader {
     pub scheduled_workout_id: Option<String>,
     pub workout_definition_snapshot_json: String,
     pub started_unix_ms: u64,
+    /// The rider's clock at ride start, seconds east of UTC, so the FIT
+    /// activity can carry local time. Legacy journals omit it and the FIT
+    /// local time falls back to UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_utc_offset_s: Option<i32>,
     pub workout_name: String,
     pub ftp_w: u16,
     pub weight_kg: f64,
@@ -412,6 +417,7 @@ mod tests {
             scheduled_workout_id: None,
             workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: 1_700_000_000_000,
+            started_utc_offset_s: None,
             workout_name: "Sweet Spot".into(),
             ftp_w: 250,
             weight_kg: 72.0,

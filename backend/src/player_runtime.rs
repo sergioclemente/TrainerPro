@@ -241,6 +241,7 @@ pub async fn spawn(
         scheduled_workout_id: scheduled_workout_id.clone(),
         workout_definition_snapshot_json,
         started_unix_ms: session_started_at_ms,
+        started_utc_offset_s: Some(chrono::Local::now().offset().local_minus_utc()),
         workout_name: workout.name.clone(),
         ftp_w: settings.profile.ftp,
         weight_kg: settings.profile.weight_kg,

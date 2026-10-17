@@ -242,6 +242,7 @@ mod tests {
             scheduled_workout_id: None,
             workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: 1_700_000_000_000,
+            started_utc_offset_s: None,
             workout_name: "test".into(),
             ftp_w: 250,
             weight_kg: 72.0,

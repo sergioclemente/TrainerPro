@@ -67,7 +67,12 @@ consent, complete it on Garmin Connect; TrainerPro never grants it for you.
 ### Activity uploads
 
 Choose **Upload to Garmin** in Summary or Activities to send the original FIT
-file. Uploads are manual; there is no automatic queue or retry. Planned-workout
+file. Once Garmin has created the Activity, TrainerPro names it after the
+workout and sets its description from the workout's description; if that
+second step fails the upload still counts and a warning says the default
+"Indoor Cycling" title was kept. The Activity's time is the rider's local time
+at the start of the ride. Uploads are manual; there is no automatic queue or
+retry. Planned-workout
 sync and health-data reads are unsupported. Garmin may forward uploaded rides
 to linked services such as Strava, depending on account settings.
 

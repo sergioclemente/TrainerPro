@@ -491,8 +491,9 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
     body.push(p::ACTIVITY_TYPE_MANUAL);
     body.push(p::EVENT_ACTIVITY);
     body.push(p::EVENT_TYPE_STOP);
-    // tp-core has no timezone knowledge; local_timestamp = UTC timestamp.
-    put_u32(&mut body, ts_end);
+    // local_date_time: the same instant on the rider's clock. Garmin shows
+    // this as the activity time, so without the offset it reads as UTC.
+    put_u32(&mut body, local_ts(ts_end, h.started_utc_offset_s));
 
     // -- container: header + body + trailing CRC ----------------------------
     let data_size: u32 = body
@@ -524,6 +525,12 @@ fn fit_ts(unix_ms: u64) -> Result<u32, FitError> {
         .checked_sub(FIT_EPOCH_OFFSET_S)
         .ok_or_else(|| FitError::Encode(format!("timestamp {unix_s}s predates FIT epoch")))?;
     u32::try_from(fit_s).map_err(|_| FitError::Encode("timestamp beyond u32 FIT range".into()))
+}
+
+/// A FIT timestamp shifted onto the rider's clock; no offset leaves it UTC.
+fn local_ts(ts: u32, utc_offset_s: Option<i32>) -> u32 {
+    let shifted = i64::from(ts) + i64::from(utc_offset_s.unwrap_or(0));
+    u32::try_from(shifted).unwrap_or(ts)
 }
 
 fn write_definition(body: &mut Vec<u8>, local: u8, global: u16, fields: &[FieldDef]) {
@@ -833,6 +840,7 @@ mod tests {
             scheduled_workout_id: None,
             workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: START_UNIX_S * 1000,
+            started_utc_offset_s: None,
             workout_name: "2x20".into(),
             ftp_w: 250,
             weight_kg: 75.0,
@@ -1434,7 +1442,43 @@ mod tests {
         assert_eq!(a.uint(p::ACTIVITY_TYPE), 0, "manual");
         assert_eq!(a.uint(p::ACTIVITY_EVENT), 26, "activity");
         assert_eq!(a.uint(p::ACTIVITY_EVENT_TYPE), 1, "stop");
-        assert_eq!(a.uint(p::ACTIVITY_LOCAL_TIMESTAMP), TS0 + 19);
+        assert_eq!(
+            a.uint(p::ACTIVITY_LOCAL_TIMESTAMP),
+            TS0 + 19,
+            "no offset: UTC"
+        );
+    }
+
+    #[test]
+    fn local_timestamp_follows_the_riders_clock() {
+        // Pacific daylight time: seven hours behind UTC.
+        const PDT_OFFSET_S: i32 = -7 * 3600;
+        let h = JournalHeader {
+            started_utc_offset_s: Some(PDT_OFFSET_S),
+            ..header()
+        };
+        let s = samples();
+        let e = events();
+        let l = laps();
+        let t = totals();
+        let buf = encode_activity(&FitActivity {
+            header: &h,
+            samples: &s,
+            events: &e,
+            laps: &l,
+            totals: &t,
+            motion: None,
+            workout: None,
+        })
+        .unwrap();
+        let msgs = decode(&buf);
+        let a = msgs.last().unwrap();
+        assert_eq!(a.uint(p::ACTIVITY_TIMESTAMP), TS0 + 19, "UTC stays UTC");
+        assert_eq!(
+            a.uint(p::ACTIVITY_LOCAL_TIMESTAMP),
+            TS0 + 19 - 7 * 3600,
+            "local time is the same instant on the rider's clock"
+        );
     }
 
     // -- record_distance toggle ---------------------------------------------
