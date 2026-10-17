@@ -362,6 +362,12 @@ export const ipc = {
   endRide: () => invoke<ActivitySummary>("end_ride"),
   clearRide: () => invoke<void>("clear_ride"),
   getPlayerState: () => invoke<PlayerState | null>("get_player_state"),
+  /** Show the mini HUD window and minimize the main window. */
+  openMiniHud: () => invoke<void>("open_mini_hud"),
+  /** Close the mini HUD window and bring the main window back. */
+  closeMiniHud: () => invoke<void>("close_mini_hud"),
+  /** Hide the mini HUD too; the Dock icon brings TrainerPro back. */
+  hideMiniHud: () => invoke<void>("hide_mini_hud"),
   getPlayerWorkoutProfile: (workoutSessionId: string) =>
     invoke<PlayerWorkoutProfile | null>("get_player_workout_profile", { workoutSessionId }),
 

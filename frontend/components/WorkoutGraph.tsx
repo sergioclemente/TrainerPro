@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RideTracePoint, WorkoutSegmentRow, fmtDuration } from "../ipc";
+import { zoneColor } from "../zones";
 
 interface Props {
   graph: [number, number][];
@@ -73,15 +74,7 @@ const MENU_WIDTH_PX = 190;
 const MENU_HEIGHT_PX = 44;
 const MENU_POINTER_GAP_PX = 4;
 
-export function zoneColor(pct: number): string {
-  if (pct < 55) return "#6e7681"; // Z1 recovery
-  if (pct <= 75) return "#388bfd"; // Z2 endurance
-  if (pct <= 90) return "#3fb950"; // Z3 tempo
-  if (pct <= 105) return "#d29922"; // Z4 threshold
-  if (pct <= 120) return "#f0883e"; // Z5 vo2
-  if (pct <= 150) return "#f85149"; // Z6 anaerobic
-  return "#bc8cff"; // Z7 neuromuscular
-}
+export { zoneColor };
 
 /** Resolve a displayed %FTP value exactly as the Rust power model does for
     positive workout targets: nearest whole watt. */

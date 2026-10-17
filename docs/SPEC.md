@@ -81,8 +81,31 @@ an interval and passing over others records skips; revisiting records another
 attempt and, when ridden, another activity segment.
 
 Keyboard controls: hold Space to talk, `s` to skip, `e` to toggle ERG, `d` to
-show/hide detailed stats, and Up/Down for intensity. Space never starts, pauses,
-or resumes a ride.
+show/hide detailed stats, `m` for the mini HUD, and Up/Down for intensity.
+Space never starts, pauses, or resumes a ride.
+
+### Mini HUD
+
+Once a ride has started, **Mini** hides the main window and opens the HUD;
+minimizing the main window does the same while riding, and only then. The HUD
+is a small transparent window that stays above other apps and shows watts,
+rpm, bpm, and the interval clock, which clicks between remaining and elapsed.
+There is no target cell: a glyph before the watts says push, ease, or hold
+against the target (within 5 %), and the rpm cell does the same for a cadence
+target. ERG off and an open interval are named in the watts label; intensity
+shows in the control bar. It parks in the screen's top-right corner and can be dragged. The HUD
+is a mode, not a second app: closing either window closes or restores the
+other, the Dock icon always brings the full window back, and a paired
+controller's pause/resume button keeps working while push-to-talk waits for
+the full Player. The bar's hide button puts the HUD away as well, for riders
+who want TrainerPro out of sight entirely. Hovering reveals a
+control bar: back to the Player, pause or resume, skip, intensity, and ERG. The
+bar stays up while paused, while the trainer reconnects, and after the ride
+ends, when the cells switch to ride totals and the bar offers the summary.
+Amber marks something the rider changed (pause, intensity, ERG off), red marks
+a sensor problem, and the zone colour appears only on the power number. Workout
+cues show in the bar for their display time. Escape, `m`, a double-click, or
+the bar's back button closes the HUD and brings the main window back.
 The Player shows interval and ride clocks, targets, power, cadence, heart rate,
 work, average/normalized power, intensity factor, and training stress.
 
