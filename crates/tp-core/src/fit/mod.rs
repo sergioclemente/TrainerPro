@@ -6,6 +6,8 @@
 
 mod crc;
 mod decode;
+mod instructions;
+pub use instructions::{FitInstructionStep, FitInstructionTarget, FitInstructions};
 mod encode;
 mod profile;
 

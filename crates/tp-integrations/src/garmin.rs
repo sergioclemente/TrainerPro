@@ -45,6 +45,12 @@ const MAX_ORIGINAL_BYTES: usize = 32 * 1024 * 1024;
 const CAPTURE_CHART_POINTS: &str = "2000";
 const CAPTURE_POLYLINE_POINTS: &str = "0";
 
+#[derive(Clone, Copy)]
+pub enum ThresholdResource {
+    CyclingFtp,
+    RunningLactate,
+}
+
 /// The caller persists exact response bytes and owns capture provenance.
 #[derive(Clone, Copy)]
 pub enum ActivityResource {
@@ -396,6 +402,30 @@ impl GarminClient {
             &tokens.client_id,
             Some(&tokens.refresh_token),
         )
+    }
+
+    /// Read an explicit provider threshold snapshot once; caller owns provenance and persistence.
+    pub async fn read_thresholds(
+        &self,
+        tokens: &Tokens,
+        kind: ThresholdResource,
+    ) -> Result<Vec<u8>, GarminError> {
+        let path = match kind {
+            ThresholdResource::CyclingFtp => {
+                "/biometric-service/biometric/latestFunctionalThresholdPower/CYCLING"
+            }
+            ThresholdResource::RunningLactate => {
+                "/biometric-service/biometric/latestLactateThreshold"
+            }
+        };
+        let response = native_headers(self.http.get(format!("{}{path}", self.api_base)))
+            .bearer_auth(&tokens.access_token)
+            .send()
+            .await
+            .map_err(|_| GarminError::Network)?;
+        let bytes = bounded_response(response, MAX_JSON_BYTES).await?;
+        let _: Value = serde_json::from_slice(&bytes).map_err(|_| GarminError::Protocol)?;
+        Ok(bytes)
     }
 
     pub async fn account(&self, tokens: &Tokens) -> Result<Account, GarminError> {
@@ -1687,6 +1717,77 @@ mod tests {
         }
         let (client, requests) = server(vec![("404 Not Found", json!({}), "")]);
         assert_eq!(client.get_workout(&tokens(), "41").await.unwrap(), None);
+        assert_eq!(requests.join().unwrap().len(), 1);
+    }
+    #[tokio::test]
+    async fn threshold_reads_keep_explicit_resources_bytes_and_one_shot_errors() {
+        let ftp = json!({"functionalThresholdPower":250,"calendarDate":"2026-01-01"});
+        let running = json!([{"speed":3.5,"calendarDate":"2026-01-02"},{"heartRate":170,"calendarDate":"2026-01-03"}]);
+        let (client, requests) = server(vec![
+            ("200 OK", ftp.clone(), ""),
+            ("200 OK", running.clone(), ""),
+        ]);
+        let bytes = client
+            .read_thresholds(&tokens(), ThresholdResource::CyclingFtp)
+            .await
+            .unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), ftp);
+        let bytes = client
+            .read_thresholds(&tokens(), ThresholdResource::RunningLactate)
+            .await
+            .unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), running);
+        let requests = requests.join().unwrap();
+        assert!(requests[0].starts_with(
+            "GET /biometric-service/biometric/latestFunctionalThresholdPower/CYCLING "
+        ));
+        assert!(requests[1].starts_with("GET /biometric-service/biometric/latestLactateThreshold "));
+        for request in &requests {
+            assert!(request
+                .to_lowercase()
+                .contains("authorization: bearer test-access"));
+        }
+        let (client, requests) = server(vec![(
+            "429 Too Many Requests",
+            json!({"private":"hidden"}),
+            "",
+        )]);
+        assert_eq!(
+            client
+                .read_thresholds(&tokens(), ThresholdResource::CyclingFtp)
+                .await,
+            Err(GarminError::RateLimited)
+        );
+        assert_eq!(requests.join().unwrap().len(), 1);
+    }
+    #[tokio::test]
+    async fn cycling_creation_uses_typed_payload_and_never_retries_uncertain_writes() {
+        let workout = workouts::AuthoredWorkout::Cycling(workouts::CyclingWorkout {
+            name: "Synthetic cycling".into(),
+            description: "Synthetic only".into(),
+            steps: vec![workouts::CyclingStep::Timed {
+                seconds: 60,
+                power: Some(workouts::CyclingPower::Watts {
+                    low: 150,
+                    high: 160,
+                }),
+                cadence: None,
+            }],
+        });
+        let (client, requests) = server(vec![("200 OK", json!({"workoutId":42}), "")]);
+        assert_eq!(
+            client.create_workout(&tokens(), &workout).await.unwrap(),
+            "42"
+        );
+        let requests = requests.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("POST /workout-service/workout "));
+        assert!(requests[0].contains("\"sportTypeKey\":\"cycling\""));
+        let (client, requests) = server(vec![("500 Internal Server Error", json!({}), "")]);
+        assert_eq!(
+            client.create_workout(&tokens(), &workout).await,
+            Err(GarminError::WorkoutUncertain)
+        );
         assert_eq!(requests.join().unwrap().len(), 1);
     }
 }

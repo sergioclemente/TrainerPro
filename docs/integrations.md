@@ -6,9 +6,9 @@
 Manage accounts in **Settings → Connections**. Each provider exposes only the
 capabilities TrainerPro supports:
 
-| Provider       | Capability                             | Connection                                           |
-| -------------- | -------------------------------------- | ---------------------------------------------------- |
-| Intervals.icu  | Read scheduled cycling workouts        | Personal API key                                     |
+| Provider       | Capability                                                              | Connection             |
+| -------------- | ----------------------------------------------------------------------- | ---------------------- |
+| Intervals.icu  | Read scheduled cycling workouts                                         | Personal API key       |
 | Garmin Connect | Read scheduled cycling workouts; upload completed Activities on request | Garmin browser sign-in |
 
 Credentials live in the OS credential manager, isolated between TrainerPro and
@@ -136,15 +136,21 @@ read one bounded response without pagination or hidden retries, never forward
 credentials through redirects, and preserve original bytes. Callers own encrypted
 credentials, refresh serialization, provenance, ZIP/FIT verification, and persistence.
 
+The shared client also provides explicit cycling FTP and running lactate-threshold
+response reads for Harness. These do not add desktop health-data reads; Harness owns
+observation validation, dates, encrypted connection storage, and retained provenance.
+
 ### Shared workout protocol
 
-The shared Rust client supports running-workout creation, read-back,
+The shared Rust client supports timed cycling/running-workout creation, read-back,
 calendar placement, discovery, and removal operations for Harness's administrator
 rehearsal. Workout authoring and calendar writes are not exposed by the desktop application;
 bounded schedule and definition reads also support desktop planning. The caller owns
 approval, persistent receipts, account coordination, and reconciliation; protocol
 writes are sent once. Timed steps, repeats, open targets, and custom pace ranges
-are supported. A bounded Harness live check verified running-workout creation/read-back and
+are supported for running; cycling authoring supports timed steady/free steps,
+fixed repeats, watt/%FTP ranges and optional cadence. Cycling authoring remains
+automatically tested but live-unverified. A bounded Harness live check verified running-workout creation/read-back and
 calendar placement, and provider cleanup. Device receipt remains unverified because
 the test account had no paired device. Mocked tests do not establish provider
 availability or device receipt.

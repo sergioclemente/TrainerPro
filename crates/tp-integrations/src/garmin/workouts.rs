@@ -576,3 +576,6 @@ mod tests {
         assert_eq!(workout.payload(), Err(GarminError::InvalidRequest));
     }
 }
+
+mod authored;
+pub use authored::{AuthoredWorkout, CyclingPower, CyclingStep, CyclingWorkout};
