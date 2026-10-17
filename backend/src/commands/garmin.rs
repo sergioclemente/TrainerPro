@@ -1,30 +1,17 @@
 //! Garmin authentication and capability adapters. The dispatcher owns transfer orchestration.
 
-use serde::Serialize;
-use tauri::State;
-use tokio::sync::Mutex;
-
-use super::providers::{require_active, ProviderOperations};
+use super::providers::{require_active, PlanSyncReport};
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
 use crate::database::provider_connections;
-use tp_integrations::garmin::{GarminClient, GarminError, PendingMfa, SignIn, Tokens, PROVIDER_ID};
+use tp_integrations::garmin::{Account, GarminClient, GarminError, Tokens, PROVIDER_ID};
+
+pub mod browser;
+pub use browser::GarminSignInState;
 
 const FIT_UPLOAD_FILENAME: &str = "TrainerPro.fit";
 
 type R<T> = Result<T, AppError>;
-
-/// Transient Garmin MFA state. ProviderOperations serializes account mutations;
-/// SQLite and the credential vault own durable state.
-#[derive(Default)]
-pub struct GarminSignInState(Mutex<Option<PendingMfa>>);
-
-#[derive(Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum GarminSignInResult {
-    Connected,
-    NeedsMfa,
-}
 
 pub async fn has_credentials(state: &AppState, connection_id: &str) -> R<bool> {
     Ok(
@@ -34,83 +21,7 @@ pub async fn has_credentials(state: &AppState, connection_id: &str) -> R<bool> {
     )
 }
 
-#[tauri::command]
-pub async fn connect_garmin(
-    state: State<'_, AppState>,
-    operations: State<'_, GarminSignInState>,
-    providers: State<'_, ProviderOperations>,
-    email: String,
-    password: String,
-) -> R<GarminSignInResult> {
-    let _operation = providers.acquire(PROVIDER_ID)?;
-    let mut pending = operations.0.lock().await;
-    *pending = None;
-    if email.trim().is_empty() || password.is_empty() {
-        return Err(AppError::new(
-            "garmin_credentials_required",
-            "Enter your Garmin email and password.",
-        ));
-    }
-    let result = GarminClient::new()
-        .map_err(api_error)?
-        .sign_in(email.trim(), &password)
-        .await
-        .map_err(api_error)?;
-    // Neither the password nor email is retained by the pending MFA session.
-    match result {
-        SignIn::NeedsMfa(challenge) => {
-            *pending = Some(challenge);
-            Ok(GarminSignInResult::NeedsMfa)
-        }
-        SignIn::Connected(tokens) => {
-            persist_connection(&state, tokens).await?;
-            Ok(GarminSignInResult::Connected)
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn complete_garmin_mfa(
-    state: State<'_, AppState>,
-    operations: State<'_, GarminSignInState>,
-    providers: State<'_, ProviderOperations>,
-    code: String,
-) -> R<()> {
-    let _operation = providers.acquire(PROVIDER_ID)?;
-    let mut pending = operations.0.lock().await;
-    let challenge = pending
-        .as_ref()
-        .ok_or_else(|| api_error(GarminError::MfaExpired))?;
-    let tokens = match challenge.complete(code.trim()).await {
-        Ok(tokens) => tokens,
-        Err(error) => {
-            if error == GarminError::MfaExpired {
-                *pending = None;
-            }
-            return Err(api_error(error));
-        }
-    };
-    *pending = None;
-    persist_connection(&state, tokens).await?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn cancel_garmin_sign_in(
-    operations: State<'_, GarminSignInState>,
-    providers: State<'_, ProviderOperations>,
-) -> R<()> {
-    let _operation = providers.acquire(PROVIDER_ID)?;
-    *operations.0.lock().await = None;
-    Ok(())
-}
-
-async fn persist_connection(state: &AppState, tokens: Tokens) -> R<()> {
-    let account = GarminClient::new()
-        .map_err(api_error)?
-        .account(&tokens)
-        .await
-        .map_err(api_error)?;
+async fn persist_connection(state: &AppState, tokens: Tokens, account: Account) -> R<()> {
     let connection_id = {
         let conn = state.db.lock().unwrap();
         if let Some(active) = provider_connections::get_active_by_provider(&conn, PROVIDER_ID)? {
@@ -155,24 +66,44 @@ pub async fn disconnect(
     operations: &GarminSignInState,
     connection_id: &str,
 ) -> R<()> {
-    let mut pending = operations.0.lock().await;
-    *pending = None;
+    operations.cancel().await;
     require_active(&state.db.lock().unwrap(), connection_id, None)?;
     delete_tokens(state.credential_service.clone(), connection_id.to_owned()).await?;
-    provider_connections::mark_disconnected(
-        &state.db.lock().unwrap(),
+    let disconnected_at = now_unix_ms() as i64;
+    let mut conn = state.db.lock().unwrap();
+    let transaction = conn.transaction()?;
+    crate::database::scheduled_workouts::remove_all_for_connection(
+        &transaction,
         connection_id,
-        now_unix_ms() as i64,
+        disconnected_at,
     )?;
+    provider_connections::mark_disconnected(&transaction, connection_id, disconnected_at)?;
+    transaction.commit()?;
     Ok(())
 }
 
 pub async fn upload(state: &AppState, connection_id: &str, fit: Vec<u8>) -> R<String> {
     tp_integrations::garmin::validate_fit(&fit).map_err(api_error)?;
+    let client = GarminClient::new().map_err(api_error)?;
+    let tokens = fresh_tokens(state, connection_id, &client).await?;
+    let remote_activity_id = match client.upload(&tokens, fit, FIT_UPLOAD_FILENAME).await {
+        Ok(id) => id,
+        Err(error) => {
+            if error == GarminError::Authentication {
+                delete_tokens(state.credential_service.clone(), connection_id.to_owned()).await?;
+            }
+            return Err(api_error(error));
+        }
+    };
+    Ok(remote_activity_id)
+}
+
+// Upload and schedule reads share refresh-token rotation and persistence under
+// the existing provider guard. Do not start an API operation before saving it.
+async fn fresh_tokens(state: &AppState, connection_id: &str, client: &GarminClient) -> R<Tokens> {
     let mut tokens = load_tokens(state.credential_service.clone(), connection_id.to_owned())
         .await?
         .ok_or_else(|| api_error(GarminError::Authentication))?;
-    let client = GarminClient::new().map_err(api_error)?;
     if tokens.needs_refresh() {
         tokens = match client.refresh(&tokens).await {
             Ok(tokens) => tokens,
@@ -192,16 +123,50 @@ pub async fn upload(state: &AppState, connection_id: &str, fit: Vec<u8>) -> R<St
         )
         .await?;
     }
-    let remote_activity_id = match client.upload(&tokens, fit, FIT_UPLOAD_FILENAME).await {
-        Ok(id) => id,
-        Err(error) => {
-            if error == GarminError::Authentication {
-                delete_tokens(state.credential_service.clone(), connection_id.to_owned()).await?;
-            }
-            return Err(api_error(error));
+    Ok(tokens)
+}
+
+const SYNC_LOOKBACK_DAYS: i64 = 7;
+const SYNC_LOOKAHEAD_DAYS: i64 = 42;
+
+pub async fn refresh(
+    state: &AppState,
+    connection: &provider_connections::ProviderConnectionRow,
+) -> R<PlanSyncReport> {
+    let result = async {
+        let today =
+            crate::local_date::today_at(chrono::Utc::now(), connection.time_zone.as_deref());
+        let oldest = crate::local_date::shift(&today, -SYNC_LOOKBACK_DAYS)
+            .ok_or_else(|| AppError::new("garmin_date_range", "Invalid Garmin schedule date."))?;
+        let newest = crate::local_date::shift(&today, SYNC_LOOKAHEAD_DAYS)
+            .ok_or_else(|| AppError::new("garmin_date_range", "Invalid Garmin schedule date."))?;
+        let client = GarminClient::new().map_err(api_error)?;
+        let tokens = fresh_tokens(state, &connection.id, &client).await?;
+        let events = crate::garmin_sync::fetch_calendar_window(&client, &tokens, &oldest, &newest)
+            .await
+            .map_err(api_error)?;
+        crate::garmin_sync::persist_calendar_window(
+            &mut state.db.lock().unwrap(),
+            &connection.id,
+            &oldest,
+            &newest,
+            &events,
+            now_unix_ms() as i64,
+        )
+    }
+    .await;
+    if let Err(error) = &result {
+        let _ = provider_connections::record_sync_failure(
+            &state.db.lock().unwrap(),
+            &connection.id,
+            &error.message,
+            now_unix_ms() as i64,
+        );
+        if error.code == "provider_authentication" {
+            delete_tokens(state.credential_service.clone(), connection.id.clone()).await?;
         }
-    };
-    Ok(remote_activity_id)
+    }
+    result
 }
 
 fn api_error(error: GarminError) -> AppError {
@@ -217,6 +182,7 @@ fn api_error(error: GarminError) -> AppError {
         GarminError::UploadRejected => ("garmin_upload_rejected", "Garmin rejected this FIT activity. Try importing the saved file on Garmin Connect."),
         GarminError::UploadConsentRequired => ("garmin_upload_consent_required", "Garmin requires an account step before uploads. Open Garmin Connect and review pending account setup or data-upload consent, then retry."),
         GarminError::UploadUncertain => ("activity_upload_uncertain", "Garmin may have received this activity, but its upload could not be confirmed. Check Garmin Connect before retrying."),
+        GarminError::WorkoutUncertain => ("garmin_workout_uncertain", "Garmin could not confirm the workout operation. Check Garmin Connect before retrying."),
         GarminError::InvalidFit => ("garmin_invalid_fit", "The recorded file is not a FIT activity. Use another completed ride."),
     };
     AppError::new(code, message)

@@ -74,8 +74,9 @@ catalog; sign-in forms bind to provider-specific authentication commands.
 
 Clients own authentication protocols and transport. Backend adapters convert
 provider data, persist credentials, and coordinate accounts. Account mutations
-and capability operations share one guard per provider. Garmin's pending MFA
-challenge has a transient owner; SQLite and the bundle-scoped OS vault hold
+and capability operations share one guard per provider. Garmin's private browser
+attempt has a transient owner with attempt-scoped cancellation; remote pages have
+no application IPC permissions. SQLite and the bundle-scoped OS vault hold
 account metadata and credentials. Authentication state is not a network probe.
 
 Activity transfer resolves the immutable FIT artifact, checks the account-scoped
@@ -83,7 +84,7 @@ receipt, invokes the destination, and records only a confirmed remote Activity I
 Uploads and local deletion share a transfer guard, acquired before the provider
 guard. Reconnection preserves receipts; local deletion cascades only local receipts.
 
-The backend persists rotated Garmin tokens before uploading. Recording and
+The backend persists rotated Garmin tokens before uploads or schedule reads. Recording and
 finalization do not depend on provider availability. Upload behavior belongs in
 [Integrations](integrations.md#garmin-connect).
 
@@ -94,10 +95,11 @@ never persisted. Cached results are available before refresh, and each source
 reports its own outcome. Refresh windows use the account time zone; schedule
 projection uses placement zone, then account zone, then machine-local fallback.
 
-Intervals.icu fetches a bounded calendar window through `tp-integrations`. The
-backend maps structured workouts to WorkoutSpec before transactionally updating definitions
-and schedules. External event identity is scoped to the provider connection.
-Reconciliation and cache behavior belong in [Integrations](integrations.md#intervalsicu).
+Intervals.icu and Garmin fetch bounded calendar windows through `tp-integrations`.
+Garmin resolves each distinct referenced definition once before cache reconciliation.
+The backend maps structured workouts to WorkoutSpec before transactionally updating
+definitions and schedules. External event identity is scoped to the provider connection.
+Reconciliation and cache behavior belong in [Integrations](integrations.md).
 
 ## Devices and player
 

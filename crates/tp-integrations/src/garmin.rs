@@ -342,6 +342,12 @@ impl GarminClient {
         url.into()
     }
 
+    /// Whether a browser navigation is the exact, valid Garmin ticket callback.
+    /// The URL contains a credential and must never be logged or persisted.
+    pub fn is_browser_sign_in_callback(input: &str) -> bool {
+        input.starts_with("https://") && browser_ticket(input).is_ok()
+    }
+
     /// Redeem a single, user-supplied browser service ticket once. The callback
     /// URL is validated locally, never requested; all credentials go exclusively
     /// to the configured token endpoint. Callers must verify the account before
@@ -1608,5 +1614,79 @@ mod tests {
             );
             assert_eq!(requests.join().unwrap().len(), 1);
         }
+    }
+    #[tokio::test]
+    async fn schedule_window_reads_once_and_validates_calendar_identity() {
+        let event =
+            json!({"workoutScheduleId":51,"workout":{"workoutId":41},"calendarDate":"2026-10-25"});
+        let (client, requests) = server(vec![("200 OK", json!([event]), "")]);
+        let result = client
+            .list_workout_schedules_by_date(&tokens(), "2026-10-18", "2026-11-01")
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        let requests = requests.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /workout-service/schedule/workoutScheduleByPeriod?startDate=2026-10-18&endDate=2026-11-01 "));
+    }
+
+    #[tokio::test]
+    async fn incomplete_or_inconsistent_schedule_responses_are_rejected() {
+        let event =
+            json!({"workoutScheduleId":51,"workout":{"workoutId":41},"calendarDate":"2026-10-25"});
+        for body in [
+            json!({"items":[event.clone()]}),
+            json!([event.clone(), event.clone()]),
+            json!([{"workoutScheduleId":52,"workout":{"workoutId":41},"calendarDate":"2026-11-02"}]),
+            json!([{"workoutScheduleId":52,"calendarDate":"2026-10-25"}]),
+            json!((1..=MAX_PAGE_SIZE).map(|id| json!({"workoutScheduleId":id,"workout":{"workoutId":41},"calendarDate":"2026-10-25"})).collect::<Vec<_>>()),
+        ] {
+            let (client, requests) = server(vec![("200 OK", body, "")]);
+            assert_eq!(
+                client
+                    .list_workout_schedules_by_date(&tokens(), "2026-10-18", "2026-11-01")
+                    .await,
+                Err(GarminError::Protocol)
+            );
+            assert_eq!(requests.join().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_schedule_windows_do_not_contact_the_provider() {
+        let client = GarminClient::new().unwrap();
+        for (start, end) in [
+            ("2026-10-25", "2026-10-24"),
+            ("2026-02-30", "2026-03-02"),
+            ("2026-01-01", "2026-12-31"),
+        ] {
+            assert_eq!(
+                client
+                    .list_workout_schedules_by_date(&tokens(), start, end)
+                    .await,
+                Err(GarminError::InvalidRequest)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn schedule_auth_rate_limit_and_missing_detail_errors_do_not_retry() {
+        for (status, error) in [
+            ("401 Unauthorized", GarminError::Authentication),
+            ("403 Forbidden", GarminError::Challenge),
+            ("429 Too Many Requests", GarminError::RateLimited),
+        ] {
+            let (client, requests) = server(vec![(status, json!({}), "")]);
+            assert_eq!(
+                client
+                    .list_workout_schedules_by_date(&tokens(), "2026-10-18", "2026-11-01")
+                    .await,
+                Err(error)
+            );
+            assert_eq!(requests.join().unwrap().len(), 1);
+        }
+        let (client, requests) = server(vec![("404 Not Found", json!({}), "")]);
+        assert_eq!(client.get_workout(&tokens(), "41").await.unwrap(), None);
+        assert_eq!(requests.join().unwrap().len(), 1);
     }
 }

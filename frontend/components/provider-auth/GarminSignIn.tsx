@@ -1,72 +1,56 @@
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppError, ipc } from "../../ipc";
 
 import type { SignInProps } from "./index";
 
 export default function GarminSignIn({ disabled, onConnected }: SignInProps) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
-  const [needsMfa, setNeedsMfa] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => () => { void ipc.cancelGarminSignIn().catch(() => {}); }, []);
+  const mounted = useRef(true);
+  const attempt = useRef<string | null>(null);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (attempt.current) void ipc.cancelGarminSignIn(attempt.current).catch(() => {});
+    };
+  }, []);
 
-  async function signIn(event: FormEvent) {
-    event.preventDefault();
-    if (busy || disabled) return;
+  async function signIn() {
+    if (busy || disabled || attempt.current) return;
     setBusy(true);
     setError("");
-    const submittedPassword = password;
-    const submittedCode = code;
-    setPassword("");
-    setCode("");
+    const id = crypto.randomUUID();
+    attempt.current = id;
     try {
-      if (needsMfa) {
-        await ipc.completeGarminMfa(submittedCode);
-        setNeedsMfa(false);
-      } else {
-        const result = await ipc.connectGarmin(email, submittedPassword);
-        if (result.status === "needs_mfa") {
-          setNeedsMfa(true);
-          return;
-        }
-      }
-      setEmail("");
-      await onConnected();
+      const result = await ipc.connectGarmin(id);
+      if (mounted.current && result.status === "connected") await onConnected();
     } catch (failure) {
-      const appError = failure as AppError;
-      setError(appError.message ?? String(failure));
-      if (appError.code === "garmin_mfa_expired") setNeedsMfa(false);
-    } finally { setBusy(false); }
+      if (mounted.current) setError((failure as AppError).message ?? String(failure));
+    } finally {
+      if (attempt.current === id) attempt.current = null;
+      if (mounted.current) setBusy(false);
+    }
   }
 
   async function cancel() {
-    setBusy(true);
-    try {
-      await ipc.cancelGarminSignIn();
-      setNeedsMfa(false);
-      setCode("");
-      setError("");
-    } catch (failure) { setError((failure as AppError).message ?? String(failure)); }
-    finally { setBusy(false); }
+    const id = attempt.current;
+    if (!id) return;
+    try { await ipc.cancelGarminSignIn(id); }
+    catch (failure) {
+      if (mounted.current) setError((failure as AppError).message ?? String(failure));
+    }
   }
 
-  const blocked = busy || disabled;
-  return <form className="form" onSubmit={(event) => void signIn(event)}>
+  return <div className="form">
+    <p className="muted footnote">Sign in on Garmin’s website in a separate window. TrainerPro stores session tokens in your system credential manager.</p>
     {error && <p className="connection-error" role="alert">{error}</p>}
-    {needsMfa ? <label>Garmin verification code
-      <input autoFocus autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value)} disabled={blocked} required />
-    </label> : <>
-      <p className="muted footnote">Sign in with your Garmin account. TrainerPro keeps session tokens in your system credential manager. Your password is used only for this sign-in.</p>
-      <label>Email<input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} disabled={blocked} required /></label>
-      <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={blocked} required /></label>
-    </>}
+    {busy && <p className="muted" role="status">Complete sign-in in the Garmin window.</p>}
     <div className="row gap">
-      <button className="primary" type="submit" disabled={blocked || (needsMfa ? !code.trim() : !email.trim() || !password)}>
-        {busy ? "Connecting…" : needsMfa ? "Verify code" : "Sign in"}
+      <button className="primary" type="button" disabled={busy || disabled} onClick={() => void signIn()}>
+        {busy ? "Connecting…" : "Sign in to Garmin"}
       </button>
-      {needsMfa && <button type="button" disabled={blocked} onClick={() => void cancel()}>Cancel sign-in</button>}
+      {busy && <button type="button" onClick={() => void cancel()}>Cancel sign-in</button>}
     </div>
-  </form>;
+  </div>;
 }

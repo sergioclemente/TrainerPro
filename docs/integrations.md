@@ -9,7 +9,7 @@ capabilities TrainerPro supports:
 | Provider       | Capability                             | Connection                                           |
 | -------------- | -------------------------------------- | ---------------------------------------------------- |
 | Intervals.icu  | Read scheduled cycling workouts        | Personal API key                                     |
-| Garmin Connect | Upload completed Activities on request | Garmin sign-in, with verification code when required |
+| Garmin Connect | Read scheduled cycling workouts; upload completed Activities on request | Garmin browser sign-in |
 
 Credentials live in the OS credential manager, isolated between TrainerPro and
 TrainerPro QA. Connection status reflects locally available credentials; it does
@@ -54,24 +54,63 @@ or delete its calendar events.
 
 ### Connection
 
-Sign in with a Garmin email and password, then enter a verification code if
-requested. Passwords and codes are used only for sign-in; session tokens are
-retained. Rejected or expired refresh credentials require signing in again.
-Browser challenges and rate limits are reported without repeated login attempts. The shared Rust client additionally supports an explicit
-browser service-ticket exchange for Harness: applications collect the ticket privately,
-verify the account, and own persistence. It never copies browser cookies or automatically
-falls back after a 429; desktop sign-in does not expose this operation. The browser-assisted path has passed a bounded Harness live check.
+Choose **Sign in to Garmin** to open Garmin's website in a compact, resizable
+private browser window. Enter passwords, verification codes, and browser challenges
+on Garmin's page. Successful sign-in returns to TrainerPro automatically; closing
+the window or choosing **Cancel sign-in** cancels the attempt. TrainerPro verifies
+the account and retains session tokens in the system credential manager. Rejected
+or expired refresh credentials require signing in again. Rate limits are reported
+without repeated login attempts or a password-login fallback.
+
+The desktop browser path has passed a user-operated macOS QA sign-in and reconnect
+check. This does not establish Windows sign-in or general provider availability.
+The shared Rust client's explicit browser-ticket exchange remains available to
+Harness; neither application imports cookies from the user's normal browser.
 
 The connection supports Garmin's `.com` service through an unofficial Web
 integration. Garmin may change its behavior independently of TrainerPro.
 Manual FIT export remains available. If Garmin requires account setup or upload
 consent, complete it on Garmin Connect; TrainerPro never grants it for you.
 
+### Scheduled cycling workouts
+
+Garmin also supplies scheduled workouts to Next Up. Sync runs after connection,
+once when Workouts first opens, and through **Refresh** or **Sync now**. The window
+covers seven days before through 42 days after today. Garmin calendar dates remain
+all-day dates; the account time zone is used when available, otherwise the machine's
+local zone. This connection currently provides no Garmin account time-zone metadata.
+
+Supported prescriptions have timed cycling steps, fixed repeats, explicit watt or
+%FTP targets and ranges, optional cadence targets, free ride, and step instructions.
+Relative targets remain relative to TrainerPro FTP. Garmin's unit metadata distinguishes
+percentages from watts; values are never guessed from magnitude. Target ranges keep
+their semantic bounds and use the existing player's midpoint rule during execution.
+HR targets, unresolved zone numbers, distance/lap-button conditions, and unfamiliar
+step semantics are reported as unsupported. Daily suggestions and separate Coach-plan
+discovery are outside this integration.
+
+Occurrences have separate identities from reusable definitions. Refreshes update
+cached occurrences and retire missing events only after complete calendar and detail
+reads. Failed reads preserve the cache; conversion issues preserve the affected
+workout and appear in sync status. Cached workouts execute offline and stay outside
+the Library. Provider edits cannot change loaded rides or Activity snapshots.
+Garmin and Intervals.icu remain independent, including duplicate rides.
+
+A bounded macOS QA check verified live timed-cycling import with repeated watt
+targets, duplicate-free refresh, cached loading after a restart with provider
+requests blocked, simulated target transitions, and local Activity/FIT creation.
+Intervals were skipped to shorten the ride. Live calendar edits/removals, account
+switching, and Windows behavior remain separate validation boundaries.
+
+Disconnecting retires Garmin-owned schedules and cached definitions while preserving
+local copies, Activities, and upload receipts. TrainerPro never creates, edits, moves,
+or deletes Garmin calendar entries or workout definitions.
+
 ### Activity uploads
 
 Choose **Upload to Garmin** in Summary or Activities to send the original FIT
-file. Uploads are manual; there is no automatic queue or retry. Planned-workout
-sync and health-data reads are unsupported. Garmin may forward uploaded rides
+file. Uploads are manual; there is no automatic queue or retry. Health-data
+reads are unsupported. Garmin may forward uploaded rides
 to linked services such as Strava, depending on account settings.
 
 **Uploaded to Garmin** appears only after Garmin confirms the created Activity.
@@ -90,21 +129,19 @@ removes its local artifacts and upload record, never the Activity in Garmin.
 
 ### Shared activity reads
 
-The `tp-integrations` Garmin client also provides bounded activity discovery and
-selected summary, lap, chart-detail, and original-file reads for Harness. Date-filtered
-pages accept Garmin calendar bounds; callers pad those bounds and filter UTC start
-timestamps themselves. The client performs one bounded request without pagination. These
-are read-only protocol operations, not a desktop history-sync feature. The caller
-owns encrypted credentials, refresh serialization, capture provenance, ZIP/FIT
-verification, and persistence. Responses are size-bounded; credentials are never
-forwarded through redirects, and failures do not trigger hidden retries. Original
-bytes are returned unchanged for independent verification.
+The shared client provides bounded activity discovery, summary, lap, chart-detail,
+and original-file reads for Harness, not desktop history sync. Date-filtered pages
+use Garmin calendar bounds; callers pad them and filter UTC timestamps. Operations
+read one bounded response without pagination or hidden retries, never forward
+credentials through redirects, and preserve original bytes. Callers own encrypted
+credentials, refresh serialization, provenance, ZIP/FIT verification, and persistence.
 
 ### Shared workout protocol
 
 The shared Rust client supports running-workout creation, read-back,
 calendar placement, discovery, and removal operations for Harness's administrator
-rehearsal. These are not exposed by the desktop application. The caller owns
+rehearsal. Workout authoring and calendar writes are not exposed by the desktop application;
+bounded schedule and definition reads also support desktop planning. The caller owns
 approval, persistent receipts, account coordination, and reconciliation; protocol
 writes are sent once. Timed steps, repeats, open targets, and custom pace ranges
 are supported. A bounded Harness live check verified running-workout creation/read-back and

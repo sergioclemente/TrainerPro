@@ -7,6 +7,7 @@ use super::{
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 const WORKOUT_PATH: &str = "/workout-service/workout";
 const SCHEDULE_PATH: &str = "/workout-service/schedule";
@@ -20,6 +21,27 @@ const MAX_STEPS: usize = 100;
 const MAX_REPEAT_DEPTH: usize = 3;
 const MAX_REPEAT_COUNT: u32 = 100;
 const FLOAT_TOLERANCE: f64 = 0.000_01;
+const MAX_SCHEDULE_WINDOW_DAYS: i64 = 50;
+
+/// Calendar identity is the occurrence, not the reusable workout definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkoutSchedule {
+    pub id: String,
+    pub workout_id: String,
+    pub date_local: String,
+}
+
+impl WorkoutSchedule {
+    pub fn from_payload(body: &Value) -> Result<Self, GarminError> {
+        let date = body["calendarDate"].as_str().ok_or(GarminError::Protocol)?;
+        valid_date(date).map_err(|_| GarminError::Protocol)?;
+        Ok(Self {
+            id: schedule_id(body)?,
+            workout_id: workout_id(&body["workout"])?,
+            date_local: date.to_string(),
+        })
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -406,12 +428,34 @@ impl GarminClient {
         tokens: &Tokens,
         date: &str,
     ) -> Result<Vec<Value>, GarminError> {
-        valid_date(date)?;
+        self.list_workout_schedules_by_date(tokens, date, date)
+            .await
+    }
+
+    /// Read one complete, bounded calendar response. A full provider-sized
+    /// page is ambiguous and rejected rather than used to retire cached events.
+    /// No pagination, token refresh, or retries are performed.
+    pub async fn list_workout_schedules_by_date(
+        &self,
+        tokens: &Tokens,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<Vec<Value>, GarminError> {
+        valid_date(start_date)?;
+        valid_date(end_date)?;
+        let start = chrono::NaiveDate::parse_from_str(start_date, "%Y-%m-%d")
+            .map_err(|_| GarminError::InvalidRequest)?;
+        let end = chrono::NaiveDate::parse_from_str(end_date, "%Y-%m-%d")
+            .map_err(|_| GarminError::InvalidRequest)?;
+        let days = (end - start).num_days();
+        if !(0..MAX_SCHEDULE_WINDOW_DAYS).contains(&days) {
+            return Err(GarminError::InvalidRequest);
+        }
         let body = self
             .workout_request(
                 tokens,
                 Method::GET,
-                &format!("{SCHEDULE_PATH}/workoutScheduleByPeriod?startDate={date}&endDate={date}"),
+                &format!("{SCHEDULE_PATH}/workoutScheduleByPeriod?startDate={start_date}&endDate={end_date}"),
                 None,
             )
             .await?
@@ -420,8 +464,15 @@ impl GarminClient {
         if items.len() >= MAX_PAGE_SIZE as usize {
             return Err(GarminError::Protocol);
         }
+        let mut ids = HashSet::new();
         for item in items {
-            schedule_id(item)?;
+            let schedule = WorkoutSchedule::from_payload(item)?;
+            if schedule.date_local.as_str() < start_date
+                || schedule.date_local.as_str() > end_date
+                || !ids.insert(schedule.id)
+            {
+                return Err(GarminError::Protocol);
+            }
         }
         Ok(items.clone())
     }

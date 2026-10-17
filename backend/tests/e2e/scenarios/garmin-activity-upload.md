@@ -7,12 +7,15 @@ ID: `garmin-activity-upload`
 Input: human Garmin sign-in and MFA; simulated trainer and HRM.
 
 Follow the [QA runner guide](../README.md) for bundle verification. The operator
-supplies credentials directly in the application. Never put passwords, tokens,
-codes, or identifying response bodies in test artifacts.
+supplies credentials directly on Garmin's page in the private sign-in window.
+Never put passwords, tokens, codes, or identifying response bodies in test artifacts.
 
 1. Open Settings → Connections. Verify Garmin and Intervals.icu load
-   independently and Garmin offers sign-in. Empty fields cannot be submitted.
-2. The operator signs into the test Garmin account. Complete MFA when required.
+   independently and Garmin offers **Sign in to Garmin**, with no application-owned
+   email, password, or MFA fields.
+2. Open the Garmin window, close it, and verify sign-in is cancelled. Open it
+   again; the operator signs into the test account and completes MFA when required.
+   Verify automatic completion and that the Garmin window closes.
    Verify the account name and connected badge. Restart QA and verify the
    connection persists without password entry.
 3. Record a disposable simulated cycling ride with two intervals, power and HR.

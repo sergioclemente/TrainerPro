@@ -107,8 +107,8 @@ authoring retain their separate workflows.
   and calendar writes are outside the current direction.
 - **WorkoutPlanner** is a self-hosted definition source and editor.
 - **What's on Zwift** is a read-only workout catalog.
-- **Garmin Connect** supports explicit completed-Activity uploads through an
-  unofficial Web connection; see [Integrations](integrations.md#garmin-connect).
+- **Garmin Connect** supplies scheduled cycling workouts and supports explicit
+  completed-Activity uploads through an unofficial Web connection; see [Integrations](integrations.md#garmin-connect).
 - **TrainingPeaks and Strava** remain access- and evidence-dependent.
 - A future **AI planner** is an external planning service. It owns training
   context, plan generation, review, and publication. TrainerPro can consume its
@@ -130,6 +130,6 @@ authoring retain their separate workflows.
 ## Open product questions
 
 - How far into the future should scheduled workouts appear in Next Up?
-- Which provider should follow Intervals.icu, based on access and user demand?
+- Which provider should follow Intervals.icu and Garmin, based on access and user demand?
 - What minimum athlete context makes an AI recommendation meaningfully better
   than deterministic local recommendations?
