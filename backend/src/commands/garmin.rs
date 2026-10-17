@@ -169,6 +169,40 @@ pub async fn disconnect(
 
 pub async fn upload(state: &AppState, connection_id: &str, fit: Vec<u8>) -> R<String> {
     tp_integrations::garmin::validate_fit(&fit).map_err(api_error)?;
+    let (client, tokens) = client_with_fresh_tokens(state, connection_id).await?;
+    let remote_activity_id = match client.upload(&tokens, fit, FIT_UPLOAD_FILENAME).await {
+        Ok(id) => id,
+        Err(error) => {
+            if error == GarminError::Authentication {
+                delete_tokens(state.credential_service.clone(), connection_id.to_owned()).await?;
+            }
+            return Err(api_error(error));
+        }
+    };
+    Ok(remote_activity_id)
+}
+
+/// Give the uploaded Activity the workout's name and description. Garmin
+/// has already created it, so a failure here leaves a correctly recorded
+/// upload with a default title; the caller reports, never retries the file.
+pub async fn describe(
+    state: &AppState,
+    connection_id: &str,
+    remote_activity_id: &str,
+    name: &str,
+    description: &str,
+) -> R<()> {
+    let (client, tokens) = client_with_fresh_tokens(state, connection_id).await?;
+    client
+        .describe_activity(&tokens, remote_activity_id, name, description)
+        .await
+        .map_err(api_error)
+}
+
+async fn client_with_fresh_tokens(
+    state: &AppState,
+    connection_id: &str,
+) -> R<(GarminClient, Tokens)> {
     let mut tokens = load_tokens(state.credential_service.clone(), connection_id.to_owned())
         .await?
         .ok_or_else(|| api_error(GarminError::Authentication))?;
@@ -192,16 +226,7 @@ pub async fn upload(state: &AppState, connection_id: &str, fit: Vec<u8>) -> R<St
         )
         .await?;
     }
-    let remote_activity_id = match client.upload(&tokens, fit, FIT_UPLOAD_FILENAME).await {
-        Ok(id) => id,
-        Err(error) => {
-            if error == GarminError::Authentication {
-                delete_tokens(state.credential_service.clone(), connection_id.to_owned()).await?;
-            }
-            return Err(api_error(error));
-        }
-    };
-    Ok(remote_activity_id)
+    Ok((client, tokens))
 }
 
 fn api_error(error: GarminError) -> AppError {

@@ -22,6 +22,50 @@ impl PowerTarget {
         };
         w.round().clamp(0.0, f64::from(MAX_TARGET_WATTS)) as u16
     }
+
+    /// Target as a percentage of `ftp`, the unit workout steps are described
+    /// in. Absolute-watt targets convert at the given FTP.
+    pub fn percent_ftp(&self, ftp: u16) -> f64 {
+        match self {
+            PowerTarget::PercentFtp(frac) => frac * 100.0,
+            PowerTarget::Watts(watts) => f64::from(*watts) / f64::from(ftp.max(1)) * 100.0,
+        }
+    }
+}
+
+/// Step-title thresholds, in % FTP. A steady step at or above
+/// `STEP_INTERVAL_MIN_PCT_FTP` is an interval. One below
+/// `STEP_RECOVERY_MAX_PCT_FTP` that drops at least `STEP_RECOVERY_DROP_PCT_FTP`
+/// from the previous step's end power is a recovery.
+pub const STEP_INTERVAL_MIN_PCT_FTP: f64 = 82.0;
+pub const STEP_RECOVERY_MAX_PCT_FTP: f64 = 62.0;
+pub const STEP_RECOVERY_DROP_PCT_FTP: f64 = 12.0;
+
+/// Derived title of a workout step: the detail view's label and the FIT
+/// export's step name and lap intensity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepRole {
+    WarmUp,
+    CoolDown,
+    Ramp,
+    Steady,
+    Interval,
+    Recovery,
+    FreeRide,
+}
+
+impl StepRole {
+    pub fn label(self) -> &'static str {
+        match self {
+            StepRole::WarmUp => "Warm-up",
+            StepRole::CoolDown => "Cool-down",
+            StepRole::Ramp => "Ramp",
+            StepRole::Steady => "Steady",
+            StepRole::Interval => "Interval",
+            StepRole::Recovery => "Recovery",
+            StepRole::FreeRide => "Free ride",
+        }
+    }
 }
 
 /// A prescribed interval in an executable workout, with duration and targets.
@@ -78,6 +122,48 @@ pub struct ExecutableWorkout {
 impl ExecutableWorkout {
     pub fn duration_s(&self) -> u32 {
         self.segments.iter().map(WorkoutSegment::duration_s).sum()
+    }
+
+    /// One role per segment, in order. Recovery depends on the previous
+    /// step's end power; warm-up and cool-down on position in the workout.
+    pub fn step_roles(&self, ftp: u16) -> Vec<StepRole> {
+        let n = self.segments.len();
+        let mut roles = Vec::with_capacity(n);
+        let mut previous_end_pct: Option<f64> = None;
+        for (i, segment) in self.segments.iter().enumerate() {
+            let (role, end_pct) = match segment {
+                WorkoutSegment::Steady { power, .. } => {
+                    let pct = power.percent_ftp(ftp);
+                    // Recovery = easy spinning right after harder work.
+                    let drops_from_harder_work = previous_end_pct
+                        .map(|previous| previous > pct + STEP_RECOVERY_DROP_PCT_FTP)
+                        .unwrap_or(false);
+                    let role = if pct < STEP_RECOVERY_MAX_PCT_FTP && drops_from_harder_work {
+                        StepRole::Recovery
+                    } else if pct >= STEP_INTERVAL_MIN_PCT_FTP {
+                        StepRole::Interval
+                    } else {
+                        StepRole::Steady
+                    };
+                    (role, pct)
+                }
+                WorkoutSegment::Ramp { start, end, .. } => {
+                    let (a, b) = (start.percent_ftp(ftp), end.percent_ftp(ftp));
+                    let role = if i == 0 && b > a {
+                        StepRole::WarmUp
+                    } else if i + 1 == n && b < a {
+                        StepRole::CoolDown
+                    } else {
+                        StepRole::Ramp
+                    };
+                    (role, b)
+                }
+                WorkoutSegment::FreeRide { .. } => (StepRole::FreeRide, 0.0),
+            };
+            roles.push(role);
+            previous_end_pct = Some(end_pct);
+        }
+        roles
     }
 
     /// WorkoutSegment containing active-time offset `t_s`, plus the offset into that
