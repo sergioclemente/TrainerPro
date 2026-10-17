@@ -2,6 +2,8 @@
 //! Callers own credential persistence and account/transfer coordination.
 //! Uploads return only confirmed remote activity IDs and never resend the file.
 
+pub mod workouts;
+
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -15,6 +17,8 @@ const API_BASE: &str = "https://connectapi.garmin.com";
 const TOKEN_URL: &str = "https://diauth.garmin.com/di-oauth2-service/oauth/token";
 const SSO_CLIENT_ID: &str = "GCM_IOS_DARK";
 const SERVICE_URL: &str = "https://mobile.integration.garmin.com/gcm/ios";
+const BROWSER_SERVICE_URL: &str = "https://sso.garmin.com/sso/embed";
+const MAX_BROWSER_TICKET_BYTES: usize = 4096;
 const TOKEN_CLIENT_ID: &str = "GARMIN_CONNECT_MOBILE_ANDROID_DI_2025Q2";
 const TICKET_GRANT: &str =
     "https://connectapi.garmin.com/di-oauth2-service/oauth/grant/service_ticket";
@@ -52,7 +56,7 @@ pub enum ActivityResource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum GarminError {
-    #[error("Invalid Garmin activity ID or page bounds.")]
+    #[error("Invalid Garmin request.")]
     InvalidRequest,
     #[error("Garmin response exceeds the supported size limit.")]
     ResponseTooLarge,
@@ -80,6 +84,8 @@ pub enum GarminError {
     UploadUncertain,
     #[error("The supplied file is not a FIT activity.")]
     InvalidFit,
+    #[error("Garmin may have received the workout operation; reconcile before retrying.")]
+    WorkoutUncertain,
 }
 
 // Deliberately no Debug implementation: neither tokens nor MFA cookies belong in logs.
@@ -316,13 +322,48 @@ impl GarminClient {
             .and_then(Value::as_str)
             .filter(|ticket| !ticket.is_empty())
             .ok_or(GarminError::Protocol)?;
+        self.exchange_service_ticket(ticket, SERVICE_URL).await
+    }
+
+    /// URL for an explicit, user-operated web sign-in. This performs no I/O and
+    /// does not reuse browser cookies or credentials from another application.
+    pub fn browser_sign_in_url() -> String {
+        let mut url =
+            Url::parse("https://sso.garmin.com/sso/signin").expect("static Garmin SSO URL");
+        url.query_pairs_mut().extend_pairs([
+            ("id", "gauth-widget"),
+            ("embedWidget", "true"),
+            ("gauthHost", BROWSER_SERVICE_URL),
+            ("service", BROWSER_SERVICE_URL),
+            ("source", BROWSER_SERVICE_URL),
+            ("redirectAfterAccountLoginUrl", BROWSER_SERVICE_URL),
+            ("redirectAfterAccountCreationUrl", BROWSER_SERVICE_URL),
+        ]);
+        url.into()
+    }
+
+    /// Redeem a single, user-supplied browser service ticket once. The callback
+    /// URL is validated locally, never requested; all credentials go exclusively
+    /// to the configured token endpoint. Callers must verify the account before
+    /// persisting the returned tokens. There is no automatic login fallback.
+    pub async fn sign_in_with_browser_ticket(self, input: &str) -> Result<Tokens, GarminError> {
+        let ticket = browser_ticket(input)?;
+        self.exchange_service_ticket(&ticket, BROWSER_SERVICE_URL)
+            .await
+    }
+
+    async fn exchange_service_ticket(
+        &self,
+        ticket: &str,
+        service: &str,
+    ) -> Result<Tokens, GarminError> {
         let response = native_headers(self.http.post(&self.token_url))
             .basic_auth(TOKEN_CLIENT_ID, Some(""))
             .form(&[
                 ("client_id", TOKEN_CLIENT_ID),
                 ("service_ticket", ticket),
                 ("grant_type", TICKET_GRANT),
-                ("service_url", SERVICE_URL),
+                ("service_url", service),
             ])
             .send()
             .await
@@ -513,6 +554,49 @@ impl PendingMfa {
             _ => Err(GarminError::MfaRejected),
         }
     }
+}
+
+fn browser_ticket(input: &str) -> Result<String, GarminError> {
+    let input = input.trim();
+    if input.len() > MAX_BROWSER_TICKET_BYTES {
+        return Err(GarminError::InvalidRequest);
+    }
+    let ticket = if input.starts_with("ST-") {
+        input.to_owned()
+    } else {
+        let url = Url::parse(input).map_err(|_| GarminError::InvalidRequest)?;
+        if url.scheme() != "https"
+            || url.host_str() != Some("sso.garmin.com")
+            || url.path() != "/sso/embed"
+            || url.port().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(GarminError::InvalidRequest);
+        }
+        let tickets = url
+            .query_pairs()
+            .filter(|(key, _)| key == "ticket")
+            .map(|(_, value)| value.into_owned())
+            .collect::<Vec<_>>();
+        if tickets.len() != 1 {
+            return Err(GarminError::InvalidRequest);
+        }
+        tickets
+            .into_iter()
+            .next()
+            .ok_or(GarminError::InvalidRequest)?
+    };
+    if !ticket.starts_with("ST-")
+        || ticket.len() <= "ST-".len()
+        || !ticket
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+    {
+        return Err(GarminError::InvalidRequest);
+    }
+    Ok(ticket)
 }
 
 fn native_headers(request: RequestBuilder) -> RequestBuilder {
@@ -1295,6 +1379,234 @@ mod tests {
             assert!(matches!(result, Err(error) if error == expected));
             requests.join().unwrap();
             assert!(!expected.to_string().contains("must-not-leak"));
+        }
+    }
+
+    fn synthetic_workout() -> workouts::RunningWorkout {
+        workouts::RunningWorkout {
+            name: "Harness probe synthetic".into(),
+            description: "Synthetic test".into(),
+            steps: vec![workouts::RunningStep::Timed {
+                seconds: 60,
+                role: workouts::StepRole::Warmup,
+                target: workouts::RunningTarget::Open,
+            }],
+        }
+    }
+    #[tokio::test]
+    async fn workout_protocol_creates_reads_schedules_and_cleans_up_once() {
+        let workout = synthetic_workout();
+        let mut payload = workout.payload().unwrap();
+        payload["workoutId"] = json!(41);
+        let calendar =
+            json!({"workoutScheduleId":51,"workout":{"workoutId":41},"calendarDate":"2026-10-25"});
+        let (client, requests) = server(vec![
+            ("200 OK", payload.clone(), ""),
+            ("200 OK", payload.clone(), ""),
+            ("200 OK", json!([payload]), ""),
+            ("200 OK", calendar.clone(), ""),
+            ("200 OK", calendar.clone(), ""),
+            ("200 OK", json!([calendar]), ""),
+            ("204 No Content", Value::Null, ""),
+            ("404 Not Found", json!({}), ""),
+            ("204 No Content", Value::Null, ""),
+            ("404 Not Found", json!({}), ""),
+        ]);
+        let tokens = tokens();
+        assert_eq!(
+            client
+                .create_running_workout(&tokens, &workout)
+                .await
+                .unwrap(),
+            "41"
+        );
+        assert!(workout
+            .matches(&client.get_workout(&tokens, "41").await.unwrap().unwrap())
+            .unwrap());
+        assert_eq!(
+            client.list_workouts(&tokens, 0, 100).await.unwrap().len(),
+            1
+        );
+        assert_eq!(
+            client
+                .schedule_workout(&tokens, "41", "2026-10-25")
+                .await
+                .unwrap(),
+            "51"
+        );
+        assert!(client
+            .get_workout_schedule(&tokens, "51")
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            client
+                .list_workout_schedules(&tokens, "2026-10-25")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        client.delete_workout_schedule(&tokens, "51").await.unwrap();
+        assert!(client
+            .get_workout_schedule(&tokens, "51")
+            .await
+            .unwrap()
+            .is_none());
+        client.delete_workout(&tokens, "41").await.unwrap();
+        assert!(client.get_workout(&tokens, "41").await.unwrap().is_none());
+        let requests = requests.join().unwrap();
+        assert_eq!(
+            requests.iter().filter(|r| r.starts_with("POST ")).count(),
+            2
+        );
+        assert!(requests[0].starts_with("POST /workout-service/workout "));
+        assert!(requests[0].contains("\"endConditionValue\":60"));
+        assert!(requests[3].starts_with("POST /workout-service/schedule/41 "));
+        assert!(requests[3].contains("{\"date\":\"2026-10-25\"}"));
+        assert!(requests[5].starts_with("GET /workout-service/schedule/workoutScheduleByPeriod?startDate=2026-10-25&endDate=2026-10-25 "));
+        assert!(requests[6].starts_with("DELETE /workout-service/schedule/51 "));
+        assert!(requests[8].starts_with("DELETE /workout-service/workout/41 "));
+    }
+    #[tokio::test]
+    async fn workout_write_errors_are_sanitized_and_never_retried() {
+        for (status, body, error) in [
+            (
+                "401 Unauthorized",
+                json!({"secret":"hidden"}),
+                GarminError::Authentication,
+            ),
+            ("403 Forbidden", json!({}), GarminError::Challenge),
+            ("429 Too Many Requests", json!({}), GarminError::RateLimited),
+            (
+                "500 Internal Server Error",
+                json!({}),
+                GarminError::WorkoutUncertain,
+            ),
+            (
+                "200 OK",
+                json!({"workoutId":null}),
+                GarminError::WorkoutUncertain,
+            ),
+            ("200 OK", json!([41]), GarminError::WorkoutUncertain),
+        ] {
+            let (client, requests) = server(vec![(status, body, "")]);
+            assert_eq!(
+                client
+                    .create_running_workout(&tokens(), &synthetic_workout())
+                    .await,
+                Err(error)
+            );
+            assert_eq!(requests.join().unwrap().len(), 1);
+            assert!(!error.to_string().contains("hidden"));
+        }
+        let (client, requests) = server(vec![(
+            "200 OK",
+            json!({"workoutScheduleId":51,"workout":{"workoutId":42},"calendarDate":"2026-10-25"}),
+            "",
+        )]);
+        assert_eq!(
+            client.schedule_workout(&tokens(), "41", "2026-10-25").await,
+            Err(GarminError::WorkoutUncertain)
+        );
+        assert_eq!(requests.join().unwrap().len(), 1);
+    }
+    #[tokio::test]
+    async fn workout_paths_bounds_and_read_identity_are_validated() {
+        let client = GarminClient::new().unwrap();
+        assert_eq!(
+            client.get_workout(&tokens(), "../41").await,
+            Err(GarminError::InvalidRequest)
+        );
+        assert_eq!(
+            client.list_workouts(&tokens(), 0, 101).await,
+            Err(GarminError::InvalidRequest)
+        );
+        assert_eq!(
+            client.schedule_workout(&tokens(), "41", "2026-02-30").await,
+            Err(GarminError::InvalidRequest)
+        );
+        let (client, requests) = server(vec![("200 OK", json!({"workoutId":42}), "")]);
+        assert_eq!(
+            client.get_workout(&tokens(), "41").await,
+            Err(GarminError::Protocol)
+        );
+        assert_eq!(requests.join().unwrap().len(), 1);
+    }
+    #[test]
+    fn browser_signin_keeps_service_fixed_and_rejects_untrusted_callbacks() {
+        let url = Url::parse(&GarminClient::browser_sign_in_url()).unwrap();
+        assert_eq!(url.host_str(), Some("sso.garmin.com"));
+        let query = url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            query.get("service").map(|v| v.as_ref()),
+            Some(BROWSER_SERVICE_URL)
+        );
+        assert!(!query.contains_key("clientId"));
+        assert_eq!(
+            browser_ticket(" ST-synthetic-ticket ").unwrap(),
+            "ST-synthetic-ticket"
+        );
+        assert_eq!(
+            browser_ticket("https://sso.garmin.com/sso/embed?ticket=ST-synthetic-ticket").unwrap(),
+            "ST-synthetic-ticket"
+        );
+        for input in [
+            "",
+            "ST-",
+            "https://example.com/sso/embed?ticket=ST-secret",
+            "https://sso.garmin.com.attacker.test/sso/embed?ticket=ST-secret",
+            "http://sso.garmin.com/sso/embed?ticket=ST-secret",
+            "https://sso.garmin.com/sso/embed?ticket=ST-one&ticket=ST-two",
+            "https://user@sso.garmin.com/sso/embed?ticket=ST-secret",
+            "https://sso.garmin.com/sso/embed?ticket=ST-secret#fragment",
+            "ST-with space",
+        ] {
+            assert_eq!(browser_ticket(input), Err(GarminError::InvalidRequest));
+        }
+    }
+    #[tokio::test]
+    async fn browser_signin_exchanges_once_without_mobile_login_or_callback_requests() {
+        let (client, requests) = server(vec![(
+            "200 OK",
+            json!({"access_token":"synthetic-browser-access","refresh_token":"synthetic-browser-refresh","expires_in":3600}),
+            "",
+        )]);
+        let tokens = client
+            .sign_in_with_browser_ticket(
+                "https://sso.garmin.com/sso/embed?ticket=ST-synthetic-browser-ticket",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(tokens).unwrap()["refresh_token"],
+            "synthetic-browser-refresh"
+        );
+        let requests = requests.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("POST /token "));
+        assert!(requests[0].contains("service_ticket=ST-synthetic-browser-ticket"));
+        assert!(requests[0].contains("service_url=https%3A%2F%2Fsso.garmin.com%2Fsso%2Fembed"));
+        assert!(!requests[0].contains("password"));
+    }
+    #[tokio::test]
+    async fn browser_signin_rate_limit_and_bad_ticket_never_trigger_password_fallback() {
+        for (status, body, expected) in [
+            ("429 Too Many Requests", json!({}), GarminError::RateLimited),
+            ("401 Unauthorized", json!({}), GarminError::Authentication),
+            (
+                "200 OK",
+                json!({"access_token":"unusable"}),
+                GarminError::Protocol,
+            ),
+        ] {
+            let (client, requests) = server(vec![(status, body, "")]);
+            assert!(
+                matches!(client.sign_in_with_browser_ticket("ST-synthetic-ticket").await, Err(error) if error == expected)
+            );
+            assert_eq!(requests.join().unwrap().len(), 1);
         }
     }
 }

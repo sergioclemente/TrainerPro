@@ -6,9 +6,9 @@
 Manage accounts in **Settings → Connections**. Each provider exposes only the
 capabilities TrainerPro supports:
 
-| Provider | Capability | Connection |
-|---|---|---|
-| Intervals.icu | Read scheduled cycling workouts | Personal API key |
+| Provider       | Capability                             | Connection                                           |
+| -------------- | -------------------------------------- | ---------------------------------------------------- |
+| Intervals.icu  | Read scheduled cycling workouts        | Personal API key                                     |
 | Garmin Connect | Upload completed Activities on request | Garmin sign-in, with verification code when required |
 
 Credentials live in the OS credential manager, isolated between TrainerPro and
@@ -57,7 +57,10 @@ or delete its calendar events.
 Sign in with a Garmin email and password, then enter a verification code if
 requested. Passwords and codes are used only for sign-in; session tokens are
 retained. Rejected or expired refresh credentials require signing in again.
-Browser challenges and rate limits are reported without repeated login attempts.
+Browser challenges and rate limits are reported without repeated login attempts. The shared Rust client additionally supports an explicit
+browser service-ticket exchange for Harness: applications collect the ticket privately,
+verify the account, and own persistence. It never copies browser cookies or automatically
+falls back after a 429; desktop sign-in does not expose this operation. The browser-assisted path has passed a bounded Harness live check.
 
 The connection supports Garmin's `.com` service through an unofficial Web
 integration. Garmin may change its behavior independently of TrainerPro.
@@ -96,3 +99,15 @@ owns encrypted credentials, refresh serialization, capture provenance, ZIP/FIT
 verification, and persistence. Responses are size-bounded; credentials are never
 forwarded through redirects, and failures do not trigger hidden retries. Original
 bytes are returned unchanged for independent verification.
+
+### Shared workout protocol
+
+The shared Rust client supports running-workout creation, read-back,
+calendar placement, discovery, and removal operations for Harness's administrator
+rehearsal. These are not exposed by the desktop application. The caller owns
+approval, persistent receipts, account coordination, and reconciliation; protocol
+writes are sent once. Timed steps, repeats, open targets, and custom pace ranges
+are supported. A bounded Harness live check verified running-workout creation/read-back and
+calendar placement, and provider cleanup. Device receipt remains unverified because
+the test account had no paired device. Mocked tests do not establish provider
+availability or device receipt.
