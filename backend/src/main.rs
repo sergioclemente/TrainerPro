@@ -53,6 +53,7 @@ fn main() {
                 woz_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
             device_hub::spawn_startup_reconnect(app.handle().clone());
+            commands::mini_hud::couple_windows(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -81,6 +82,9 @@ fn main() {
             commands::player::clear_ride,
             commands::player::get_player_state,
             commands::player::get_player_workout_profile,
+            commands::mini_hud::open_mini_hud,
+            commands::mini_hud::close_mini_hud,
+            commands::mini_hud::hide_mini_hud,
             commands::providers::list_provider_connections,
             commands::providers::refresh_provider_plans,
             commands::providers::disconnect_provider,
@@ -108,6 +112,7 @@ fn main() {
             whatsonzwift_source::woz_ride,
             whatsonzwift_source::woz_open_page,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running TrainerPro");
+        .build(tauri::generate_context!())
+        .expect("error while building TrainerPro")
+        .run(|app, event| commands::mini_hud::on_run_event(app, &event));
 }
