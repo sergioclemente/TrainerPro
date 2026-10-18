@@ -11,7 +11,7 @@ use fitparser::{
 };
 use serde::{Deserialize, Serialize};
 
-pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/1;fitparser/0.11.0";
+pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/2;fitparser/0.11.0";
 const MIN_HEADER_SIZE: usize = 12;
 const CRC_HEADER_SIZE: usize = 14;
 const CRC_SIZE: usize = 2;
@@ -31,6 +31,14 @@ const MSG_FIELD_DESCRIPTION: u16 = 206;
 const COMPRESSED_TIMESTAMP_MASK: u32 = 31;
 const COMPRESSED_TIMESTAMP_PERIOD: u32 = 32;
 
+const MSG_USER_PROFILE: u16 = 3;
+const MSG_ZONES_TARGET: u16 = 7;
+const MSG_WORKOUT: u16 = 26;
+const MSG_WORKOUT_STEP: u16 = 27;
+const USER_PROFILE_WEIGHT: u8 = 4;
+const ZONES_TARGET_FTP: u8 = 3;
+const WEIGHT_SCALE: f64 = 10.0;
+const LAP_WORKOUT_STEP_INDEX: u8 = 71;
 #[derive(Debug, thiserror::Error)]
 pub enum FitDecodeError {
     #[error("Invalid FIT framing, checksum, or message encoding")]
@@ -71,6 +79,8 @@ pub struct DecodedRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecodedLap {
+    #[serde(default)]
+    pub workout_step_index: Option<u16>,
     pub number: usize,
     pub start_seconds: Option<f64>,
     pub end_seconds: Option<f64>,
@@ -94,6 +104,12 @@ pub struct TimerEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecodedActivity {
+    #[serde(default)]
+    pub instructions: Option<super::instructions::FitInstructions>,
+    #[serde(default)]
+    pub execution_ftp_watts: Option<f64>,
+    #[serde(default)]
+    pub rider_weight_kg: Option<f64>,
     pub start_unix_seconds: i64,
     pub duration_seconds: f64,
     pub sport: FitSport,
@@ -103,7 +119,7 @@ pub struct DecodedActivity {
     pub timer_events: Vec<TimerEvent>,
 }
 
-fn number(message: &FitDataMessage, field: u8) -> Option<f64> {
+pub(super) fn number(message: &FitDataMessage, field: u8) -> Option<f64> {
     let value = match message.fields().get(&field)? {
         Value::Enum(v) | Value::UInt8(v) | Value::Byte(v) => f64::from(*v),
         Value::UInt16(v) => f64::from(*v),
@@ -195,6 +211,10 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     let mut remaining = bytes;
     let mut session = None;
     let mut files = 0;
+    let mut workout = None;
+    let mut steps = Vec::new();
+    let mut execution_ftp_watts = None;
+    let mut rider_weight_kg = None;
     let mut records = Vec::new();
     let mut laps = Vec::new();
     let mut events = Vec::new();
@@ -238,6 +258,23 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
                         if number(&message, FILE_ID_TYPE) != Some(f64::from(FILE_TYPE_ACTIVITY)) {
                             return Err(UnsupportedActivity);
                         }
+                    }
+                    MSG_USER_PROFILE => {
+                        rider_weight_kg =
+                            number(&message, USER_PROFILE_WEIGHT).map(|w| w / WEIGHT_SCALE);
+                    }
+                    MSG_ZONES_TARGET => {
+                        execution_ftp_watts = number(&message, ZONES_TARGET_FTP);
+                    }
+                    MSG_WORKOUT => {
+                        workout = Some(message);
+                    }
+                    MSG_WORKOUT_STEP => {
+                        const MAX_WORKOUT_STEPS: usize = 10_000;
+                        if steps.len() >= MAX_WORKOUT_STEPS {
+                            return Err(LimitExceeded);
+                        }
+                        steps.push(message);
                     }
                     MSG_SESSION => {
                         if session.replace(message).is_some() {
@@ -326,6 +363,7 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
                 .zip(summary.elapsed_seconds)
                 .map(|(s, d)| s + d);
             DecodedLap {
+                workout_step_index: super::instructions::index(message, LAP_WORKOUT_STEP_INDEX),
                 number: index + 1,
                 start_seconds,
                 end_seconds,
@@ -357,6 +395,10 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     // Stable order preserves multiple transitions at the same timestamp.
     timer_events.sort_by(|a, b| a.elapsed_seconds.total_cmp(&b.elapsed_seconds));
     Ok(DecodedActivity {
+        instructions: super::instructions::decode(workout.as_ref(), &steps),
+        execution_ftp_watts: execution_ftp_watts
+            .or_else(|| number(&session, SESSION_THRESHOLD_POWER)),
+        rider_weight_kg,
         start_unix_seconds: i64::from(start) + crate::consts::FIT_EPOCH_OFFSET_S as i64,
         duration_seconds: duration,
         sport,

@@ -173,3 +173,90 @@ fn standard_header_crc_validation_and_optional_zero_are_preserved() {
         assert_eq!(decode_activity(&bytes).is_ok(), stored_crc == 0);
     }
 }
+
+#[test]
+fn explicit_workout_instructions_and_execution_settings_are_not_inferred_from_laps() {
+    // Independent standard message definitions: workout, workout_step, zones_target.
+    let workout = [
+        0x4f, 0, 0, 26, 0, 2, 6, 2, 0x84, 8, 8, 7, 15, 1, 0, b'T', b'e', b's', b't', 0, 0, 0, 0,
+    ];
+    let mut bytes = append(CYCLING, &workout);
+    let definition = [
+        0x4f, 0, 0, 27, 0, 7, 254, 2, 0x84, 1, 1, 0, 2, 4, 0x86, 3, 1, 0, 4, 4, 0x86, 5, 4, 0x86,
+        6, 4, 0x86,
+    ];
+    let step = [
+        &[15, 0, 0, 0][..],
+        &60_000_u32.to_le_bytes(),
+        &[4][..],
+        &0_u32.to_le_bytes(),
+        &90_u32.to_le_bytes(),
+        &100_u32.to_le_bytes(),
+    ]
+    .concat();
+    bytes = append(&bytes, &[definition.as_slice(), &step].concat());
+    let zones = [0x4f, 0, 0, 7, 0, 1, 3, 2, 0x84, 15, 250, 0];
+    bytes = append(&bytes, &zones);
+    let activity = decode_activity(&bytes).unwrap();
+    assert_eq!(activity.execution_ftp_watts, Some(250.0));
+    let instructions = activity.instructions.unwrap();
+    assert_eq!(instructions.name.as_deref(), Some("Test"));
+    assert!(instructions.steps[0].supported);
+    assert_eq!(instructions.steps[0].duration_seconds, Some(60.0));
+    match &instructions.steps[0].target {
+        tp_core::fit::FitInstructionTarget::PowerRange { low, high, unit } => {
+            assert_eq!((*low, *high), (90.0, 100.0));
+            assert_eq!(unit, "%FTP");
+        }
+        _ => panic!("explicit power range missing"),
+    }
+    assert!(activity.laps[0].workout_step_index.is_none());
+    assert!(decode_activity(CYCLING).unwrap().instructions.is_none());
+}
+
+#[test]
+fn workout_steps_must_follow_the_declared_contiguous_index_sequence() {
+    // Independent wire definitions: a workout declaring two timed power steps.
+    let workout = [0x4f, 0, 0, 26, 0, 1, 6, 2, 0x84, 15, 2, 0];
+    let definition = [
+        0x4f, 0, 0, 27, 0, 7, 254, 2, 0x84, 1, 1, 0, 2, 4, 0x86, 3, 1, 0, 4, 4, 0x86, 5, 4, 0x86,
+        6, 4, 0x86,
+    ];
+    const STEP_DURATION_MS: u32 = 60_000;
+    const TARGET_PERCENT_FTP: u32 = 90;
+    for (indices, limited) in [
+        (vec![0_u16, 1], false),
+        (vec![0, 2], true),
+        (vec![1, 0], true),
+        (vec![0, 0], true),
+        (vec![1, 2], true),
+        (vec![0], true),
+        (vec![0, 1, 2], true),
+        (vec![0, u16::MAX], true),
+    ] {
+        let mut bytes = append(CYCLING, &workout);
+        bytes = append(&bytes, &definition);
+        for index in &indices {
+            let step = [
+                &[15][..],
+                &index.to_le_bytes(),
+                &[0][..],
+                &STEP_DURATION_MS.to_le_bytes(),
+                &[4][..],
+                &0_u32.to_le_bytes(),
+                &TARGET_PERCENT_FTP.to_le_bytes(),
+                &TARGET_PERCENT_FTP.to_le_bytes(),
+            ]
+            .concat();
+            bytes = append(&bytes, &step);
+        }
+        let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+        assert_eq!(instructions.declared_step_count, Some(2));
+        assert_eq!(instructions.steps.len(), indices.len());
+        assert_eq!(
+            instructions.limitations.len() > 1,
+            limited,
+            "indices {indices:?}"
+        );
+    }
+}

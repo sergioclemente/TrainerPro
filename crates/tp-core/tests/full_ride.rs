@@ -4,7 +4,7 @@
 use std::io::Cursor;
 
 use tp_core::engine::{Engine, EngineAction, EngineEvent, Phase};
-use tp_core::fit::{encode_activity, FitActivity};
+use tp_core::fit::{encode_activity, FitActivity, FitInstructionTarget};
 use tp_core::journal::{
     compute_activity_segments, replay, JournalHeader, JournalWriter, Sample, SessionEvent,
     SessionEventKind,
@@ -19,7 +19,7 @@ const ZWO: &str = r#"<workout_file>
   <workout>
     <Warmup Duration="30" PowerLow="0.4" PowerHigh="0.6"/>
     <IntervalsT Repeat="2" OnDuration="20" OffDuration="10" OnPower="1.0" OffPower="0.5"/>
-    <SteadyState Duration="30" Power="0.75">
+    <SteadyState Duration="30" Power="0.75" Cadence="85">
       <textevent timeoffset="5" message="hold steady"/>
     </SteadyState>
   </workout>
@@ -174,4 +174,31 @@ fn zwo_to_fit_end_to_end() {
     assert_eq!(decoded.records.len(), data.samples.len());
     assert_eq!(decoded.laps.len(), activity_segments.len());
     assert_eq!(decoded.records[0].cadence, Some(90.0));
+    assert_eq!(decoded.execution_ftp_watts, Some(f64::from(FTP)));
+    assert_eq!(decoded.rider_weight_kg, Some(header.weight_kg));
+    let instructions = decoded.instructions.expect("exported workout instructions");
+    assert_eq!(
+        instructions.name.as_deref(),
+        Some(header.workout_name.as_str())
+    );
+    assert_eq!(instructions.declared_step_count, Some(6));
+    assert_eq!(instructions.steps.len(), 6);
+    assert!(instructions.steps.iter().all(|step| step.supported));
+    assert_eq!(
+        instructions.limitations.len(),
+        1,
+        "only the provenance caveat"
+    );
+    for (index, (step, lap)) in instructions.steps.iter().zip(&decoded.laps).enumerate() {
+        assert_eq!(step.index, Some(index as u16));
+        assert_eq!(lap.workout_step_index, step.index);
+        assert_eq!(
+            step.duration_seconds,
+            Some(lap.end_seconds.unwrap() - lap.start_seconds.unwrap())
+        );
+    }
+    assert!(matches!(instructions.steps[0].target,
+        FitInstructionTarget::PowerRange { low: 40.0, high: 60.0, ref unit } if unit == "%FTP"));
+    assert_eq!(instructions.steps[0].intensity, Some(2), "warm-up");
+    assert_eq!(instructions.steps[5].cadence_rpm, Some((85.0, 85.0)));
 }
