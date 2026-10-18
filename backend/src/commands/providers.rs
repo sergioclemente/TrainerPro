@@ -38,10 +38,10 @@ const PROVIDERS: &[ProviderDefinition] = &[
     ProviderDefinition {
         id: tp_integrations::garmin::PROVIDER_ID,
         name: "Garmin",
-        description: "Upload completed rides from the ride summary or Activities.",
+        description: "Scheduled cycling workouts appear in Next Up. Upload completed rides from the ride summary or Activities.",
         notice: Some("Uses an unofficial Garmin connection. Uploaded rides may sync onward to services linked to your Garmin account."),
         manual_import_url: Some("https://connect.garmin.com/modern/import-data"),
-        capabilities: &[ProviderCapability::Activities],
+        capabilities: &[ProviderCapability::Planning, ProviderCapability::Activities],
     },
     ProviderDefinition {
         id: tp_integrations::intervals_icu::PROVIDER_ID,
@@ -249,6 +249,7 @@ pub async fn refresh_provider_plans(
         Some(ProviderCapability::Planning),
     )?;
     match connection.provider.as_str() {
+        tp_integrations::garmin::PROVIDER_ID => garmin::refresh(&state, &connection).await,
         tp_integrations::intervals_icu::PROVIDER_ID => {
             intervals_icu::refresh(&state, &connection).await
         }
@@ -443,12 +444,7 @@ mod tests {
                 .code,
             "provider_capability_unsupported"
         );
-        assert_eq!(
-            require_active(&db, "uploads", Some(ProviderCapability::Planning))
-                .unwrap_err()
-                .code,
-            "provider_capability_unsupported"
-        );
+        assert!(require_active(&db, "uploads", Some(ProviderCapability::Planning)).is_ok());
         provider_connections::mark_disconnected(&db, "uploads", 2).unwrap();
         connection(&db, "other-account", "garmin", "456");
         for id in ["uploads", "missing"] {

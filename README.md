@@ -13,7 +13,7 @@ produces a Garmin-compatible FIT activity.
 - **Crash-safe recording:** a 1 Hz journal is converted to FIT at ride end,
   with laps and locally computed NP, IF, and TSS.
 - **Offline-capable sources:** local ZWO/ERG/MRC files, WorkoutPlanner,
-  What's on Zwift, and cached Intervals.icu schedules.
+  What's on Zwift, and cached Intervals.icu and Garmin schedules.
 - **Hardware-free development:** simulated trainer and heart-rate devices use
   the same interfaces as physical BLE hardware.
 

@@ -10,6 +10,8 @@ mod controller;
 mod database;
 mod device_hub;
 mod device_owner;
+mod garmin_sync;
+mod garmin_workouts;
 mod heart_rate_monitor;
 mod intervals_icu;
 mod intervals_icu_sync;
@@ -90,9 +92,8 @@ fn main() {
             commands::providers::disconnect_provider,
             commands::providers::upload_activity,
             commands::providers::open_activity_import,
-            commands::garmin::connect_garmin,
-            commands::garmin::complete_garmin_mfa,
-            commands::garmin::cancel_garmin_sign_in,
+            commands::garmin::browser::connect_garmin,
+            commands::garmin::browser::cancel_garmin_sign_in,
             commands::activity_history::list_activities,
             commands::activity_history::delete_activity,
             commands::activity_history::save_fit_as,

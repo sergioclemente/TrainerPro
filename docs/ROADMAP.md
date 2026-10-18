@@ -14,7 +14,9 @@ Manual checks below remain open until supported by live evidence.
 - Verify the estimated speed/distance Settings option in packaged TrainerPro QA.
 - Validate estimated indoor speed/distance with a disposable Garmin upload,
   including speed graphs, lap totals, and pause timing.
-- Complete Windows BLE and packaged-app validation.
+- Complete Windows BLE and packaged-app validation, including Garmin browser sign-in.
+- Complete live Garmin calendar edit/removal and account-switch cache checks;
+  bounded cycling import, offline restart, and simulated execution are verified.
 - Establish macOS signing/notarization and Windows signing before broad releases.
 
 ## Voice follow-ups

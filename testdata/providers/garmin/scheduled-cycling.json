@@ -1,0 +1,52 @@
+{
+  "workoutId": 41,
+  "workoutName": "Synthetic Garmin cycling",
+  "description": "Synthetic fixture: timed cycling, repeats, explicit power units and cadence.",
+  "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+  "estimatedDurationInSecs": 999,
+  "workoutSegments": [{
+    "segmentOrder": 1,
+    "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+    "workoutSteps": [
+      {
+        "type": "ExecutableStepDTO", "stepOrder": 1,
+        "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+        "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"}, "endConditionValue": 60.0,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
+      },
+      {
+        "type": "RepeatGroupDTO", "stepOrder": 2,
+        "stepType": {"stepTypeId": 6, "stepTypeKey": "repeat"},
+        "endCondition": {"conditionTypeId": 7, "conditionTypeKey": "iterations"},
+        "numberOfIterations": 2, "endConditionValue": 2.0,
+        "smartRepeat": false, "skipLastRestStep": false,
+        "workoutSteps": [
+          {
+            "type": "ExecutableStepDTO", "stepOrder": 3,
+            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"}, "endConditionValue": 60,
+            "targetType": {"workoutTargetTypeId": 2, "workoutTargetTypeKey": "power.zone"},
+            "targetValueOne": 90, "targetValueTwo": 100,
+            "targetValueUnit": {"unitId": 253, "unitKey": "percent", "factor": 1.0},
+            "secondaryTargetType": {"workoutTargetTypeId": 3, "workoutTargetTypeKey": "cadence"},
+            "secondaryTargetValueOne": 85, "secondaryTargetValueTwo": 95,
+            "description": "Hold a smooth cadence"
+          },
+          {
+            "type": "ExecutableStepDTO", "stepOrder": 4,
+            "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"}, "endConditionValue": 30,
+            "targetType": {"workoutTargetTypeId": 2, "workoutTargetTypeKey": "power.zone"},
+            "targetValueOne": 100, "targetValueTwo": 120, "targetValueUnit": null
+          }
+        ]
+      },
+      {
+        "type": "ExecutableStepDTO", "stepOrder": 5,
+        "stepType": {"stepTypeId": 2, "stepTypeKey": "cooldown"},
+        "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"}, "endConditionValue": 45,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
+      }
+    ]
+  }]
+}
