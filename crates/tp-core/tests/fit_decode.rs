@@ -213,3 +213,50 @@ fn explicit_workout_instructions_and_execution_settings_are_not_inferred_from_la
     assert!(activity.laps[0].workout_step_index.is_none());
     assert!(decode_activity(CYCLING).unwrap().instructions.is_none());
 }
+
+#[test]
+fn workout_steps_must_follow_the_declared_contiguous_index_sequence() {
+    // Independent wire definitions: a workout declaring two timed power steps.
+    let workout = [0x4f, 0, 0, 26, 0, 1, 6, 2, 0x84, 15, 2, 0];
+    let definition = [
+        0x4f, 0, 0, 27, 0, 7, 254, 2, 0x84, 1, 1, 0, 2, 4, 0x86, 3, 1, 0, 4, 4, 0x86, 5, 4, 0x86,
+        6, 4, 0x86,
+    ];
+    const STEP_DURATION_MS: u32 = 60_000;
+    const TARGET_PERCENT_FTP: u32 = 90;
+    for (indices, limited) in [
+        (vec![0_u16, 1], false),
+        (vec![0, 2], true),
+        (vec![1, 0], true),
+        (vec![0, 0], true),
+        (vec![1, 2], true),
+        (vec![0], true),
+        (vec![0, 1, 2], true),
+        (vec![0, u16::MAX], true),
+    ] {
+        let mut bytes = append(CYCLING, &workout);
+        bytes = append(&bytes, &definition);
+        for index in &indices {
+            let step = [
+                &[15][..],
+                &index.to_le_bytes(),
+                &[0][..],
+                &STEP_DURATION_MS.to_le_bytes(),
+                &[4][..],
+                &0_u32.to_le_bytes(),
+                &TARGET_PERCENT_FTP.to_le_bytes(),
+                &TARGET_PERCENT_FTP.to_le_bytes(),
+            ]
+            .concat();
+            bytes = append(&bytes, &step);
+        }
+        let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+        assert_eq!(instructions.declared_step_count, Some(2));
+        assert_eq!(instructions.steps.len(), indices.len());
+        assert_eq!(
+            instructions.limitations.len() > 1,
+            limited,
+            "indices {indices:?}"
+        );
+    }
+}

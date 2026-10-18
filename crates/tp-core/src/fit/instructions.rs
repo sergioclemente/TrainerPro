@@ -26,6 +26,7 @@ const CUSTOM_TARGET: f64 = 0.0;
 pub struct FitInstructions {
     pub name: Option<String>,
     pub declared_step_count: Option<u16>,
+    /// Preserves wire order; limitations flag indices outside the declared sequence.
     pub steps: Vec<FitInstructionStep>,
     pub limitations: Vec<String>,
 }
@@ -126,13 +127,12 @@ pub(super) fn decode(
     });
     let declared_step_count = workout.and_then(|w| index(w, WORKOUT_STEP_COUNT));
     let mut limitations=vec!["Embedded FIT instructions are a recorded representation, not the original workout document or proof of a scheduled occurrence.".into()];
-    let mut seen = std::collections::HashSet::new();
     if declared_step_count.map(usize::from) != Some(decoded.len())
-        || decoded
-            .iter()
-            .any(|s| !s.supported || s.index.is_none_or(|i| !seen.insert(i)))
+        || decoded.iter().enumerate().any(|(position, step)| {
+            !step.supported || step.index.map(usize::from) != Some(position)
+        })
     {
-        limitations.push("Instructions contain missing, duplicate, or unsupported steps; target interpretation is limited.".into());
+        limitations.push("Instructions contain missing, duplicate, out-of-order, or unsupported steps; target interpretation is limited.".into());
     }
     Some(FitInstructions {
         name,
