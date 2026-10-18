@@ -6,7 +6,7 @@ use std::{collections::HashMap, future::Future, sync::Mutex as DbMutex};
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -280,6 +280,7 @@ pub async fn disconnect_provider(
 
 #[tauri::command]
 pub async fn upload_activity(
+    app: AppHandle,
     state: State<'_, AppState>,
     operations: State<'_, ProviderOperations>,
     transfers: State<'_, ActivityTransfers>,
@@ -300,13 +301,54 @@ pub async fn upload_activity(
     )?;
     match connection.provider.as_str() {
         tp_integrations::garmin::PROVIDER_ID => {
-            transfer_activity(&state.db, &connection_id, &activity_id, |fit| {
+            let receipt = transfer_activity(&state.db, &connection_id, &activity_id, |fit| {
                 garmin::upload(&state, &connection_id, fit)
             })
-            .await
+            .await?;
+            // The Activity exists and is recorded; naming it is best effort.
+            let described = match activity_title_and_description(&state.db, &activity_id) {
+                Some((name, description)) => {
+                    garmin::describe(
+                        &state,
+                        &connection_id,
+                        &receipt.remote_activity_id,
+                        &name,
+                        &description,
+                    )
+                    .await
+                }
+                None => Ok(()),
+            };
+            if let Err(error) = described {
+                let _ = app.emit(
+                    "toast",
+                    serde_json::json!({
+                        "level": "warn",
+                        "message": format!(
+                            "Uploaded to Garmin, but it kept the default title: {}",
+                            error.message
+                        ),
+                    }),
+                );
+            }
+            Ok(receipt)
         }
         _ => unreachable!("catalog must have an activity-destination adapter"),
     }
+}
+
+/// The workout's name and description for the destination's Activity.
+/// A snapshot that no longer parses still yields the name.
+fn activity_title_and_description(
+    db: &DbMutex<Connection>,
+    activity_id: &str,
+) -> Option<(String, String)> {
+    let row = activities::description(&db.lock().unwrap(), activity_id).ok()??;
+    let description =
+        tp_core::workout_spec::WorkoutSpec::from_json(&row.workout_definition_snapshot_json)
+            .map(|spec| spec.description)
+            .unwrap_or_default();
+    Some((row.workout_name, description))
 }
 
 // The dispatcher holds both guards across this transaction with the provider.
