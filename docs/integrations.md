@@ -109,8 +109,12 @@ or deletes Garmin calendar entries or workout definitions.
 ### Activity uploads
 
 Choose **Upload to Garmin** in Summary or Activities to send the original FIT
-file. Uploads are manual; there is no automatic queue or retry. Health-data
-reads are unsupported. Garmin may forward uploaded rides
+file. Once Garmin has created the Activity, TrainerPro names it after the
+workout and sets its description from the workout's description; if that
+second step fails the upload still counts and a warning says the default
+"Indoor Cycling" title was kept. The Activity's time is the rider's local time
+at the start of the ride. Uploads are manual; there is no automatic queue or
+retry. Health-data reads are unsupported. Garmin may forward uploaded rides
 to linked services such as Strava, depending on account settings.
 
 **Uploaded to Garmin** appears only after Garmin confirms the created Activity.

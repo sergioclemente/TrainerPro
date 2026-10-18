@@ -98,6 +98,24 @@ pub async fn upload(state: &AppState, connection_id: &str, fit: Vec<u8>) -> R<St
     Ok(remote_activity_id)
 }
 
+/// Give the uploaded Activity the workout's name and description. Garmin
+/// has already created it, so a failure here leaves a correctly recorded
+/// upload with a default title; the caller reports, never retries the file.
+pub async fn describe(
+    state: &AppState,
+    connection_id: &str,
+    remote_activity_id: &str,
+    name: &str,
+    description: &str,
+) -> R<()> {
+    let client = GarminClient::new().map_err(api_error)?;
+    let tokens = fresh_tokens(state, connection_id, &client).await?;
+    client
+        .describe_activity(&tokens, remote_activity_id, name, description)
+        .await
+        .map_err(api_error)
+}
+
 // Upload and schedule reads share refresh-token rotation and persistence under
 // the existing provider guard. Do not start an API operation before saving it.
 async fn fresh_tokens(state: &AppState, connection_id: &str, client: &GarminClient) -> R<Tokens> {

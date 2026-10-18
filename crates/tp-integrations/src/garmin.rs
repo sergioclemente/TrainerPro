@@ -212,11 +212,7 @@ impl GarminClient {
         activity_id: &str,
         resource: ActivityResource,
     ) -> Result<Vec<u8>, GarminError> {
-        if activity_id.is_empty()
-            || activity_id.len() > MAX_ACTIVITY_ID_DIGITS
-            || activity_id.starts_with('0')
-            || !activity_id.bytes().all(|b| b.is_ascii_digit())
-        {
+        if !valid_activity_id(activity_id) {
             return Err(GarminError::InvalidRequest);
         }
         let path = match resource {
@@ -449,6 +445,44 @@ impl GarminClient {
             .filter(|name| !name.trim().is_empty())
             .map(str::to_string);
         Ok(Account { id, display_name })
+    }
+
+    /// Name and describe an Activity Garmin already created. Garmin titles
+    /// an uploaded ride by its sport ("Indoor Cycling") and leaves the
+    /// description empty; this is the only route to the workout's own name.
+    pub async fn describe_activity(
+        &self,
+        tokens: &Tokens,
+        activity_id: &str,
+        name: &str,
+        description: &str,
+    ) -> Result<(), GarminError> {
+        if !valid_activity_id(activity_id) || name.trim().is_empty() {
+            return Err(GarminError::InvalidRequest);
+        }
+        let id: u64 = activity_id
+            .parse()
+            .map_err(|_| GarminError::InvalidRequest)?;
+        let response = native_headers(
+            self.http
+                .put(format!("{}{ACTIVITY_PATH}{activity_id}", self.api_base)),
+        )
+        .bearer_auth(&tokens.access_token)
+        .json(&json!({
+            "activityId": id,
+            "activityName": name,
+            "description": description,
+        }))
+        .send()
+        .await
+        .map_err(|_| GarminError::Network)?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED => Err(GarminError::Authentication),
+            StatusCode::FORBIDDEN => Err(GarminError::Challenge),
+            StatusCode::TOO_MANY_REQUESTS => Err(GarminError::RateLimited),
+            status if status.is_success() => Ok(()),
+            _ => Err(GarminError::Protocol),
+        }
     }
 
     /// Send the FIT once and return its confirmed remote activity ID. A pending
@@ -744,6 +778,14 @@ fn now_unix_s() -> u64 {
         .as_secs()
 }
 
+/// Garmin activity ids are positive decimal integers without padding.
+fn valid_activity_id(activity_id: &str) -> bool {
+    !activity_id.is_empty()
+        && activity_id.len() <= MAX_ACTIVITY_ID_DIGITS
+        && !activity_id.starts_with('0')
+        && activity_id.bytes().all(|b| b.is_ascii_digit())
+}
+
 fn positive_id(value: &Value) -> Option<String> {
     let id = value.as_u64().or_else(|| value.as_str()?.parse().ok())?;
     (id > 0).then(|| id.to_string())
@@ -863,6 +905,43 @@ mod tests {
 
     fn tokens() -> Tokens {
         serde_json::from_value(json!({"access_token":"test-access", "refresh_token":"test-refresh", "client_id":"test-client"})).unwrap()
+    }
+
+    #[tokio::test]
+    async fn describe_activity_puts_name_and_description_on_the_created_activity() {
+        let (client, requests) = server(vec![("204 No Content", json!(null), "")]);
+        client
+            .describe_activity(&tokens(), "456", "Sweet Spot 3x10", "Three by ten at 90 %.")
+            .await
+            .unwrap();
+        let requests = requests.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("PUT /activity-service/activity/456 "));
+        assert!(requests[0].contains("authorization: Bearer test-access"));
+        let body: Value =
+            serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"activityId": 456, "activityName": "Sweet Spot 3x10", "description": "Three by ten at 90 %."})
+        );
+    }
+
+    #[tokio::test]
+    async fn describe_activity_rejects_bad_ids_and_empty_names_before_network_io() {
+        let (client, requests) = server(vec![]);
+        assert_eq!(
+            client.describe_activity(&tokens(), "0", "x", "").await,
+            Err(GarminError::InvalidRequest)
+        );
+        assert_eq!(
+            client.describe_activity(&tokens(), "12a", "x", "").await,
+            Err(GarminError::InvalidRequest)
+        );
+        assert_eq!(
+            client.describe_activity(&tokens(), "456", "  ", "").await,
+            Err(GarminError::InvalidRequest)
+        );
+        assert!(requests.join().unwrap().is_empty());
     }
 
     #[tokio::test]

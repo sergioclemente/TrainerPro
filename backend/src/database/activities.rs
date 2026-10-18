@@ -130,6 +130,29 @@ pub fn artifacts(conn: &Connection, id: &str) -> rusqlite::Result<Option<Activit
     .optional()
 }
 
+/// What a destination needs to title and describe an uploaded Activity:
+/// the workout's name and its definition snapshot (whose description the
+/// caller extracts).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityDescription {
+    pub workout_name: String,
+    pub workout_definition_snapshot_json: String,
+}
+
+pub fn description(conn: &Connection, id: &str) -> rusqlite::Result<Option<ActivityDescription>> {
+    conn.query_row(
+        "SELECT workout_name, workout_definition_snapshot_json FROM activities WHERE id = ?1",
+        [id],
+        |row| {
+            Ok(ActivityDescription {
+                workout_name: row.get(0)?,
+                workout_definition_snapshot_json: row.get(1)?,
+            })
+        },
+    )
+    .optional()
+}
+
 pub fn fit_path(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
     conn.query_row(
         "SELECT fit_path FROM activities WHERE id = ?1",

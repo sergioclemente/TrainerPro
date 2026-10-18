@@ -26,6 +26,11 @@ pub struct JournalHeader {
     pub scheduled_workout_id: Option<String>,
     pub workout_definition_snapshot_json: String,
     pub started_unix_ms: u64,
+    /// The rider's clock at ride start, seconds east of UTC, so the FIT
+    /// activity can carry local time. Legacy journals omit it and the FIT
+    /// local time falls back to UTC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_utc_offset_s: Option<i32>,
     pub workout_name: String,
     pub ftp_w: u16,
     pub weight_kg: f64,
@@ -103,7 +108,15 @@ pub struct ActivitySegment {
     pub average_heart_rate_bpm: Option<u16>,
     pub max_heart_rate_bpm: Option<u16>,
     pub average_cadence_rpm: Option<u16>,
+    pub max_cadence_rpm: Option<u16>,
+    /// Normalized Power over the segment's 1 Hz samples (absent power = 0 W).
+    pub normalized_power_w: Option<u16>,
+    /// Work in joules (Σ power × 1 s).
+    pub work_j: u32,
     pub calories_kcal: u16,
+    /// Workout segment ridden here, from the segment-end event that closed
+    /// this activity segment. Absent when the ride ended inside it instead.
+    pub workout_segment_index: Option<usize>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -346,11 +359,24 @@ pub fn compute_activity_segments(data: &SessionRecording) -> Vec<ActivitySegment
             .filter_map(|smp| smp.cadence_rpm)
             .collect();
 
-        // kJ of the activity segment (1 Hz samples ⇒ each sample is 1/SAMPLE_HZ joule-seconds
-        // per watt); calories = kJ, rounded (kJ ≈ kcal cycling convention).
-        let work_kj: f64 = powers.iter().map(|&p| f64::from(p)).sum::<f64>()
-            / f64::from(crate::consts::SAMPLE_HZ)
-            / 1000.0;
+        // Joules of the activity segment (1 Hz samples ⇒ each sample is 1/SAMPLE_HZ
+        // joule-seconds per watt); calories = kJ, rounded (kJ ≈ kcal cycling convention).
+        let work_j: f64 =
+            powers.iter().map(|&p| f64::from(p)).sum::<f64>() / f64::from(crate::consts::SAMPLE_HZ);
+        let normalized_power_w = (!powers.is_empty()).then(|| {
+            let series: Vec<u16> = activity_segment_samples
+                .iter()
+                .map(|smp| smp.power_w.unwrap_or(0))
+                .collect();
+            crate::metrics::normalized_power(&series)
+        });
+        // The first segment-end event at this boundary closed the segment that
+        // was actually ridden; later ones at the same instant are skips.
+        let workout_segment_index = data
+            .events
+            .iter()
+            .find(|ev| ev.kind == SessionEventKind::WorkoutSegmentEnd && ev.t_ms == e)
+            .and_then(|ev| ev.segment_index);
 
         activity_segments.push(ActivitySegment {
             start_ms: s,
@@ -361,7 +387,11 @@ pub fn compute_activity_segments(data: &SessionRecording) -> Vec<ActivitySegment
             average_heart_rate_bpm: mean_u16(&heart_rates),
             max_heart_rate_bpm: heart_rates.iter().copied().max(),
             average_cadence_rpm: mean_u16(&cadences),
-            calories_kcal: work_kj.round() as u16,
+            max_cadence_rpm: cadences.iter().copied().max(),
+            normalized_power_w,
+            work_j: work_j.round() as u32,
+            calories_kcal: (work_j / 1000.0).round() as u16,
+            workout_segment_index,
         });
     }
     activity_segments
@@ -387,6 +417,7 @@ mod tests {
             scheduled_workout_id: None,
             workout_definition_snapshot_json: r#"{"format":"TPW","version":1}"#.into(),
             started_unix_ms: 1_700_000_000_000,
+            started_utc_offset_s: None,
             workout_name: "Sweet Spot".into(),
             ftp_w: 250,
             weight_kg: 72.0,
