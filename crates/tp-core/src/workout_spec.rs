@@ -19,6 +19,7 @@ pub const WORKOUT_SPEC_FORMAT_NAME: &str = "WorkoutSpec";
 pub const WORKOUT_SPEC_VERSION: u32 = 1;
 const LEGACY_FORMAT_NAME: &str = "TPW";
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkoutSpec {
@@ -32,12 +33,14 @@ pub struct WorkoutSpec {
     pub prescription: WorkoutPrescription,
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkoutFormat {
     #[serde(rename = "WorkoutSpec", alias = "TPW")]
     WorkoutSpec,
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "sport", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkoutPrescription {
@@ -45,6 +48,7 @@ pub enum WorkoutPrescription {
     Running { steps: Vec<RunningStep> },
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkoutCue {
@@ -86,6 +90,23 @@ struct DefinitionStats {
 struct DefinitionHeader {
     format: String,
     version: u32,
+}
+
+/// Machine-readable authoring shape generated from the shared Serde types.
+/// Semantic limits and cross-field rules still require `WorkoutSpec::validate`.
+#[cfg(feature = "workout-schema")]
+pub fn json_schema() -> serde_json::Value {
+    let mut schema = serde_json::to_value(schemars::schema_for!(WorkoutSpec))
+        .expect("WorkoutSpec schema is JSON");
+    // Writers use the canonical format/version even though historic documents
+    // remain readable by the shared parser.
+    schema["properties"]["format"] = serde_json::json!({
+        "type": "string", "const": WORKOUT_SPEC_FORMAT_NAME
+    });
+    schema["properties"]["version"] = serde_json::json!({
+        "type": "integer", "const": WORKOUT_SPEC_VERSION
+    });
+    schema
 }
 
 impl WorkoutSpec {
@@ -171,6 +192,12 @@ impl WorkoutSpec {
             );
         }
         Ok(stats)
+    }
+
+    /// Number of leaf steps after expanding fixed repeats, without compiling
+    /// targets to player-specific values or losing prescribed target ranges.
+    pub fn expanded_step_count(&self) -> Result<u64, WorkoutSpecError> {
+        Ok(self.validated_stats()?.expanded_steps)
     }
 
     pub fn duration_seconds(&self) -> Result<u32, WorkoutSpecError> {

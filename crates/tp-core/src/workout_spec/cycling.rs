@@ -8,6 +8,7 @@ use crate::consts::{
     WORKOUT_REPEAT_COUNT_MAX, WORKOUT_REPEAT_DEPTH_MAX,
 };
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CyclingStep {
@@ -41,6 +42,7 @@ pub enum CyclingStep {
     },
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CyclingPowerTarget {
@@ -50,6 +52,7 @@ pub enum CyclingPowerTarget {
     WattsRange { min_watts: u16, max_watts: u16 },
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CyclingCadenceTarget {

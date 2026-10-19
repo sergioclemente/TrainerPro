@@ -9,6 +9,7 @@ use crate::consts::{WORKOUT_REPEAT_COUNT_MAX, WORKOUT_REPEAT_DEPTH_MAX};
 const HEART_RATE_BPM_MAX: u16 = 300;
 const RUNNING_CADENCE_STEPS_PER_MINUTE_MAX: u16 = 400;
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunningStep {
@@ -29,6 +30,7 @@ pub enum RunningStep {
     },
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunningEnd {
@@ -36,6 +38,7 @@ pub enum RunningEnd {
     Distance { distance_meters: u32 },
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunningTarget {
@@ -57,6 +60,7 @@ pub enum RunningTarget {
     },
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunningCadenceTarget {
@@ -69,6 +73,7 @@ pub enum RunningCadenceTarget {
     },
 }
 
+#[cfg_attr(feature = "workout-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunningRole {

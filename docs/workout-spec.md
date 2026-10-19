@@ -25,6 +25,16 @@ TrainerPro retains existing database columns, IDs, and journal snapshot fields.
 Reading historical data does not rewrite it. Format aliases affect parsing only;
 workout identity belongs to the application and is not inferred from content.
 
+## Machine-readable contract
+
+The optional `tp-core` feature `workout-schema` exposes
+`workout_spec::json_schema()`, generated from the same Serde types as the parser.
+It describes canonical authoring JSON for tooling and browser shape validation.
+Consumers must pin the shared crate revision alongside their generated artifacts.
+Semantic limits, target relationships, expanded duration, and provider compatibility
+still require Rust validation; passing JSON Schema does not establish executability
+or provider support.
+
 ## Document envelope
 
 A WorkoutSpec/1 document is a JSON object with these fields:
