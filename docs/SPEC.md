@@ -135,6 +135,11 @@ embedded with the step title, duration, power range (% FTP or watts), cadence
 target, and intensity (warm-up, active, rest, cool-down, other). The rider's
 weight and FTP are included so consumers can scale zones and W/kg.
 
+FIT records have whole-second timestamps. If journal sampling jitter puts multiple
+observations in one FIT second, export keeps the latest actual observation,
+including its missing fields and matching motion point. It does not shift times
+or average values. The complete journal and summaries computed from it are retained.
+
 Summary offers Save FIT, connected Activity-destination upload, and Done, with
 no browser-import or file-reveal action. Activities shows date, workout, duration,
 power, training metrics, and available HR; it supports FIT reveal, upload, and
