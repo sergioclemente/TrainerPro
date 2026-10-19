@@ -388,3 +388,29 @@ fn both_format_names_enforce_version_and_prescription_validation() {
         ));
     }
 }
+
+#[cfg(feature = "workout-schema")]
+#[test]
+fn authoring_schema_exposes_canonical_envelope_and_recursive_sport_types() {
+    let schema = tp_core::workout_spec::json_schema();
+    assert_eq!(schema["properties"]["format"]["const"], "WorkoutSpec");
+    assert_eq!(
+        schema["properties"]["version"]["const"],
+        WORKOUT_SPEC_VERSION
+    );
+    assert_eq!(schema["additionalProperties"], false);
+    for name in [
+        "CyclingStep",
+        "CyclingPowerTarget",
+        "RunningStep",
+        "RunningTarget",
+    ] {
+        assert!(schema["$defs"][name].is_object(), "missing {name}");
+    }
+    let workout = definition(vec![CyclingStep::Repeat {
+        count: 3,
+        steps: vec![steady(60, 90.0), steady(30, 50.0)],
+    }]);
+    assert_eq!(workout.duration_seconds().unwrap(), 270);
+    assert_eq!(workout.expanded_step_count().unwrap(), 6);
+}
