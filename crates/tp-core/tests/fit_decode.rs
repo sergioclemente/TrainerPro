@@ -37,7 +37,10 @@ fn running_cadence_is_both_feet_steps_per_minute() {
 fn corrupt_truncated_chained_and_oversized_files_are_rejected() {
     let mut corrupt = CYCLING.to_vec();
     corrupt[20] ^= 1;
-    assert!(decode_activity(&corrupt).is_err());
+    assert_eq!(
+        decode_activity(&corrupt).unwrap_err().code(),
+        "fit_invalid_encoding"
+    );
     for length in [0, 1, 10, 12, CYCLING.len() - 2, CYCLING.len() - 1] {
         assert!(decode_activity(&CYCLING[..length]).is_err());
     }

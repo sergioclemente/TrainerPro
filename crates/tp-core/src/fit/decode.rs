@@ -197,6 +197,10 @@ fn summary(message: &FitDataMessage, lap: bool) -> FitSummary {
 /// Decode exactly one CRC-validated FIT activity. No partial result on failure.
 /// Unknown messages are skipped; packed components, developer measurements, GPS,
 /// device identifiers and separate HR streams are not part of this activity view.
+/// Record timestamps must increase strictly and remain within session elapsed
+/// duration plus one second of precision tolerance. Equal timestamps are not
+/// merged or assigned invented subsecond offsets; terminal values never extend
+/// the declared duration. Failures expose fixed codes through [`FitDecodeError::code`].
 pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> {
     use FitDecodeError::*;
     if bytes.len() > MAX_BYTES {
@@ -206,6 +210,11 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
         || usize::from(bytes[0]) < MIN_HEADER_SIZE
         || &bytes[8..12] != b".FIT"
     {
+        return Err(InvalidEncoding);
+    }
+    // Establish integrity before interpreting domain fields: a damaged sport or
+    // timestamp byte must not be reported as a supported-format limitation.
+    if super::checksum(bytes) != 0 {
         return Err(InvalidEncoding);
     }
     let data_size = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
@@ -224,9 +233,6 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     // https://github.com/garmin/fit-cpp-sdk/blob/main/src/fit_decode.cpp
     let mut normalized;
     let bytes = if header_size != MIN_HEADER_SIZE && header_size != CRC_HEADER_SIZE {
-        if super::checksum(bytes) != 0 {
-            return Err(InvalidEncoding);
-        }
         normalized = Vec::with_capacity(MIN_HEADER_SIZE + data_size + CRC_SIZE);
         normalized.extend_from_slice(&bytes[..MIN_HEADER_SIZE]);
         normalized[0] = MIN_HEADER_SIZE as u8;
