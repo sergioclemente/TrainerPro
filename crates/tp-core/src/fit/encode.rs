@@ -249,11 +249,24 @@ pub fn encode_activity(activity: &FitActivity) -> Result<Vec<u8>, FitError> {
         Pause(u64),
         Resume(u64),
     }
-    let mut items: Vec<(u64, u8, Item)> = activity
-        .samples
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.t_ms, 1u8, Item::Sample(i)))
+    // FIT record timestamps have whole-second resolution. Scheduling jitter can
+    // put two nominally 1 Hz journal samples in the same FIT second. Export the
+    // latest actual observation in each second, retaining missing values as-is;
+    // never shift timestamps or synthesize averages. The journal stays unchanged.
+    let mut sample_indices: Vec<_> = (0..activity.samples.len()).collect();
+    sample_indices.sort_by_key(|&i| activity.samples[i].t_ms);
+    let mut record_indices: Vec<(u32, usize)> = Vec::with_capacity(sample_indices.len());
+    for i in sample_indices {
+        let timestamp = fit_ts(start_ms + activity.samples[i].t_ms)?;
+        if let Some(previous) = record_indices.last_mut().filter(|p| p.0 == timestamp) {
+            previous.1 = i;
+        } else {
+            record_indices.push((timestamp, i));
+        }
+    }
+    let mut items: Vec<(u64, u8, Item)> = record_indices
+        .into_iter()
+        .map(|(_, i)| (activity.samples[i].t_ms, 1u8, Item::Sample(i)))
         .collect();
     for e in activity.events {
         match e.kind {

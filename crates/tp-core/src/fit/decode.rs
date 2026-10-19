@@ -11,15 +11,16 @@ use fitparser::{
 };
 use serde::{Deserialize, Serialize};
 
-pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/2;fitparser/0.11.0";
+pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/3;fitparser/0.11.0";
 const MIN_HEADER_SIZE: usize = 12;
 const CRC_HEADER_SIZE: usize = 14;
 const CRC_SIZE: usize = 2;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RECORDS: usize = 200_000;
 const MAX_MESSAGES: usize = 500_000;
-// FIT timestamps are whole seconds; session durations have millisecond precision.
-const TIMESTAMP_TOLERANCE_SECONDS: f64 = 1.0;
+// Bounded producer compatibility, not a correction of the recorded duration.
+// Retain late timestamps verbatim; consumers must clip calculations to the session.
+const MAX_TERMINAL_TIMESTAMP_EXCESS_SECONDS: f64 = 2.0;
 const RUNNING_STEPS_PER_CYCLE: f64 = 2.0;
 const TIMESTAMP: u8 = 253;
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
@@ -149,6 +150,19 @@ pub struct DecodedActivity {
     pub timer_events: Vec<TimerEvent>,
 }
 
+impl DecodedActivity {
+    /// Maximum recorded terminal excess, without extending or shifting the session.
+    pub fn terminal_timestamp_excess_seconds(&self) -> f64 {
+        self.records
+            .last()
+            .map(|r| r.elapsed_seconds)
+            .into_iter()
+            .chain(self.timer_events.last().map(|e| e.elapsed_seconds))
+            .fold(self.duration_seconds, f64::max)
+            - self.duration_seconds
+    }
+}
+
 pub(super) fn number(message: &FitDataMessage, field: u8) -> Option<f64> {
     let value = match message.fields().get(&field)? {
         Value::Enum(v) | Value::UInt8(v) | Value::Byte(v) => f64::from(*v),
@@ -198,7 +212,7 @@ fn summary(message: &FitDataMessage, lap: bool) -> FitSummary {
 /// Unknown messages are skipped; packed components, developer measurements, GPS,
 /// device identifiers and separate HR streams are not part of this activity view.
 /// Record timestamps must increase strictly and remain within session elapsed
-/// duration plus one second of precision tolerance. Equal timestamps are not
+/// duration plus at most two seconds of terminal excess. Equal timestamps are not
 /// merged or assigned invented subsecond offsets; terminal values never extend
 /// the declared duration. Failures expose fixed codes through [`FitDecodeError::code`].
 pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> {
@@ -365,7 +379,7 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
         .iter()
         .map(|message| {
             let offset = elapsed(timestamp(message, TIMESTAMP).ok_or(MissingTimestamp)?);
-            if offset < 0.0 || offset > duration + TIMESTAMP_TOLERANCE_SECONDS {
+            if offset < 0.0 || offset > duration + MAX_TERMINAL_TIMESTAMP_EXCESS_SECONDS {
                 return Err(RecordOutsideSession);
             }
             if offset == previous {
@@ -419,7 +433,7 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
         .iter()
         .map(|message| {
             let offset = elapsed(timestamp(message, TIMESTAMP).ok_or(MissingTimestamp)?);
-            if offset < 0.0 || offset > duration + TIMESTAMP_TOLERANCE_SECONDS {
+            if offset < 0.0 || offset > duration + MAX_TERMINAL_TIMESTAMP_EXCESS_SECONDS {
                 return Err(TimerOutsideSession);
             }
             let state = match number(message, EVENT_EVENT_TYPE) {

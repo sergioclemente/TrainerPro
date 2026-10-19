@@ -73,7 +73,7 @@ fn duplicate_or_out_of_session_records_are_rejected_even_with_valid_crc() {
     for (offset, code) in [
         (0, "fit_record_timestamp_backwards"),
         (10, "fit_record_timestamp_repeated"),
-        (12, "fit_record_outside_session"),
+        (13, "fit_record_outside_session"),
     ] {
         let message = [
             definition.as_slice(),
@@ -129,17 +129,17 @@ fn timing_fixture(duration_ms: u32, records: &[(u32, u16)], stop_offset: u32) ->
 }
 
 #[test]
-fn terminal_record_and_stop_excesses_have_precise_reasons_without_extending_duration() {
+fn terminal_record_and_stop_excesses_up_to_two_seconds_preserve_declared_duration() {
     for (duration_ms, stop) in [(1_270_326, 1272), (2_098_697, 2100), (3_076_194, 3078)] {
         let bytes = timing_fixture(duration_ms, &[(0, 60), (stop, 100)], stop);
+        let activity = decode_activity(&bytes).unwrap();
+        let duration = f64::from(duration_ms) / 1000.0;
+        assert_eq!(activity.duration_seconds, duration);
+        assert_eq!(activity.records[1].elapsed_seconds, f64::from(stop));
+        assert_eq!(activity.timer_events[0].elapsed_seconds, f64::from(stop));
         assert_eq!(
-            decode_activity(&bytes).unwrap_err().code(),
-            "fit_record_outside_session"
-        );
-        let bytes = timing_fixture(duration_ms, &[(0, 60), (1, 100)], stop);
-        assert_eq!(
-            decode_activity(&bytes).unwrap_err().code(),
-            "fit_timer_outside_session"
+            activity.terminal_timestamp_excess_seconds(),
+            f64::from(stop) - duration
         );
     }
     let bytes = timing_fixture(10_326, &[(0, 60), (11, 100)], 11);
@@ -147,6 +147,28 @@ fn terminal_record_and_stop_excesses_have_precise_reasons_without_extending_dura
     assert_eq!(activity.duration_seconds, 10.326);
     assert_eq!(activity.records[1].elapsed_seconds, 11.0);
     assert_eq!(activity.timer_events[0].elapsed_seconds, 11.0);
+}
+
+#[test]
+fn terminal_tolerance_is_inclusive_and_larger_record_or_timer_excesses_still_fail() {
+    let accepted = timing_fixture(10_000, &[(0, 60), (12, 100)], 12);
+    assert_eq!(
+        decode_activity(&accepted)
+            .unwrap()
+            .terminal_timestamp_excess_seconds(),
+        2.0
+    );
+    // Just one millisecond beyond the allowance must fail, independently for records/events.
+    let record = timing_fixture(9_999, &[(0, 60), (12, 100)], 9);
+    assert_eq!(
+        decode_activity(&record).unwrap_err().code(),
+        "fit_record_outside_session"
+    );
+    let timer = timing_fixture(9_999, &[(0, 60), (1, 100)], 12);
+    assert_eq!(
+        decode_activity(&timer).unwrap_err().code(),
+        "fit_timer_outside_session"
+    );
 }
 
 #[test]
