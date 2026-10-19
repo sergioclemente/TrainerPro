@@ -47,8 +47,38 @@ pub enum FitDecodeError {
     LimitExceeded,
     #[error("Expected one cycling or running FIT activity session")]
     UnsupportedActivity,
-    #[error("FIT activity has missing or inconsistent timing")]
-    InvalidTiming,
+    #[error("FIT message is missing a required timestamp")]
+    MissingTimestamp,
+    #[error("FIT session has missing or invalid elapsed duration")]
+    InvalidDuration,
+    #[error("FIT compressed timestamp has no valid reference or overflows")]
+    InvalidCompressedTimestamp,
+    #[error("FIT record timestamp is outside the supported session bounds")]
+    RecordOutsideSession,
+    #[error("Multiple FIT records share a timestamp; subsecond ordering is unsupported")]
+    RepeatedRecordTimestamp,
+    #[error("FIT record timestamps move backwards")]
+    BackwardsRecordTimestamp,
+    #[error("FIT timer event timestamp is outside the supported session bounds")]
+    TimerOutsideSession,
+}
+
+impl FitDecodeError {
+    /// Fixed diagnostics only: never includes file contents, paths, or identifiers.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidEncoding => "fit_invalid_encoding",
+            Self::LimitExceeded => "fit_limit_exceeded",
+            Self::UnsupportedActivity => "fit_unsupported_activity",
+            Self::MissingTimestamp => "fit_missing_timestamp",
+            Self::InvalidDuration => "fit_invalid_duration",
+            Self::InvalidCompressedTimestamp => "fit_invalid_compressed_timestamp",
+            Self::RecordOutsideSession => "fit_record_outside_session",
+            Self::RepeatedRecordTimestamp => "fit_record_timestamp_repeated",
+            Self::BackwardsRecordTimestamp => "fit_record_timestamp_backwards",
+            Self::TimerOutsideSession => "fit_timer_outside_session",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +197,10 @@ fn summary(message: &FitDataMessage, lap: bool) -> FitSummary {
 /// Decode exactly one CRC-validated FIT activity. No partial result on failure.
 /// Unknown messages are skipped; packed components, developer measurements, GPS,
 /// device identifiers and separate HR streams are not part of this activity view.
+/// Record timestamps must increase strictly and remain within session elapsed
+/// duration plus one second of precision tolerance. Equal timestamps are not
+/// merged or assigned invented subsecond offsets; terminal values never extend
+/// the declared duration. Failures expose fixed codes through [`FitDecodeError::code`].
 pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> {
     use FitDecodeError::*;
     if bytes.len() > MAX_BYTES {
@@ -176,6 +210,11 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
         || usize::from(bytes[0]) < MIN_HEADER_SIZE
         || &bytes[8..12] != b".FIT"
     {
+        return Err(InvalidEncoding);
+    }
+    // Establish integrity before interpreting domain fields: a damaged sport or
+    // timestamp byte must not be reported as a supported-format limitation.
+    if super::checksum(bytes) != 0 {
         return Err(InvalidEncoding);
     }
     let data_size = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
@@ -194,9 +233,6 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     // https://github.com/garmin/fit-cpp-sdk/blob/main/src/fit_decode.cpp
     let mut normalized;
     let bytes = if header_size != MIN_HEADER_SIZE && header_size != CRC_HEADER_SIZE {
-        if super::checksum(bytes) != 0 {
-            return Err(InvalidEncoding);
-        }
         normalized = Vec::with_capacity(MIN_HEADER_SIZE + data_size + CRC_SIZE);
         normalized.extend_from_slice(&bytes[..MIN_HEADER_SIZE]);
         normalized[0] = MIN_HEADER_SIZE as u8;
@@ -240,12 +276,12 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
                     base_timestamp = Some(time);
                 }
                 if let Some(offset) = message.time_offset() {
-                    let base = base_timestamp.ok_or(InvalidTiming)?;
+                    let base = base_timestamp.ok_or(InvalidCompressedTimestamp)?;
                     let offset = u32::from(offset);
                     let time = (base & !COMPRESSED_TIMESTAMP_MASK) + offset;
                     let time = if offset < base & COMPRESSED_TIMESTAMP_MASK {
                         time.checked_add(COMPRESSED_TIMESTAMP_PERIOD)
-                            .ok_or(InvalidTiming)?
+                            .ok_or(InvalidCompressedTimestamp)?
                     } else {
                         time
                     };
@@ -317,21 +353,26 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
         Some(SPORT_RUNNING) => FitSport::Running,
         _ => return Err(UnsupportedActivity),
     };
-    let start = timestamp(&session, SESSION_START_TIME).ok_or(InvalidTiming)?;
+    let start = timestamp(&session, SESSION_START_TIME).ok_or(MissingTimestamp)?;
     let summary = summary(&session, false);
     let duration = summary
         .elapsed_seconds
         .filter(|v| *v > 0.0)
-        .ok_or(InvalidTiming)?;
+        .ok_or(InvalidDuration)?;
     let elapsed = |time: u32| f64::from(time) - f64::from(start);
     let mut previous = -1.0;
     let records = records
         .iter()
         .map(|message| {
-            let offset = elapsed(timestamp(message, TIMESTAMP).ok_or(InvalidTiming)?);
-            if offset < 0.0 || offset > duration + TIMESTAMP_TOLERANCE_SECONDS || offset <= previous
-            {
-                return Err(InvalidTiming);
+            let offset = elapsed(timestamp(message, TIMESTAMP).ok_or(MissingTimestamp)?);
+            if offset < 0.0 || offset > duration + TIMESTAMP_TOLERANCE_SECONDS {
+                return Err(RecordOutsideSession);
+            }
+            if offset == previous {
+                return Err(RepeatedRecordTimestamp);
+            }
+            if offset < previous {
+                return Err(BackwardsRecordTimestamp);
             }
             previous = offset;
             let cadence = number(message, RECORD_CADENCE).map(|v| {
@@ -377,9 +418,9 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     let mut timer_events = events
         .iter()
         .map(|message| {
-            let offset = elapsed(timestamp(message, TIMESTAMP).ok_or(InvalidTiming)?);
+            let offset = elapsed(timestamp(message, TIMESTAMP).ok_or(MissingTimestamp)?);
             if offset < 0.0 || offset > duration + TIMESTAMP_TOLERANCE_SECONDS {
-                return Err(InvalidTiming);
+                return Err(TimerOutsideSession);
             }
             let state = match number(message, EVENT_EVENT_TYPE) {
                 Some(0.0) => TimerState::Active,

@@ -37,7 +37,10 @@ fn running_cadence_is_both_feet_steps_per_minute() {
 fn corrupt_truncated_chained_and_oversized_files_are_rejected() {
     let mut corrupt = CYCLING.to_vec();
     corrupt[20] ^= 1;
-    assert!(decode_activity(&corrupt).is_err());
+    assert_eq!(
+        decode_activity(&corrupt).unwrap_err().code(),
+        "fit_invalid_encoding"
+    );
     for length in [0, 1, 10, 12, CYCLING.len() - 2, CYCLING.len() - 1] {
         assert!(decode_activity(&CYCLING[..length]).is_err());
     }
@@ -67,17 +70,23 @@ fn duplicate_or_out_of_session_records_are_rejected_even_with_valid_crc() {
     // Local message 15: record with timestamp only, uint32 little endian.
     let definition = [0x4f, 0, 0, 20, 0, 1, 253, 4, 0x86];
     let fit_start: u32 = 1767225600 - 631065600;
-    for offset in [0, 10, 12] {
+    for (offset, code) in [
+        (0, "fit_record_timestamp_backwards"),
+        (10, "fit_record_timestamp_repeated"),
+        (12, "fit_record_outside_session"),
+    ] {
         let message = [
             definition.as_slice(),
             &[15],
             &(fit_start + offset).to_le_bytes(),
         ]
         .concat();
-        assert!(matches!(
-            decode_activity(&append(CYCLING, &message)),
-            Err(FitDecodeError::InvalidTiming)
-        ));
+        assert_eq!(
+            decode_activity(&append(CYCLING, &message))
+                .unwrap_err()
+                .code(),
+            code
+        );
     }
 }
 
@@ -89,6 +98,81 @@ fn timestamp_precision_tolerance_preserves_fractional_session_end() {
     let activity = decode_activity(&append(CYCLING, &message)).unwrap();
     assert_eq!(activity.duration_seconds, 10.0);
     assert_eq!(activity.records.last().unwrap().elapsed_seconds, 11.0);
+}
+
+/// Independent wire fixture with one session, timestamped power records and timer events.
+fn timing_fixture(duration_ms: u32, records: &[(u32, u16)], stop_offset: u32) -> Vec<u8> {
+    const FIT_START: u32 = 1_136_160_000;
+    let mut data = vec![0x40, 0, 0, 0, 0, 1, 0, 1, 0, 0, 4]; // file_id: activity
+                                                             // session: start_time, total_elapsed_time, sport
+    data.extend([0x41, 0, 0, 18, 0, 3, 2, 4, 0x86, 7, 4, 0x86, 5, 1, 0, 1]);
+    data.extend(FIT_START.to_le_bytes());
+    data.extend(duration_ms.to_le_bytes());
+    data.push(2); // cycling
+                  // record: timestamp, power
+    data.extend([0x42, 0, 0, 20, 0, 2, 253, 4, 0x86, 7, 2, 0x84]);
+    for (offset, power) in records {
+        data.push(2);
+        data.extend(FIT_START.saturating_add(*offset).to_le_bytes());
+        data.extend(power.to_le_bytes());
+    }
+    // timer stop_all event: timestamp, event, event_type
+    data.extend([0x43, 0, 0, 21, 0, 3, 253, 4, 0x86, 0, 1, 0, 1, 1, 0, 3]);
+    data.extend((FIT_START + stop_offset).to_le_bytes());
+    data.extend([0, 4]);
+    let mut bytes = vec![12, 0x20, 0, 0];
+    bytes.extend((data.len() as u32).to_le_bytes());
+    bytes.extend(b".FIT");
+    bytes.extend(data);
+    bytes.extend(checksum(&bytes).to_le_bytes());
+    bytes
+}
+
+#[test]
+fn terminal_record_and_stop_excesses_have_precise_reasons_without_extending_duration() {
+    for (duration_ms, stop) in [(1_270_326, 1272), (2_098_697, 2100), (3_076_194, 3078)] {
+        let bytes = timing_fixture(duration_ms, &[(0, 60), (stop, 100)], stop);
+        assert_eq!(
+            decode_activity(&bytes).unwrap_err().code(),
+            "fit_record_outside_session"
+        );
+        let bytes = timing_fixture(duration_ms, &[(0, 60), (1, 100)], stop);
+        assert_eq!(
+            decode_activity(&bytes).unwrap_err().code(),
+            "fit_timer_outside_session"
+        );
+    }
+    let bytes = timing_fixture(10_326, &[(0, 60), (11, 100)], 11);
+    let activity = decode_activity(&bytes).unwrap();
+    assert_eq!(activity.duration_seconds, 10.326);
+    assert_eq!(activity.records[1].elapsed_seconds, 11.0);
+    assert_eq!(activity.timer_events[0].elapsed_seconds, 11.0);
+}
+
+#[test]
+fn same_second_conflicting_or_identical_records_are_not_silently_selected() {
+    for power in [60, 100] {
+        let bytes = timing_fixture(10_000, &[(0, 60), (0, power), (1, 100)], 10);
+        assert_eq!(
+            decode_activity(&bytes).unwrap_err().code(),
+            "fit_record_timestamp_repeated"
+        );
+    }
+    let bytes = timing_fixture(10_000, &[(1, 60), (0, 100)], 10);
+    assert_eq!(
+        decode_activity(&bytes).unwrap_err().code(),
+        "fit_record_timestamp_backwards"
+    );
+    let bytes = timing_fixture(10_000, &[(u32::MAX, 60)], 10);
+    assert_eq!(
+        decode_activity(&bytes).unwrap_err().code(),
+        "fit_missing_timestamp"
+    );
+    let bytes = timing_fixture(0, &[(0, 60)], 0);
+    assert_eq!(
+        decode_activity(&bytes).unwrap_err().code(),
+        "fit_invalid_duration"
+    );
 }
 
 #[test]
