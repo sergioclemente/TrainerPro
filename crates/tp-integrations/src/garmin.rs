@@ -344,6 +344,37 @@ impl GarminClient {
         url.into()
     }
 
+    /// Embedded sign-in that returns an unconsumed ticket through postMessage.
+    /// The caller must validate the message origin, source window and service,
+    /// then redeem the ticket and verify account identity on its server.
+    pub fn embedded_sign_in_url(parent_origin: &str) -> Result<String, GarminError> {
+        let origin = Url::parse(parent_origin).map_err(|_| GarminError::InvalidRequest)?;
+        let loopback = matches!(origin.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        if !(origin.scheme() == "https" || origin.scheme() == "http" && loopback)
+            || origin.host_str().is_none()
+            || !origin.username().is_empty()
+            || origin.password().is_some()
+            || origin.path() != "/"
+            || origin.query().is_some()
+            || origin.fragment().is_some()
+        {
+            return Err(GarminError::InvalidRequest);
+        }
+        let mut url =
+            Url::parse("https://sso.garmin.com/sso/signin").expect("static Garmin SSO URL");
+        url.query_pairs_mut().extend_pairs([
+            ("id", "gauth-widget"),
+            ("embedWidget", "false"),
+            ("gauthHost", "https://sso.garmin.com/sso"),
+            ("service", BROWSER_SERVICE_URL),
+            ("source", origin.origin().ascii_serialization().as_str()),
+            ("consumeServiceTicket", "false"),
+            ("clientId", "TrainerProHarness"),
+            ("reauth", "true"),
+        ]);
+        Ok(url.into())
+    }
+
     /// Whether a browser navigation is the exact, valid Garmin ticket callback.
     /// The URL contains a credential and must never be logged or persisted.
     pub fn is_browser_sign_in_callback(input: &str) -> bool {
