@@ -4,7 +4,10 @@
 
 pub mod workouts;
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    net::IpAddr,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
@@ -349,7 +352,13 @@ impl GarminClient {
     /// then redeem the ticket and verify account identity on its server.
     pub fn embedded_sign_in_url(parent_origin: &str) -> Result<String, GarminError> {
         let origin = Url::parse(parent_origin).map_err(|_| GarminError::InvalidRequest)?;
-        let loopback = matches!(origin.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        let loopback = origin.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
         if !(origin.scheme() == "https" || origin.scheme() == "http" && loopback)
             || origin.host_str().is_none()
             || !origin.username().is_empty()
