@@ -4,7 +4,10 @@
 
 pub mod workouts;
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    net::IpAddr,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
@@ -342,6 +345,43 @@ impl GarminClient {
             ("redirectAfterAccountCreationUrl", BROWSER_SERVICE_URL),
         ]);
         url.into()
+    }
+
+    /// Embedded sign-in that returns an unconsumed ticket through postMessage.
+    /// The caller must validate the message origin, source window and service,
+    /// then redeem the ticket and verify account identity on its server.
+    pub fn embedded_sign_in_url(parent_origin: &str) -> Result<String, GarminError> {
+        let origin = Url::parse(parent_origin).map_err(|_| GarminError::InvalidRequest)?;
+        let loopback = origin.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if !(origin.scheme() == "https" || origin.scheme() == "http" && loopback)
+            || origin.host_str().is_none()
+            || !origin.username().is_empty()
+            || origin.password().is_some()
+            || origin.path() != "/"
+            || origin.query().is_some()
+            || origin.fragment().is_some()
+        {
+            return Err(GarminError::InvalidRequest);
+        }
+        let mut url =
+            Url::parse("https://sso.garmin.com/sso/signin").expect("static Garmin SSO URL");
+        url.query_pairs_mut().extend_pairs([
+            ("id", "gauth-widget"),
+            ("embedWidget", "false"),
+            ("gauthHost", "https://sso.garmin.com/sso"),
+            ("service", BROWSER_SERVICE_URL),
+            ("source", origin.origin().ascii_serialization().as_str()),
+            ("consumeServiceTicket", "false"),
+            ("clientId", "TrainerProHarness"),
+            ("reauth", "true"),
+        ]);
+        Ok(url.into())
     }
 
     /// Whether a browser navigation is the exact, valid Garmin ticket callback.
