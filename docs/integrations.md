@@ -141,7 +141,9 @@ credentials through redirects, and preserve original bytes. Callers own encrypte
 credentials, refresh serialization, provenance, ZIP/FIT verification, and persistence.
 
 The shared client also provides explicit cycling FTP and running lactate-threshold
-response reads for Harness. These do not add desktop health-data reads; Harness owns
+and latest running/cycling VO₂ max response reads for Harness. VO₂ max reads
+accept an explicit as-of calendar date and preserve the raw response. These do
+not add desktop health-data reads; Harness owns
 observation validation, dates, encrypted connection storage, and retained provenance.
 
 ### Shared workout protocol
