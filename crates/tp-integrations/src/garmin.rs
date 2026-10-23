@@ -159,14 +159,9 @@ impl GarminClient {
         start_date: &str,
         end_date: &str,
     ) -> Result<Value, GarminError> {
-        const CALENDAR_DATE_FORMAT: &str = "%Y-%m-%d";
-        const CALENDAR_DATE_LENGTH: usize = 10;
-        let valid = |date: &str| {
-            date.len() == CALENDAR_DATE_LENGTH
-                && chrono::NaiveDate::parse_from_str(date, CALENDAR_DATE_FORMAT)
-                    .is_ok_and(|parsed| parsed.format(CALENDAR_DATE_FORMAT).to_string() == date)
-        };
-        if !valid(start_date) || !valid(end_date) || start_date > end_date {
+        validate_calendar_date(start_date)?;
+        validate_calendar_date(end_date)?;
+        if start_date > end_date {
             return Err(GarminError::InvalidRequest);
         }
         self.activity_page(tokens, start, limit, Some((start_date, end_date)))
@@ -459,6 +454,23 @@ impl GarminClient {
             .send()
             .await
             .map_err(|_| GarminError::Network)?;
+        let bytes = bounded_response(response, MAX_JSON_BYTES).await?;
+        let _: Value = serde_json::from_slice(&bytes).map_err(|_| GarminError::Protocol)?;
+        Ok(bytes)
+    }
+
+    /// Read the latest provider VO2 max snapshot as of a calendar date.
+    /// Applications own component interpretation, provenance and persistence.
+    pub async fn read_vo2_max(&self, tokens: &Tokens, as_of: &str) -> Result<Vec<u8>, GarminError> {
+        validate_calendar_date(as_of)?;
+        let response = native_headers(self.http.get(format!(
+            "{}/metrics-service/metrics/maxmet/latest/{as_of}",
+            self.api_base
+        )))
+        .bearer_auth(&tokens.access_token)
+        .send()
+        .await
+        .map_err(|_| GarminError::Network)?;
         let bytes = bounded_response(response, MAX_JSON_BYTES).await?;
         let _: Value = serde_json::from_slice(&bytes).map_err(|_| GarminError::Protocol)?;
         Ok(bytes)
@@ -870,6 +882,18 @@ fn upload_id(body: &Value) -> Result<String, GarminError> {
         .get("internalId")
         .and_then(positive_id)
         .ok_or(GarminError::UploadUncertain)
+}
+
+fn validate_calendar_date(date: &str) -> Result<(), GarminError> {
+    const FORMAT: &str = "%Y-%m-%d";
+    const LENGTH: usize = 10;
+    if date.len() != LENGTH
+        || !chrono::NaiveDate::parse_from_str(date, FORMAT)
+            .is_ok_and(|parsed| parsed.format(FORMAT).to_string() == date)
+    {
+        return Err(GarminError::InvalidRequest);
+    }
+    Ok(())
 }
 
 pub fn validate_fit(fit: &[u8]) -> Result<(), GarminError> {
@@ -1879,6 +1903,43 @@ mod tests {
         );
         assert_eq!(requests.join().unwrap().len(), 1);
     }
+    #[tokio::test]
+    async fn vo2_max_reads_preserve_bytes_validate_dates_and_do_not_retry() {
+        let value = json!({"generic":{"calendarDate":"2026-10-23","vo2MaxPreciseValue":52.3},"cycling":null});
+        let (client, requests) = server(vec![("200 OK", value.clone(), "")]);
+        for date in [
+            "2026-02-30",
+            "2026-1-01",
+            "2026-10-23/extra",
+            "2026-10-23?private",
+        ] {
+            assert_eq!(
+                client.read_vo2_max(&tokens(), date).await,
+                Err(GarminError::InvalidRequest)
+            );
+        }
+        let bytes = client.read_vo2_max(&tokens(), "2026-10-23").await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), value);
+        let requests = requests.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /metrics-service/metrics/maxmet/latest/2026-10-23 "));
+        assert!(requests[0]
+            .to_lowercase()
+            .contains("authorization: bearer test-access"));
+        for (status, error) in [
+            ("401 Unauthorized", GarminError::Authentication),
+            ("429 Too Many Requests", GarminError::RateLimited),
+            ("500 Internal Server Error", GarminError::Protocol),
+        ] {
+            let (client, requests) = server(vec![(status, json!({"private":"hidden"}), "")]);
+            assert_eq!(
+                client.read_vo2_max(&tokens(), "2026-10-23").await,
+                Err(error)
+            );
+            assert_eq!(requests.join().unwrap().len(), 1);
+        }
+    }
+
     #[tokio::test]
     async fn cycling_creation_uses_typed_payload_and_never_retries_uncertain_writes() {
         let workout = workouts::AuthoredWorkout::Cycling(workouts::CyclingWorkout {
