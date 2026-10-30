@@ -52,6 +52,7 @@ function AppShell() {
   const {
     screen,
     go,
+    builderEdit,
     player,
     toasts,
     refreshWorkouts,
@@ -130,7 +131,7 @@ function AppShell() {
         {screen === "activities" && <Activities />}
         {screen === "settings" && <SettingsScreen />}
         {screen === "workout" && <WorkoutDetail />}
-        {screen === "builder" && <Builder />}
+        {screen === "builder" && <Builder key={builderEdit?.id ?? "new"} />}
       </main>
       <div className="toasts">
         {toasts.map((t) => (

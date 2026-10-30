@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AppError, fmtDuration, ipc } from "../ipc";
-import { useStore } from "../state";
+import { libraryDetailView, useStore } from "../state";
 import NextUpSection from "../components/NextUpSection";
 import WorkoutGraph from "../components/WorkoutGraph";
 import { SOURCES } from "../sources";
@@ -37,22 +37,7 @@ export default function Library() {
   async function openDetail(id: string) {
     try {
       const d = await ipc.getWorkoutDetail(id);
-      useStore.setState({
-        detail: {
-          source: "library",
-          id: d.summary.id,
-          name: d.summary.name,
-          description: d.summary.description,
-          duration_s: d.summary.duration_s,
-          est_if: d.summary.est_if,
-          est_tss: d.summary.est_tss,
-          tags: d.summary.training_focus ?? "",
-          origin: d.summary.origin,
-          graph: d.summary.graph,
-          segments: d.segments,
-        },
-        screen: "workout",
-      });
+      useStore.setState({ detail: libraryDetailView(d), screen: "workout" });
     } catch (e) {
       pushToast("error", (e as AppError).message ?? String(e));
     }

@@ -6,6 +6,10 @@
 //! — the player, FIT export and dedup never learn that a workout was authored
 //! rather than imported.
 //!
+//! `from_workout_spec` is the way back: a stored definition reopens in the
+//! builder only when nothing would be lost, so editing in place is lossless
+//! by construction.
+//!
 //! Emission targets *our own parser first*: every element this module writes
 //! reads back to the same segments, which the round-trip tests below assert.
 //! Zwift compatibility follows from using the same vocabulary, not from
@@ -139,6 +143,109 @@ fn node_to_step(node: &BuildNode) -> CyclingStep {
             count: *count,
             steps: children.iter().map(node_to_step).collect(),
         },
+    }
+}
+
+/// The inverse of [`to_workout_spec`]: open a stored definition in the
+/// builder. Succeeds only when every step fits the builder's vocabulary
+/// (percent-of-FTP targets, exact cadence, one level of repeat, no cues), so
+/// an edit can never silently drop content. The error names the first
+/// construct that does not fit; callers show it as the reason Edit is
+/// unavailable rather than opening a lossy copy.
+pub fn from_workout_spec(definition: &WorkoutSpec) -> Result<WorkoutDraft, BuildError> {
+    let steps = match &definition.prescription {
+        WorkoutPrescription::Cycling { steps } => steps,
+        WorkoutPrescription::Running { .. } => {
+            return err("the builder edits cycling workouts only");
+        }
+    };
+    let nodes = steps
+        .iter()
+        .map(|step| step_to_node(step, /*inside_repeat=*/ false))
+        .collect::<Result<Vec<_>, _>>()?;
+    let draft = WorkoutDraft {
+        name: definition.title.clone(),
+        description: definition.description.clone(),
+        nodes,
+    };
+    validate(&draft)?;
+    Ok(draft)
+}
+
+fn step_to_node(step: &CyclingStep, inside_repeat: bool) -> Result<BuildNode, BuildError> {
+    match step {
+        CyclingStep::Steady {
+            duration_seconds,
+            power,
+            cadence,
+            cues,
+        } => {
+            reject_cues(cues)?;
+            Ok(BuildNode::Simple {
+                duration_s: *duration_seconds,
+                power_pct: power_pct(power)?,
+                cadence_rpm: cadence_rpm(cadence.as_ref())?,
+            })
+        }
+        CyclingStep::Ramp {
+            duration_seconds,
+            start_power,
+            end_power,
+            cadence,
+            cues,
+        } => {
+            reject_cues(cues)?;
+            Ok(BuildNode::Ramp {
+                duration_s: *duration_seconds,
+                start_pct: power_pct(start_power)?,
+                end_pct: power_pct(end_power)?,
+                cadence_rpm: cadence_rpm(cadence.as_ref())?,
+            })
+        }
+        CyclingStep::FreeRide { .. } => err("the builder cannot hold a free-ride step"),
+        CyclingStep::Repeat { count, steps } => {
+            if inside_repeat {
+                return err("the builder cannot hold a repeat inside another repeat");
+            }
+            let children = steps
+                .iter()
+                .map(|child| step_to_node(child, /*inside_repeat=*/ true))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(BuildNode::Repeat {
+                count: *count,
+                children,
+            })
+        }
+    }
+}
+
+fn power_pct(target: &CyclingPowerTarget) -> Result<f64, BuildError> {
+    match target {
+        CyclingPowerTarget::PercentFtp { percent } => Ok(*percent),
+        CyclingPowerTarget::Watts { .. } | CyclingPowerTarget::WattsRange { .. } => {
+            err("the builder cannot hold an absolute-watt target")
+        }
+        CyclingPowerTarget::PercentFtpRange { .. } => {
+            err("the builder cannot hold a power range target")
+        }
+    }
+}
+
+fn cadence_rpm(target: Option<&CyclingCadenceTarget>) -> Result<Option<u16>, BuildError> {
+    match target {
+        None => Ok(None),
+        Some(CyclingCadenceTarget::Exact { rpm }) => Ok(Some(*rpm)),
+        Some(CyclingCadenceTarget::Range { .. }) => {
+            err("the builder cannot hold a cadence range target")
+        }
+    }
+}
+
+fn reject_cues(cues: &[crate::workout_spec::WorkoutCue]) -> Result<(), BuildError> {
+    if cues.is_empty() {
+        Ok(())
+    } else {
+        err("the builder cannot hold step cues")
     }
 }
 
