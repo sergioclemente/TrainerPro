@@ -9,7 +9,7 @@
 // problem instead of a recursive one, and the Rust side enforces it again at
 // save time (crates/tp-core/src/build.rs).
 
-import type { WorkoutSegmentRow } from "../ipc";
+import type { DraftNode, WorkoutSegmentRow } from "../ipc";
 
 export const ROOT = "root";
 
@@ -382,4 +382,35 @@ export function toDraft(name: string, description: string, nodes: BuildNode[]) {
         : leaf(n),
     ),
   };
+}
+
+type DraftLeaf = Exclude<DraftNode, { kind: "repeat" }>;
+
+/** Give a stored draft fresh editor ids: the inverse of `toDraft`. The Rust
+    side only hands out drafts it validated, so a repeat never nests another;
+    the filter exists to satisfy the type, not to drop content. */
+export function fromDraft(nodes: DraftNode[]): BuildNode[] {
+  const leaf = (n: DraftLeaf): LeafNode =>
+    n.kind === "ramp"
+      ? {
+          id: newId(),
+          kind: "ramp",
+          duration_s: n.duration_s,
+          start_pct: n.start_pct,
+          end_pct: n.end_pct,
+          cadence_rpm: n.cadence_rpm,
+        }
+      : {
+          id: newId(),
+          kind: "simple",
+          duration_s: n.duration_s,
+          power_pct: n.power_pct,
+          cadence_rpm: n.cadence_rpm,
+        };
+  const isLeafDraft = (n: DraftNode): n is DraftLeaf => n.kind !== "repeat";
+  return nodes.map((n) =>
+    n.kind === "repeat"
+      ? { id: newId(), kind: "repeat", count: n.count, children: n.children.filter(isLeafDraft).map(leaf) }
+      : leaf(n),
+  );
 }

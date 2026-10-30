@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::State;
+use tp_core::build::WorkoutDraft;
 use tp_core::model::{ExecutableWorkout, PowerTarget, WorkoutSegment};
 use tp_core::parse::{parse_ergmrc, parse_zwo, Parsed};
 use tp_core::workout_spec::WorkoutSpec;
@@ -169,13 +170,74 @@ pub async fn create_workout(
     store_definition(&state, &definition, Vec::new())
 }
 
-fn get_workout_summary(state: &State<'_, AppState>, id: &str) -> R<WorkoutSummary> {
-    let row = {
+/// Replace a Library-owned workout with the builder's edited draft. The
+/// definition keeps its ID, so Next Up and local schedules keep pointing at
+/// it; Activities keep their snapshots. A training-focus tag the builder
+/// cannot edit is carried over unchanged.
+#[tauri::command]
+pub async fn update_workout(
+    state: State<'_, AppState>,
+    id: String,
+    draft: tp_core::build::WorkoutDraft,
+) -> R<ImportResult> {
+    let existing = {
         let conn = state.db.lock().unwrap();
-        definition_db::get(&conn, id)?
+        definition_db::get(&conn, &id)?
             .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
     };
-    summary_from_row(row, state.settings().profile.ftp)
+    if existing.origin.is_some() {
+        return Err(provider_owned_error());
+    }
+    let mut definition = tp_core::build::to_workout_spec(&draft)
+        .map_err(|e| AppError::new("invalid_workout", e.message))?;
+    definition.training_focus = WorkoutSpec::from_json(&existing.tpw_json)?.training_focus;
+    definition.compile()?;
+    let tpw_json = definition.to_json_pretty()?;
+    let result = {
+        let conn = state.db.lock().unwrap();
+        definition_db::update_local(&conn, &id, &tpw_json, now_unix_ms() as i64)?
+    };
+    match result {
+        definition_db::UpdateResult::Updated => Ok(ImportResult {
+            summary: summary_from_definition(id, None, &definition, state.settings().profile.ftp)?,
+            warnings: Vec::new(),
+        }),
+        definition_db::UpdateResult::NotFound => Err(AppError::new(
+            "not_found",
+            format!("workout {id} not found"),
+        )),
+        definition_db::UpdateResult::ProviderOwned => Err(provider_owned_error()),
+    }
+}
+
+fn provider_owned_error() -> AppError {
+    AppError::new(
+        "workout_provider_owned",
+        "This workout belongs to a connected library and cannot be edited here",
+    )
+}
+
+/// Whether the detail view may open this definition in the builder, and if
+/// not, why. Provider catalog entries are refreshed from their source, so an
+/// edit would not survive; other refusals name the construct the builder
+/// cannot hold so nothing is dropped silently.
+fn edit_access(
+    row: &definition_db::WorkoutDefinitionRow,
+) -> (Option<WorkoutDraft>, Option<String>) {
+    if row.origin.is_some() {
+        return (
+            None,
+            Some("This workout comes from a connected library; edit it there".into()),
+        );
+    }
+    match WorkoutSpec::from_json(&row.tpw_json)
+        .map_err(|error| error.to_string())
+        .and_then(|definition| {
+            tp_core::build::from_workout_spec(&definition).map_err(|error| error.message)
+        }) {
+        Ok(draft) => (Some(draft), None),
+        Err(reason) => (None, Some(format!("Cannot edit: {reason}"))),
+    }
 }
 
 pub(crate) fn summary_from_row(
@@ -336,16 +398,28 @@ pub fn segment_rows(w: &ExecutableWorkout, ftp: u16) -> Vec<WorkoutSegmentRow> {
 pub struct WorkoutDetail {
     pub summary: WorkoutSummary,
     pub segments: Vec<WorkoutSegmentRow>,
+    /// The builder's view of this definition when it can be edited in place.
+    pub editable_draft: Option<WorkoutDraft>,
+    /// Why `editable_draft` is absent, phrased for the Edit button's tooltip.
+    pub edit_blocker: Option<String>,
 }
 
 #[tauri::command]
 pub async fn get_workout_detail(state: State<'_, AppState>, id: String) -> R<WorkoutDetail> {
-    let summary = get_workout_summary(&state, &id)?;
-    let workout = load_workout_definition(&state, &id)?.compile()?;
+    let row = {
+        let conn = state.db.lock().unwrap();
+        definition_db::get(&conn, &id)?
+            .ok_or_else(|| AppError::new("not_found", format!("workout {id} not found")))?
+    };
     let ftp = state.settings().profile.ftp;
+    let definition = WorkoutSpec::from_json(&row.tpw_json)?;
+    let workout = definition.compile()?;
+    let (editable_draft, edit_blocker) = edit_access(&row);
     Ok(WorkoutDetail {
-        summary,
+        summary: summary_from_definition(row.id, row.origin, &definition, ftp)?,
         segments: segment_rows(&workout, ftp),
+        editable_draft,
+        edit_blocker,
     })
 }
 

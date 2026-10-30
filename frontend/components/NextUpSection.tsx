@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AppError, NextUpItem, SchedulePlacement, fmtDuration, ipc } from "../ipc";
 import WorkoutGraph from "./WorkoutGraph";
-import { useStore } from "../state";
+import { libraryDetailView, useStore } from "../state";
 import { dateKeyInZone } from "../date";
 import { refreshPlanConnections } from "../providers";
 
@@ -94,19 +94,9 @@ export default function NextUpSection() {
       const detail = await ipc.getWorkoutDetail(item.workout.id);
       useStore.setState({
         detail: {
-          source: "library",
-          id: detail.summary.id,
+          ...libraryDetailView(detail),
           scheduledWorkoutId:
             item.kind === "scheduled" ? item.scheduled_workout_id : undefined,
-          name: detail.summary.name,
-          description: detail.summary.description,
-          duration_s: detail.summary.duration_s,
-          est_if: detail.summary.est_if,
-          est_tss: detail.summary.est_tss,
-          tags: detail.summary.training_focus ?? "",
-          origin: detail.summary.origin,
-          graph: detail.summary.graph,
-          segments: detail.segments,
         },
         screen: "workout",
       });

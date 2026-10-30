@@ -39,6 +39,15 @@ pub enum DeleteResult {
     ReferencedBySchedule,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateResult {
+    Updated,
+    NotFound,
+    /// The row belongs to a provider catalog; a refresh would overwrite the
+    /// edit, so local editing is refused rather than briefly honoured.
+    ProviderOwned,
+}
+
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkoutDefinitionRow> {
     Ok(WorkoutDefinitionRow {
         id: row.get(0)?,
@@ -92,6 +101,36 @@ pub fn insert(conn: &Connection, definition: &NewWorkoutDefinition<'_>) -> rusql
         rusqlite::params![definition.id, definition.tpw_json, definition.created_at_ms,],
     )?;
     Ok(())
+}
+
+/// Replace the content of a definition the local Library owns. Only rows
+/// without a provider origin qualify; Activities keep their own snapshot, so
+/// ride history is unaffected by the new content.
+pub fn update_local(
+    conn: &Connection,
+    id: &str,
+    tpw_json: &str,
+    updated_at_ms: i64,
+) -> rusqlite::Result<UpdateResult> {
+    let updated = conn.execute(
+        "UPDATE workout_definitions
+         SET tpw_json = ?1, updated_at = ?2
+         WHERE id = ?3 AND origin IS NULL AND retired_at_unix_ms IS NULL",
+        rusqlite::params![tpw_json, updated_at_ms, id],
+    )? > 0;
+    if updated {
+        return Ok(UpdateResult::Updated);
+    }
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM workout_definitions WHERE id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?;
+    Ok(if exists {
+        UpdateResult::ProviderOwned
+    } else {
+        UpdateResult::NotFound
+    })
 }
 
 pub fn insert_provider_copy(
@@ -258,6 +297,56 @@ mod tests {
         assert_eq!(delete(&conn, "older").unwrap(), DeleteResult::Deleted);
         assert_eq!(get(&conn, "older").unwrap(), None);
         assert_eq!(delete(&conn, "missing").unwrap(), DeleteResult::NotFound);
+    }
+
+    #[test]
+    fn local_edits_replace_content_but_never_touch_provider_or_activity_copies() {
+        let conn = super::super::test_connection();
+        insert_fixture(&conn, "local", 10);
+        insert_provider_copy(&conn, &catalog("catalog", TPW_JSON, "planner", "42", 10)).unwrap();
+        conn.execute(
+            "INSERT INTO activities (
+               id, workout_definition_id, workout_name, started_at_unix_ms,
+               elapsed_s, timer_s, ftp_used_w, final_intensity_multiplier,
+               fit_path, journal_path, completed_pct, workout_definition_snapshot_json)
+             VALUES ('ride','local','Original',10,60,60,250,1.0,
+                     '/synthetic.fit','/synthetic.jsonl',100,?1)",
+            [TPW_JSON],
+        )
+        .unwrap();
+
+        let edited = TPW_JSON.replace("Endurance", "Edited");
+        assert_eq!(
+            update_local(&conn, "local", &edited, 20).unwrap(),
+            UpdateResult::Updated
+        );
+        assert_eq!(get(&conn, "local").unwrap().unwrap().tpw_json, edited);
+        let times: (i64, i64) = conn
+            .query_row(
+                "SELECT created_at, updated_at FROM workout_definitions WHERE id = 'local'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(times, (10, 20));
+        let snapshot: String = conn
+            .query_row(
+                "SELECT workout_definition_snapshot_json FROM activities WHERE id = 'ride'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshot, TPW_JSON);
+
+        assert_eq!(
+            update_local(&conn, "catalog", &edited, 20).unwrap(),
+            UpdateResult::ProviderOwned
+        );
+        assert_eq!(get(&conn, "catalog").unwrap().unwrap().tpw_json, TPW_JSON);
+        assert_eq!(
+            update_local(&conn, "missing", &edited, 20).unwrap(),
+            UpdateResult::NotFound
+        );
     }
 
     #[test]

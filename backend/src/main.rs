@@ -61,6 +61,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::workout::import_workout,
             commands::workout::create_workout,
+            commands::workout::update_workout,
             commands::workout::list_workouts,
             commands::workout::delete_workout,
             commands::workout::get_workout_detail,

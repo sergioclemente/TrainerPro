@@ -247,6 +247,21 @@ export default function WorkoutDetail() {
         <button className="go" onClick={ride}>
           ▶ Ride this workout
         </button>
+        {d.source === "library" && (
+          <button
+            onClick={() =>
+              d.editableDraft &&
+              useStore.getState().openBuilder({ id: d.id!, draft: d.editableDraft })
+            }
+            disabled={!d.editableDraft}
+            title={d.editBlocker ?? "Open in Build"}
+          >
+            Edit
+          </button>
+        )}
+        {d.source === "library" && d.editBlocker && (
+          <span className="muted edit-blocker">{d.editBlocker}</span>
+        )}
         {d.source === "planner" && (
           <button onClick={() => ipc.plannerOpenEditor(d.wid!)}>Edit in Planner ↗</button>
         )}

@@ -1661,6 +1661,13 @@ button.go:hover {
 .b-top .spacer {
   flex: 1;
 }
+.b-description {
+  width: 340px;
+}
+.edit-blocker {
+  align-self: center;
+  font-size: 12px;
+}
 .b-name {
   width: 280px;
   padding: 7px 10px;

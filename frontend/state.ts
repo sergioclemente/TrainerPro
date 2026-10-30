@@ -20,6 +20,8 @@ import {
   Settings,
   PlayerMeasurement,
   RideTracePoint,
+  WorkoutDetail,
+  WorkoutDraft,
   WorkoutSummary,
   ipc,
 } from "./ipc";
@@ -68,6 +70,35 @@ export interface WorkoutDetailView {
   origin?: string | null;
   graph: [number, number][];
   segments: import("./ipc").WorkoutSegmentRow[];
+  /** Library only: the builder's view of this definition when editable in place. */
+  editableDraft?: WorkoutDraft | null;
+  /** Library only: why `editableDraft` is absent. */
+  editBlocker?: string | null;
+}
+
+/** A Library-owned definition the builder is editing in place. */
+export interface BuilderEdit {
+  id: string;
+  draft: WorkoutDraft;
+}
+
+/** Detail view for a Library entry, from the `get_workout_detail` payload. */
+export function libraryDetailView(d: WorkoutDetail): WorkoutDetailView {
+  return {
+    source: "library",
+    id: d.summary.id,
+    name: d.summary.name,
+    description: d.summary.description,
+    duration_s: d.summary.duration_s,
+    est_if: d.summary.est_if,
+    est_tss: d.summary.est_tss,
+    tags: d.summary.training_focus ?? "",
+    origin: d.summary.origin,
+    graph: d.summary.graph,
+    segments: d.segments,
+    editableDraft: d.editable_draft,
+    editBlocker: d.edit_blocker,
+  };
 }
 
 export interface Toast {
@@ -96,6 +127,8 @@ interface Store {
   rideTrace: RideTracePoint[];
   summary: ActivitySummary | null;
   detail: WorkoutDetailView | null;
+  /** Set while Build edits an existing Library workout; null means a new one. */
+  builderEdit: BuilderEdit | null;
   activities: ActivityRow[];
   providerConnections: ProviderConnection[] | null;
   providerConnectionsError: string;
@@ -120,6 +153,8 @@ interface Store {
   toasts: Toast[];
 
   go: (s: Screen) => void;
+  /** Open Build on an existing Library workout, or on an empty canvas. */
+  openBuilder: (edit: BuilderEdit | null) => void;
   refreshNextUp: () => Promise<void>;
   refreshWorkouts: () => Promise<void>;
   refreshDevices: () => Promise<void>;
@@ -160,6 +195,7 @@ export const useStore = create<Store>((set, get) => ({
   rideTrace: [],
   summary: null,
   detail: null,
+  builderEdit: null,
   activities: [],
   providerConnections: null,
   providerConnectionsError: "",
@@ -224,7 +260,9 @@ export const useStore = create<Store>((set, get) => ({
   settings: null,
   toasts: [],
 
-  go: (s) => set({ screen: s }),
+  // The Build tab always starts a new workout; editing goes through openBuilder.
+  go: (s) => set(s === "builder" ? { screen: s, builderEdit: null } : { screen: s }),
+  openBuilder: (edit) => set({ screen: "builder", builderEdit: edit }),
   refreshNextUp: async () => {
     if (get().nextUp.length === 0) set({ nextUpStatus: "loading", nextUpError: "" });
     try {

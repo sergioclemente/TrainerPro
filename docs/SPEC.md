@@ -35,6 +35,12 @@ The local Library contains TrainerPro-owned definitions. Provider-scheduled
 cache entries remain executable through Next Up but are excluded from local
 listing, catalog-entry reuse, and deletion. Each file import and builder creation
 creates a new local entry, even when its content matches an existing workout.
+Detail offers **Edit** for Library-owned workouts, opening them in Build with
+their name and description; saving replaces the same entry in place, so Next Up
+and local schedules keep their reference and Activities keep their snapshots.
+Edit is unavailable, with the reason shown, for connected-library entries and
+for workouts holding content Build cannot represent: free ride, watt or range
+targets, cadence ranges, step cues, or a repeat inside a repeat.
 Importing ZWO, ERG, or MRC converts to WorkoutSpec and reports warnings without
 managing or deleting the original file.
 

@@ -245,6 +245,10 @@ export interface WorkoutSegmentRow {
 export interface WorkoutDetail {
   summary: WorkoutSummary;
   segments: WorkoutSegmentRow[];
+  /** The builder's view of this definition when it can be edited in place. */
+  editable_draft: WorkoutDraft | null;
+  /** Why `editable_draft` is null, phrased for the Edit control. */
+  edit_blocker: string | null;
 }
 
 /** Immutable workout profile captured when this player session was loaded. */
@@ -336,6 +340,9 @@ export interface WorkoutDraft {
 export const ipc = {
   importWorkout: (path: string) => invoke<ImportResult>("import_workout", { path }),
   createWorkout: (draft: WorkoutDraft) => invoke<ImportResult>("create_workout", { draft }),
+  /** Replace a Library-owned workout in place; the ID is unchanged. */
+  updateWorkout: (id: string, draft: WorkoutDraft) =>
+    invoke<ImportResult>("update_workout", { id, draft }),
   listWorkouts: () => invoke<WorkoutSummary[]>("list_workouts"),
   deleteWorkout: (id: string) => invoke<void>("delete_workout", { id }),
   getWorkoutDetail: (id: string) => invoke<WorkoutDetail>("get_workout_detail", { id }),

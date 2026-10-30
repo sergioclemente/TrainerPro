@@ -21,7 +21,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 
 import { AppError, fmtDuration, ipc } from "../ipc";
-import { useStore } from "../state";
+import { libraryDetailView, useStore } from "../state";
 import WorkoutGraph, { wattsFromPct, zoneColor } from "../components/WorkoutGraph";
 import {
   BuildNode,
@@ -35,6 +35,7 @@ import {
   containerOf,
   estimate,
   expand,
+  fromDraft,
   insertNode,
   itemIds,
   makeNode,
@@ -408,11 +409,17 @@ function RepeatBlock({
 }
 
 export default function Builder() {
-  const { settings, go, pushToast, refreshWorkouts } = useStore();
+  const { settings, go, pushToast, refreshWorkouts, builderEdit } = useStore();
   const ftp = settings?.profile.ftp ?? 250;
 
-  const [name, setName] = useState("");
-  const [nodes, setNodes] = useState<BuildNode[]>([]);
+  // App keys this screen by the edited workout's id, so the initial state
+  // below is read once per editing session and a new one starts clean.
+  const editing = builderEdit;
+  const [name, setName] = useState(editing?.draft.name ?? "");
+  const [description, setDescription] = useState(editing?.draft.description ?? "");
+  const [nodes, setNodes] = useState<BuildNode[]>(() =>
+    editing ? fromDraft(editing.draft.nodes) : [],
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dragging, setDragging] = useState<BuildNode | null>(null);
   const [saving, setSaving] = useState(false);
@@ -500,7 +507,22 @@ export default function Builder() {
     }
     setSaving(true);
     try {
-      const res = await ipc.createWorkout(toDraft(name, "", nodes));
+      const draft = toDraft(name, description, nodes);
+      if (editing) {
+        const res = await ipc.updateWorkout(editing.id, draft);
+        const detail = await ipc.getWorkoutDetail(editing.id);
+        await Promise.all([refreshWorkouts(), useStore.getState().refreshNextUp()]);
+        pushToast("info", `Saved changes to “${res.summary.name}”`);
+        // Keep the schedule link when the edit started from a Next Up item.
+        const scheduledWorkoutId = useStore.getState().detail?.scheduledWorkoutId;
+        useStore.setState({
+          detail: { ...libraryDetailView(detail), scheduledWorkoutId },
+          builderEdit: null,
+          screen: "workout",
+        });
+        return;
+      }
+      const res = await ipc.createWorkout(draft);
       await refreshWorkouts();
       for (const w of res.warnings) pushToast("info", w);
       pushToast("info", `Saved “${res.summary.name}”`);
@@ -509,6 +531,15 @@ export default function Builder() {
       pushToast("error", (e as AppError).message ?? String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  function cancel() {
+    if (editing) {
+      // The detail view that launched the edit is still in the store.
+      useStore.setState({ builderEdit: null, screen: "workout" });
+    } else {
+      go("library");
     }
   }
 
@@ -529,10 +560,16 @@ export default function Builder() {
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        <input
+          className="b-name b-description"
+          placeholder="Description (optional)"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
         <div className="spacer" />
-        <button onClick={() => go("library")}>Cancel</button>
+        <button onClick={cancel}>Cancel</button>
         <button className="go" onClick={save} disabled={saving || blocker !== null} title={blocker ?? ""}>
-          {saving ? "Saving…" : "Save"}
+          {saving ? "Saving…" : editing ? "Save changes" : "Save"}
         </button>
       </div>
 
