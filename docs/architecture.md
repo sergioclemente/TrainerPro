@@ -13,7 +13,7 @@ flowchart TD
     APP --> DB[(SQLite)]
     APP --> FILES[Session journals + FIT files]
     APP --> ADAPTERS[Provider application adapters]
-    ADAPTERS --> INTEGRATIONS[tp-integrations: Garmin / Intervals.icu protocols]
+    ADAPTERS --> INTEGRATIONS[tp-integrations: Garmin protocols]
     APP --> CORE[tp-core]
     APP --> HUB[Device hub + role owners]
     HUB --> MANAGER[tp-ble DeviceManager]
@@ -34,7 +34,7 @@ flowchart TD
 - **`tp-ble`** owns transport contracts, drivers, scanning, and simulators.
   `DeviceManager` serializes adapter initialization, scan cancellation, and
   connection setup. Established links operate concurrently.
-- **`tp-integrations`** owns concrete Garmin and Intervals.icu HTTP clients,
+- **`tp-integrations`** owns the concrete Garmin HTTP client,
   provider payloads, and protocol errors. It has no dependency on TrainerPro's
   domain model, desktop shell, database, or credential vault.
 - **Backend** owns Tauri commands/events, clocks, runtime orchestration, provider
@@ -95,7 +95,7 @@ never persisted. Cached results are available before refresh, and each source
 reports its own outcome. Refresh windows use the account time zone; schedule
 projection uses placement zone, then account zone, then machine-local fallback.
 
-Intervals.icu and Garmin fetch bounded calendar windows through `tp-integrations`.
+Garmin fetches bounded calendar windows through `tp-integrations`.
 Garmin resolves each distinct referenced definition once before cache reconciliation.
 The backend maps structured workouts to WorkoutSpec before transactionally updating
 definitions and schedules. External event identity is scoped to the provider connection.

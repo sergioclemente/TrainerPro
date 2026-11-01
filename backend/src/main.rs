@@ -13,8 +13,7 @@ mod device_owner;
 mod garmin_sync;
 mod garmin_workouts;
 mod heart_rate_monitor;
-mod intervals_icu;
-mod intervals_icu_sync;
+mod legacy_provider_cleanup;
 mod local_date;
 mod logging;
 mod next_up;
@@ -54,6 +53,7 @@ fn main() {
                 woz_collections: std::sync::Mutex::new(None),
                 woz_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             });
+            legacy_provider_cleanup::spawn(app.handle().clone());
             device_hub::spawn_startup_reconnect(app.handle().clone());
             commands::mini_hud::couple_windows(app.handle());
             Ok(())
@@ -101,7 +101,6 @@ fn main() {
             commands::activity_history::reveal_fit,
             commands::settings::get_settings,
             commands::settings::update_settings,
-            commands::intervals_icu::connect_intervals_icu,
             logging::trace_frontend,
             workout_planner_source::source_test,
             workout_planner_source::planner_cached,

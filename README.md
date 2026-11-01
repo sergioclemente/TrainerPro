@@ -13,7 +13,7 @@ produces a Garmin-compatible FIT activity.
 - **Crash-safe recording:** a 1 Hz journal is converted to FIT at ride end,
   with laps and locally computed NP, IF, and TSS.
 - **Offline-capable sources:** local ZWO/ERG/MRC files, WorkoutPlanner,
-  What's on Zwift, and cached Intervals.icu and Garmin schedules.
+  What's on Zwift, and cached Garmin schedules.
 - **Hardware-free development:** simulated trainer and heart-rate devices use
   the same interfaces as physical BLE hardware.
 
@@ -36,8 +36,8 @@ choosing **Open**. Windows packages similarly show an unknown-publisher warning.
 
 The React frontend talks to a Rust Tauri backend. `tp-core` contains pure
 workout, engine, recording, metrics, and FIT logic. `tp-ble` owns BLE drivers,
-connection traits, scanning, and simulators. `tp-integrations` provides reusable
-Garmin and Intervals.icu clients independently of the app and domain model.
+connection traits, scanning, and simulators. `tp-integrations` provides a reusable
+Garmin client independently of the app and domain model.
 SQLite is authoritative for WorkoutSpec workout definitions, schedules, provider state,
 and the Activity index; session journals and FIT files remain durable activity
 artifacts.
@@ -54,7 +54,7 @@ See [the architecture guide](docs/architecture.md) for boundaries and flows.
 | [Voice developer guide](docs/voice.md) | Voice pipeline entry points and development workflows |
 | [WorkoutSpec](docs/workout-spec.md) | Normative WorkoutSpec JSON format |
 | [Roadmap](docs/ROADMAP.md) | Unfinished work and external gates |
-| [Integrations](docs/integrations.md) | Garmin and Intervals.icu account, upload, and schedule behavior |
+| [Integrations](docs/integrations.md) | Garmin account, upload, and schedule behavior |
 | [WorkoutPlanner](docs/feature-workoutplanner.md) | Connected-library contract |
 
 Documentation purpose and maintenance rules are in
@@ -67,7 +67,7 @@ frontend/              React UI, state, and typed IPC client
 backend/               Tauri host, persistence, provider adapters, and runtime services
 crates/tp-core/         Pure workout, engine, journal, metrics, and FIT domain logic
 crates/tp-ble/          BLE contracts, drivers, device manager, and simulators
-crates/tp-integrations/ Garmin and Intervals.icu clients and provider payloads
+crates/tp-integrations/ Garmin client and provider payloads
 docs/                  Product, behavior, architecture, and feature contracts
 ```
 

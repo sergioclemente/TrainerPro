@@ -41,11 +41,6 @@ These are follow-ups, not additional release gates.
   evaluation first; consider training only if matching and argument parsing
   prove insufficient.
 
-## Conditional — broader distribution
-
-- Design production Intervals.icu OAuth if distribution expands beyond personal
-  use.
-
 ## Later — routes from outdoor rides
 
 - Reconstruct terrain from an outdoor ride and advance along it using current

@@ -6,6 +6,7 @@ use std::path::Path;
 pub mod activities;
 pub mod activity_uploads;
 pub mod devices;
+pub mod legacy_provider_cleanup;
 pub mod provider_connections;
 pub mod scheduled_workouts;
 pub mod settings;
@@ -229,6 +230,8 @@ const MIGRATIONS: &[&str] = &[
       PRIMARY KEY(activity_id, provider_connection_id)
     );
     ",
+    // v15: remove the retired provider while preserving Activities and local copies.
+    include_str!("database/remove_intervals_icu.sql"),
 ];
 
 /// Schema versions whose incremental steps were folded into an earlier entry.
@@ -314,11 +317,11 @@ mod tests {
     #[test]
     fn providers_support_schedules_and_accounts_without_time_zones() {
         let conn = test_connection();
-        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, time_zone, created_at_unix_ms, updated_at_unix_ms) VALUES ('icu', 'intervals_icu', 'i123', 'Europe/Zurich', 1, 1);
+        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, time_zone, created_at_unix_ms, updated_at_unix_ms) VALUES ('plans', 'test_provider', 'i123', 'Europe/Zurich', 1, 1);
             INSERT INTO workout_definitions(id, tpw_json, created_at, updated_at) VALUES ('definition', '{}', 1, 1);
-            INSERT INTO scheduled_workouts(id, workout_definition_id, scheduled_date_local, created_at_unix_ms, updated_at_unix_ms, provider_connection_id, external_event_id) VALUES ('scheduled', 'definition', '2030-01-01', 1, 1, 'icu', 'event');").unwrap();
+            INSERT INTO scheduled_workouts(id, workout_definition_id, scheduled_date_local, created_at_unix_ms, updated_at_unix_ms, provider_connection_id, external_event_id) VALUES ('scheduled', 'definition', '2030-01-01', 1, 1, 'plans', 'event');").unwrap();
         let conn = super::prepare(conn).unwrap();
-        let connection = super::provider_connections::get(&conn, "icu")
+        let connection = super::provider_connections::get(&conn, "plans")
             .unwrap()
             .unwrap();
         assert_eq!(connection.time_zone.as_deref(), Some("Europe/Zurich"));
@@ -329,7 +332,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(linked, "icu");
+        assert_eq!(linked, "plans");
         assert_eq!(
             conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get::<_, i64>(0)
@@ -369,9 +372,9 @@ mod tests {
         }
         conn.pragma_update(None, "user_version", SQUASHED_RELEASED_VERSION as i64)
             .unwrap();
-        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, display_name, time_zone, last_sync_succeeded_at_unix_ms, last_sync_error, created_at_unix_ms, updated_at_unix_ms) VALUES ('icu', 'intervals_icu', 'i123', 'Rider', 'Europe/Zurich', 5, 'late', 1, 2);
+        conn.execute_batch("INSERT INTO provider_connections(id, provider, external_account_id, display_name, time_zone, last_sync_succeeded_at_unix_ms, last_sync_error, created_at_unix_ms, updated_at_unix_ms) VALUES ('plans', 'test_provider', 'i123', 'Rider', 'Europe/Zurich', 5, 'late', 1, 2);
             INSERT INTO workout_definitions(id, tpw_json, created_at, updated_at) VALUES ('definition', '{}', 1, 1);
-            INSERT INTO scheduled_workouts(id, workout_definition_id, scheduled_date_local, created_at_unix_ms, updated_at_unix_ms, provider_connection_id, external_event_id) VALUES ('scheduled', 'definition', '2030-01-01', 1, 1, 'icu', 'event');
+            INSERT INTO scheduled_workouts(id, workout_definition_id, scheduled_date_local, created_at_unix_ms, updated_at_unix_ms, provider_connection_id, external_event_id) VALUES ('scheduled', 'definition', '2030-01-01', 1, 1, 'plans', 'event');
             INSERT INTO activities(id, workout_name, started_at_unix_ms, elapsed_s, timer_s, ftp_used_w, final_intensity_multiplier, fit_path, journal_path, completed_pct) VALUES ('ride', 'Test', 1, 30, 30, 200, 1, '/missing.fit', '/missing.jsonl', 100);").unwrap();
         assert!(conn
             .execute(
@@ -389,14 +392,14 @@ mod tests {
             })
             .unwrap();
         assert_eq!(version as usize, super::MIGRATIONS.len());
-        let icu = super::provider_connections::get(&conn, "icu")
+        let plans = super::provider_connections::get(&conn, "plans")
             .unwrap()
             .unwrap();
         assert_eq!(
-            icu,
+            plans,
             super::provider_connections::ProviderConnectionRow {
-                id: "icu".into(),
-                provider: "intervals_icu".into(),
+                id: "plans".into(),
+                provider: "test_provider".into(),
                 external_account_id: "i123".into(),
                 display_name: Some("Rider".into()),
                 time_zone: Some("Europe/Zurich".into()),
@@ -441,7 +444,7 @@ mod tests {
         );
         // Referencing tables point at the rebuilt table.
         assert!(conn
-            .execute("DELETE FROM provider_connections WHERE id='icu'", [])
+            .execute("DELETE FROM provider_connections WHERE id='plans'", [])
             .is_err());
         assert!(conn
             .execute("DELETE FROM provider_connections WHERE id=?1", [&garmin])
@@ -449,7 +452,7 @@ mod tests {
         // The one-active-account index survived the rebuild.
         assert!(conn
             .execute(
-                "INSERT INTO provider_connections(id, provider, external_account_id, created_at_unix_ms, updated_at_unix_ms) VALUES ('icu2', 'intervals_icu', 'other', 1, 1)",
+                "INSERT INTO provider_connections(id, provider, external_account_id, created_at_unix_ms, updated_at_unix_ms) VALUES ('plans2', 'test_provider', 'other', 1, 1)",
                 [],
             )
             .is_err());
@@ -594,7 +597,6 @@ mod tests {
                     AND work_kj = 11 AND ftp_used_w = 200
                     AND final_intensity_multiplier = 1.0 AND elapsed_s = 60
                     AND timer_s = 60 AND completed_pct = 100.0
-                    AND icu_activity_id = 'remote-ride'
                  FROM activities WHERE id = 'activity'",
                 [],
                 |row| row.get(0),
@@ -683,7 +685,7 @@ mod tests {
             "INSERT INTO provider_connections (
                id, provider, external_account_id, time_zone,
                created_at_unix_ms, updated_at_unix_ms)
-             VALUES ('connection','intervals_icu','i123','Europe/Zurich',1,1)",
+             VALUES ('connection','test_provider','i123','Europe/Zurich',1,1)",
             [],
         )
         .unwrap();
@@ -703,7 +705,7 @@ mod tests {
                 "INSERT INTO provider_connections (
                    id, provider, external_account_id, time_zone,
                    created_at_unix_ms, updated_at_unix_ms)
-                 VALUES ('second','intervals_icu','i456','Europe/Zurich',2,2)",
+                 VALUES ('second','test_provider','i456','Europe/Zurich',2,2)",
                 [],
             )
             .is_err());

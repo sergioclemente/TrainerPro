@@ -103,8 +103,6 @@ Connected accounts expose the capabilities TrainerPro actually implements:
 completed rides. One connection may support both. Library catalogs and local
 authoring retain their separate workflows.
 
-- **Intervals.icu** is currently an inbound planning authority. Activity upload
-  and calendar writes are outside the current direction.
 - **WorkoutPlanner** is a self-hosted definition source and editor.
 - **What's on Zwift** is a read-only workout catalog.
 - **Garmin Connect** supplies scheduled cycling workouts and supports explicit
@@ -122,14 +120,11 @@ authoring retain their separate workflows.
 - Treating a workout file as canonical identity.
 - A generic connector abstraction without multiple concrete consumers.
 - Plan publication or calendar write-back from TrainerPro.
-- Intervals.icu Activity upload, webhooks, sync conflict resolution, or outbound
-  retry queues in the current scope.
 - External activity-history reads in the current scope.
-- Production OAuth before broad multi-user distribution requires it.
 
 ## Open product questions
 
 - How far into the future should scheduled workouts appear in Next Up?
-- Which provider should follow Intervals.icu and Garmin, based on access and user demand?
+- Which provider should follow Garmin, based on access and user demand?
 - What minimum athlete context makes an AI recommendation meaningfully better
   than deterministic local recommendations?

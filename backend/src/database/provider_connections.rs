@@ -155,7 +155,7 @@ mod tests {
     fn connection<'a>(id: &'a str, name: Option<&'a str>, at: i64) -> ConnectedProvider<'a> {
         ConnectedProvider {
             id,
-            provider: "intervals_icu",
+            provider: "garmin",
             external_account_id: "i123",
             display_name: name,
             time_zone: Some("Europe/Zurich"),
@@ -209,18 +209,13 @@ mod tests {
         let conn = super::super::test_connection();
         connect(&conn, &connection("connection", Some("Ada"), 10)).unwrap();
         assert!(mark_disconnected(&conn, "connection", 20).unwrap());
-        assert_eq!(
-            get_active_by_provider(&conn, "intervals_icu").unwrap(),
-            None
-        );
+        assert_eq!(get_active_by_provider(&conn, "garmin").unwrap(), None);
 
         assert_eq!(
             connect(&conn, &connection("replacement", Some("Ada Rider"), 30)).unwrap(),
             "connection"
         );
-        let active = get_active_by_provider(&conn, "intervals_icu")
-            .unwrap()
-            .unwrap();
+        let active = get_active_by_provider(&conn, "garmin").unwrap().unwrap();
         assert_eq!(active.id, "connection");
         assert_eq!(active.display_name.as_deref(), Some("Ada Rider"));
         assert_eq!(active.disconnected_at_unix_ms, None);

@@ -6,7 +6,7 @@ fn setup() -> Connection {
     let conn = crate::database::test_connection();
     for (id, provider, account) in [
         ("garmin-one", "garmin", "123"),
-        ("intervals", "intervals_icu", "i123"),
+        ("other-provider", "test_provider", "other-account"),
     ] {
         provider_connections::connect(
             &conn,
@@ -205,10 +205,15 @@ fn inconsistent_calendar_never_mutates_cache_or_reconciles_missing_events() {
                 .is_none()
         );
     }
-    assert!(
-        persist_calendar_window(&mut conn, "intervals", "2030-01-01", "2030-01-31", &[], 20)
-            .is_err()
-    );
+    assert!(persist_calendar_window(
+        &mut conn,
+        "other-provider",
+        "2030-01-01",
+        "2030-01-31",
+        &[],
+        20
+    )
+    .is_err());
 }
 
 #[test]

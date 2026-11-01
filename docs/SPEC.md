@@ -175,7 +175,7 @@ measurements; zero-duration averages are absent. Live speed/distance is not disp
 
 Settings manages FTP, weight, distance recording, FIT export, voice, libraries,
 and provider connections. [Integrations](integrations.md) defines account setup,
-inbound Intervals.icu and Garmin schedules, Garmin browser sign-in, manual Garmin
+inbound Garmin schedules, Garmin browser sign-in, manual Garmin
 uploads, and disconnect behavior.
 The builder never publishes calendars. [WorkoutPlanner](feature-workoutplanner.md)
 remains a separate optional library configured with a URL and optional Basic Auth.

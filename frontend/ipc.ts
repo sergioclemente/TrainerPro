@@ -410,7 +410,6 @@ export const ipc = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Settings) => invoke<Settings>("update_settings", { settings }),
 
-  connectIntervalsIcu: (apiKey: string) => invoke<string>("connect_intervals_icu", { apiKey }),
 
   traceFrontend: (message: string) => invoke<void>("trace_frontend", { message }),
 };

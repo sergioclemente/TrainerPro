@@ -5,4 +5,3 @@
 //! and any conversion to application-specific workout models.
 
 pub mod garmin;
-pub mod intervals_icu;

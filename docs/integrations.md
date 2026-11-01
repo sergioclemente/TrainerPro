@@ -8,7 +8,6 @@ capabilities TrainerPro supports:
 
 | Provider       | Capability                                                              | Connection             |
 | -------------- | ----------------------------------------------------------------------- | ---------------------- |
-| Intervals.icu  | Read scheduled cycling workouts                                         | Personal API key       |
 | Garmin Connect | Read scheduled cycling workouts; upload completed Activities on request | Garmin browser sign-in |
 
 Credentials live in the OS credential manager, isolated between TrainerPro and
@@ -17,38 +16,10 @@ not guarantee the provider is reachable. One provider's failure does not hide
 other connections. Workout libraries use a separate workflow; see
 [WorkoutPlanner](feature-workoutplanner.md) for its server contract.
 
-## Intervals.icu
-
-### Connection and schedules
-
-Connect with a personal API key. Only one Intervals.icu account can be active;
-disconnect it before connecting another. The current integration is intended
-for personal use; broader distribution requires an OAuth design.
-
-Refresh reads scheduled cycling workouts from seven days before through 42 days
-after the current date in the account's time zone. Cached workouts appear in
-Next Up before background refresh and remain executable offline. Refresh is
-also available from Workouts and Settings.
-
-Only structured Ride and VirtualRide workouts are imported. Relative targets
-remain relative to FTP. The provider's structured workout is authoritative;
-TrainerPro does not reinterpret description text. Unsupported sports or workout
-semantics are reported without failing the entire refresh.
-
-### Ownership and removal
-
-Repeated refreshes update the same local schedules and definitions. Provider
-edits update workout content and placement together. Events missing from a
-successfully fetched window are retired locally; failed requests preserve the
-last-good cache.
-
-Provider-owned workouts stay outside the local Library's deletion and
-catalog identity rules. Importing or cloning a local copy gives it independent
-ownership. Disconnecting removes the credential and retires provider schedules
-and cached definitions while preserving Activity history.
-
-TrainerPro does not upload Activities to Intervals.icu or create, edit, move,
-or delete its calendar events.
+Upgrading from an older version removes retired-provider connections, synced
+workouts, and stored credentials. Recorded Activities and independently owned
+local copies remain available. If the credential store is inaccessible, credential
+removal retries on a later launch.
 
 ## Garmin Connect
 
@@ -94,7 +65,6 @@ cached occurrences and retire missing events only after complete calendar and de
 reads. Failed reads preserve the cache; conversion issues preserve the affected
 workout and appear in sync status. Cached workouts execute offline and stay outside
 the Library. Provider edits cannot change loaded rides or Activity snapshots.
-Garmin and Intervals.icu remain independent, including duplicate rides.
 
 A bounded macOS QA check verified live timed-cycling import with repeated watt
 targets, duplicate-free refresh, cached loading after a restart with provider

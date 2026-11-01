@@ -1,6 +1,6 @@
 # Garmin scheduled cycling
 
-**Purpose:** Verify Garmin calendar reads, cached execution, and independent plan-source behavior.
+**Purpose:** Verify Garmin calendar reads, cached execution, and sync failure behavior.
 **Audience:** QA operators with a separate Garmin test account and scheduled cycling workouts.
 
 ID: `garmin-planning`
@@ -15,8 +15,8 @@ calendar directly in Garmin; TrainerPro only reads it.
 2. Open Workouts. Verify the Garmin occurrence appears in Next Up with the
    correct all-day date, title, duration, power targets, cadence, and instructions.
    Refresh twice: the occurrence must not duplicate or become a local Library item.
-3. With Intervals.icu also connected, refresh both. Verify one source's failure
-   leaves the other's schedules available and reports a separate outcome.
+3. Refresh with Garmin unavailable. Verify a sync error is reported while the
+   last-good Garmin schedules and local Library remain available.
 4. Have the operator schedule the same definition again on a different date.
    Refresh and verify two independent occurrences. Move one and edit its definition
    in Garmin; refresh and verify updated content and placement without duplicates.
@@ -31,7 +31,7 @@ calendar directly in Garmin; TrainerPro only reads it.
    executable. A failed detail/calendar request must preserve the last-good cache.
 8. Have the operator remove one Garmin occurrence and refresh successfully.
    Verify only that occurrence is retired. Disconnect Garmin and verify its cached
-   schedules leave Next Up while local copies, Activities, Intervals.icu schedules,
+   schedules leave Next Up while local copies, Activities,
    and existing upload receipts remain intact.
 
 PASS requires every live assertion. Record untested steps explicitly; synthetic
