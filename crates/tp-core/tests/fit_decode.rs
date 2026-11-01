@@ -366,3 +366,177 @@ fn workout_steps_must_follow_the_declared_contiguous_index_sequence() {
         );
     }
 }
+
+/// Independent wire definition for one explicit workout step. Absent fields really
+/// are absent; u32::MAX exercises FIT invalid sentinels rather than numeric zero.
+fn instruction_fixture(
+    source: &[u8],
+    duration_type: u8,
+    target_type: Option<u8>,
+    target_value: Option<u32>,
+    low: Option<u32>,
+    high: Option<u32>,
+) -> Vec<u8> {
+    let workout = [0x4f, 0, 0, 26, 0, 1, 6, 2, 0x84, 15, 1, 0];
+    let mut fields = vec![
+        (254, 0x84, 0_u16.to_le_bytes().to_vec()),
+        (1, 0, vec![duration_type]),
+        (2, 0x86, 60_000_u32.to_le_bytes().to_vec()),
+    ];
+    if let Some(kind) = target_type {
+        fields.push((3, 0, vec![kind]));
+    }
+    for (field, value) in [(4, target_value), (5, low), (6, high)] {
+        if let Some(value) = value {
+            fields.push((field, 0x86, value.to_le_bytes().to_vec()));
+        }
+    }
+    let mut wire = vec![0x4f, 0, 0, 27, 0, fields.len() as u8];
+    for (field, base_type, bytes) in &fields {
+        wire.extend([*field, bytes.len() as u8, *base_type]);
+    }
+    wire.push(15);
+    for (_, _, bytes) in fields {
+        wire.extend(bytes);
+    }
+    append(&append(source, &workout), &wire)
+}
+
+#[test]
+fn running_custom_speed_targets_become_ordered_pace_without_rounding() {
+    for (low, high) in [(2500, 4000), (3704, 3704)] {
+        let bytes = instruction_fixture(RUNNING, 0, Some(0), Some(0), Some(low), Some(high));
+        let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+        let step = &instructions.steps[0];
+        assert!(step.supported);
+        assert_eq!(step.duration_seconds, Some(60.0));
+        assert_eq!(instructions.limitations.len(), 1);
+        let target = serde_json::to_value(&step.target).unwrap();
+        assert_eq!(target["kind"], "pace_range");
+        assert_eq!(target["fast_seconds_per_km"], 1_000_000.0 / f64::from(high));
+        assert_eq!(target["slow_seconds_per_km"], 1_000_000.0 / f64::from(low));
+    }
+    let bytes = instruction_fixture(CYCLING, 0, Some(0), Some(0), Some(2500), Some(4000));
+    let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+    assert!(!instructions.steps[0].supported);
+    assert!(matches!(
+        instructions.steps[0].target,
+        tp_core::fit::FitInstructionTarget::Unsupported
+    ));
+}
+
+#[test]
+fn heart_rate_targets_preserve_absolute_and_relative_bases_including_exact_bounds() {
+    for (low, high, expected_low, expected_high, unit) in [
+        (225, 260, 125.0, 160.0, "bpm"),
+        (250, 250, 150.0, 150.0, "bpm"),
+        (75, 85, 75.0, 85.0, "%HRmax"),
+        (100, 100, 100.0, 100.0, "%HRmax"),
+        (0, 0, 0.0, 0.0, "%HRmax"),
+        (101, 101, 1.0, 1.0, "bpm"),
+    ] {
+        let bytes = instruction_fixture(RUNNING, 0, Some(1), Some(0), Some(low), Some(high));
+        let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+        let step = &instructions.steps[0];
+        assert!(step.supported);
+        assert_eq!(
+            serde_json::to_value(&step.target).unwrap(),
+            serde_json::json!({
+                "kind":"heart_rate_range", "low":expected_low, "high":expected_high, "unit":unit
+            })
+        );
+    }
+}
+
+#[test]
+fn missing_invalid_zoned_and_mixed_basis_targets_stay_unsupported() {
+    let cases = [
+        (None, Some(0), Some(2500), Some(4000)),
+        (Some(0), None, Some(2500), Some(4000)),
+        (Some(0), Some(1), Some(2500), Some(4000)), // named speed zone
+        (Some(0), Some(0), None, Some(4000)),
+        (Some(0), Some(0), Some(2500), None),
+        (Some(0), Some(0), Some(0), Some(4000)),
+        (Some(0), Some(0), Some(4000), Some(2500)),
+        (Some(0), Some(0), Some(2500), Some(u32::MAX)),
+        (Some(1), None, Some(225), Some(260)),
+        (Some(1), Some(2), Some(225), Some(260)), // named HR zone
+        (Some(1), Some(0), None, Some(260)),
+        (Some(1), Some(0), Some(225), None),
+        (Some(1), Some(0), Some(260), Some(225)),
+        (Some(1), Some(0), Some(90), Some(250)), // percentage and bpm
+        (Some(1), Some(0), Some(100), Some(101)),
+        (Some(1), Some(0), Some(u32::MAX), Some(u32::MAX)),
+        (Some(255), Some(0), Some(225), Some(260)),
+    ];
+    for (kind, value, low, high) in cases {
+        let bytes = instruction_fixture(RUNNING, 0, kind, value, low, high);
+        let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+        assert!(
+            !instructions.steps[0].supported,
+            "{kind:?}, {value:?}, {low:?}, {high:?}"
+        );
+        assert!(matches!(
+            instructions.steps[0].target,
+            tp_core::fit::FitInstructionTarget::Unsupported
+        ));
+        assert_eq!(instructions.limitations.len(), 2);
+    }
+    // An explicit open target remains open; missing target data is never open.
+    let bytes = instruction_fixture(RUNNING, 0, Some(2), None, None, None);
+    let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+    assert!(instructions.steps[0].supported);
+    assert!(matches!(
+        instructions.steps[0].target,
+        tp_core::fit::FitInstructionTarget::Open
+    ));
+}
+
+#[test]
+fn decoded_targets_do_not_establish_supported_distance_or_repeat_endings() {
+    for (kind, low, high) in [(0, 2500, 4000), (1, 225, 260)] {
+        let bytes = instruction_fixture(RUNNING, 1, Some(kind), Some(0), Some(low), Some(high));
+        let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+        assert!(instructions.steps[0].duration_seconds.is_none());
+        assert!(!instructions.steps[0].supported);
+        assert!(!matches!(
+            instructions.steps[0].target,
+            tp_core::fit::FitInstructionTarget::Unsupported
+        ));
+        let bytes = instruction_fixture(RUNNING, 6, Some(kind), Some(0), Some(low), Some(high));
+        let instructions = decode_activity(&bytes).unwrap().instructions.unwrap();
+        assert!(!instructions.steps[0].supported);
+        assert!(matches!(
+            instructions.steps[0].target,
+            tp_core::fit::FitInstructionTarget::Unsupported
+        ));
+    }
+}
+
+#[test]
+fn malformed_float_target_bounds_do_not_create_pace_or_hr_values() {
+    for target_type in [0, 1] {
+        for invalid in [f32::NAN, f32::INFINITY, -1.0, 0.5] {
+            let definition = [
+                0x4f, 0, 0, 27, 0, 7, 254, 2, 0x84, 1, 1, 0, 2, 4, 0x86, 3, 1, 0, 4, 4, 0x86, 5, 4,
+                0x88, 6, 4, 0x88,
+            ];
+            let mut wire = definition.to_vec();
+            wire.extend([15, 0, 0, 0]);
+            wire.extend(60_000_u32.to_le_bytes());
+            wire.push(target_type);
+            wire.extend(0_u32.to_le_bytes());
+            wire.extend(invalid.to_le_bytes());
+            wire.extend(4000_f32.to_le_bytes());
+            let instructions = decode_activity(&append(RUNNING, &wire))
+                .unwrap()
+                .instructions
+                .unwrap();
+            assert!(!instructions.steps[0].supported);
+            assert!(matches!(
+                instructions.steps[0].target,
+                tp_core::fit::FitInstructionTarget::Unsupported
+            ));
+        }
+    }
+}
