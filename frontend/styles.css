@@ -888,13 +888,6 @@ button.big {
 .export-row {
   margin-top: 20px;
 }
-.export-row .icu-ok {
-  align-self: center;
-}
-.icu-ok {
-  color: var(--ok);
-  font-weight: 600;
-}
 
 /* --- forms --- */
 .form {

@@ -456,7 +456,7 @@ mod tests {
             &conn,
             &ConnectedProvider {
                 id: "connection",
-                provider: "intervals_icu",
+                provider: "garmin",
                 external_account_id: "i123",
                 display_name: None,
                 time_zone: Some("Europe/Zurich"),
@@ -494,7 +494,7 @@ mod tests {
             &conn,
             &ConnectedProvider {
                 id: "connection",
-                provider: "intervals_icu",
+                provider: "garmin",
                 external_account_id: "i123",
                 display_name: None,
                 time_zone: Some("Europe/Zurich"),
@@ -507,7 +507,7 @@ mod tests {
             &ProviderWorkoutDefinition {
                 id: "provider-definition",
                 tpw_json: TPW_JSON,
-                origin: "intervals_icu",
+                origin: "garmin",
                 origin_id: Some(42),
                 origin_ref: "42",
                 synced_at_unix_ms: 10,

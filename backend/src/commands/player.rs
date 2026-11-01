@@ -262,7 +262,7 @@ mod tests {
             &ProviderWorkoutDefinition {
                 id: definition_id,
                 tpw_json: &old_json,
-                origin: "intervals_icu",
+                origin: "garmin",
                 origin_id: Some(42),
                 origin_ref: "event-42",
                 synced_at_unix_ms: 1,
@@ -285,7 +285,7 @@ mod tests {
             &ProviderWorkoutDefinition {
                 id: definition_id,
                 tpw_json: &updated_json,
-                origin: "intervals_icu",
+                origin: "garmin",
                 origin_id: Some(42),
                 origin_ref: "event-42",
                 synced_at_unix_ms: 2,

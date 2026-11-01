@@ -358,7 +358,7 @@ mod tests {
             &ProviderWorkoutDefinition {
                 id: "provider-definition",
                 tpw_json: &provider_json,
-                origin: "intervals_icu",
+                origin: "garmin",
                 origin_id: Some(42),
                 origin_ref: "42",
                 synced_at_unix_ms: 20,
@@ -369,7 +369,7 @@ mod tests {
             "INSERT INTO provider_connections (
                id, provider, external_account_id, time_zone,
                created_at_unix_ms, updated_at_unix_ms)
-             VALUES ('connection','intervals_icu','athlete','Europe/Zurich',10,10)",
+             VALUES ('connection','garmin','athlete','Europe/Zurich',10,10)",
             [],
         )
         .unwrap();
@@ -410,7 +410,7 @@ mod tests {
         );
         let catalog_id = save_catalog_entry(
             &mut conn,
-            &catalog("catalog-copy", &provider_json, "intervals_icu", "42", 40),
+            &catalog("catalog-copy", &provider_json, "garmin", "42", 40),
         )
         .unwrap();
         assert_eq!(catalog_id, "catalog-copy");

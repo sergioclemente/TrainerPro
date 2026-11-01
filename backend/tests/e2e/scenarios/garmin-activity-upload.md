@@ -10,8 +10,8 @@ Follow the [QA runner guide](../README.md) for bundle verification. The operator
 supplies credentials directly on Garmin's page in the private sign-in window.
 Never put passwords, tokens, codes, or identifying response bodies in test artifacts.
 
-1. Open Settings → Connections. Verify Garmin and Intervals.icu load
-   independently and Garmin offers **Sign in to Garmin**, with no application-owned
+1. Open Settings → Connections. Verify Garmin is the only provider
+   and offers **Sign in to Garmin**, with no application-owned
    email, password, or MFA fields.
 2. Open the Garmin window, close it, and verify sign-in is cancelled. Open it
    again; the operator signs into the test account and completes MFA when required.

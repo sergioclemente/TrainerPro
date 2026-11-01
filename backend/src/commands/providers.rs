@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{Mutex, MutexGuard};
 
-use super::{garmin, intervals_icu};
+use super::garmin;
 use crate::app_error::AppError;
 use crate::app_state::{now_unix_ms, AppState};
 use crate::database::{activities, activity_uploads, provider_connections};
@@ -42,14 +42,6 @@ const PROVIDERS: &[ProviderDefinition] = &[
         notice: Some("Uses an unofficial Garmin connection. Uploaded rides may sync onward to services linked to your Garmin account."),
         manual_import_url: Some("https://connect.garmin.com/modern/import-data"),
         capabilities: &[ProviderCapability::Planning, ProviderCapability::Activities],
-    },
-    ProviderDefinition {
-        id: tp_integrations::intervals_icu::PROVIDER_ID,
-        name: "Intervals.icu",
-        description: "Scheduled cycling workouts appear in Next Up and remain available offline.",
-        notice: None,
-        manual_import_url: None,
-        capabilities: &[ProviderCapability::Planning],
     },
 ];
 
@@ -186,9 +178,6 @@ pub async fn list_provider_connections(state: State<'_, AppState>) -> R<Vec<Prov
                 tp_integrations::garmin::PROVIDER_ID => {
                     garmin::has_credentials(&state, &row.id).await
                 }
-                tp_integrations::intervals_icu::PROVIDER_ID => {
-                    intervals_icu::has_credentials(&state, &row.id).await
-                }
                 _ => unreachable!("catalog must have an authentication adapter"),
             };
             match credentials {
@@ -250,9 +239,6 @@ pub async fn refresh_provider_plans(
     )?;
     match connection.provider.as_str() {
         tp_integrations::garmin::PROVIDER_ID => garmin::refresh(&state, &connection).await,
-        tp_integrations::intervals_icu::PROVIDER_ID => {
-            intervals_icu::refresh(&state, &connection).await
-        }
         _ => unreachable!("catalog must have a plan-source adapter"),
     }
 }
@@ -270,9 +256,6 @@ pub async fn disconnect_provider(
     match connection.provider.as_str() {
         tp_integrations::garmin::PROVIDER_ID => {
             garmin::disconnect(&state, &garmin, &connection_id).await
-        }
-        tp_integrations::intervals_icu::PROVIDER_ID => {
-            intervals_icu::disconnect(&state, &connection_id).await
         }
         _ => unreachable!("catalog must have a disconnect adapter"),
     }
@@ -432,18 +415,38 @@ mod tests {
     }
 
     #[test]
+    fn catalog_exposes_only_garmin() {
+        assert_eq!(PROVIDERS.len(), 1);
+        assert_eq!(PROVIDERS[0].id, "garmin");
+        assert_eq!(
+            PROVIDERS[0].capabilities,
+            &[ProviderCapability::Planning, ProviderCapability::Activities]
+        );
+        assert_eq!(
+            provider_definition("intervals_icu").err().unwrap().code,
+            "provider_unknown"
+        );
+        let db = crate::database::test_connection();
+        connection(&db, "removed-account", "intervals_icu", "legacy");
+        for capability in [
+            None,
+            Some(ProviderCapability::Planning),
+            Some(ProviderCapability::Activities),
+        ] {
+            assert_eq!(
+                require_active(&db, "removed-account", capability)
+                    .unwrap_err()
+                    .code,
+                "provider_unknown"
+            );
+        }
+    }
+
+    #[test]
     fn capabilities_and_account_lifecycle_are_checked_before_dispatch() {
         let db = crate::database::test_connection();
-        connection(&db, "plans", "intervals_icu", "i123");
         connection(&db, "uploads", "garmin", "123");
-        assert!(require_active(&db, "plans", Some(ProviderCapability::Planning)).is_ok());
         assert!(require_active(&db, "uploads", Some(ProviderCapability::Activities)).is_ok());
-        assert_eq!(
-            require_active(&db, "plans", Some(ProviderCapability::Activities))
-                .unwrap_err()
-                .code,
-            "provider_capability_unsupported"
-        );
         assert!(require_active(&db, "uploads", Some(ProviderCapability::Planning)).is_ok());
         provider_connections::mark_disconnected(&db, "uploads", 2).unwrap();
         connection(&db, "other-account", "garmin", "456");
@@ -467,7 +470,10 @@ mod tests {
             operations.acquire("garmin").unwrap_err().code,
             "provider_busy"
         );
-        assert!(operations.acquire("intervals_icu").is_ok());
+        assert_eq!(
+            operations.acquire("unknown").unwrap_err().code,
+            "provider_unknown"
+        );
         drop(garmin);
         assert!(operations.acquire("garmin").is_ok());
         let transfers = ActivityTransfers::default();
