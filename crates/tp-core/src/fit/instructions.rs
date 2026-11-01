@@ -1,4 +1,5 @@
 //! Explicit instructions embedded in FIT; never inferred from titles or laps.
+use super::FitSport;
 use fitparser::{de::FitDataMessage, Value};
 use serde::{Deserialize, Serialize};
 const WORKOUT_NAME: u8 = 8;
@@ -6,9 +7,13 @@ const STEP_INDEX: u8 = 254;
 const DURATION_TYPE: u8 = 1;
 const DURATION_VALUE: u8 = 2;
 const POWER_TARGET: f64 = 4.0;
+const SPEED_TARGET: f64 = 0.0;
+const HEART_RATE_TARGET: f64 = 1.0;
 const CADENCE_TARGET: f64 = 3.0;
 const OPEN_TARGET: f64 = 2.0;
 const WATTS_OFFSET: f64 = 1000.0;
+const HEART_RATE_OFFSET: f64 = 100.0;
+const MILLIMETERS_PER_KILOMETER: f64 = 1_000_000.0;
 const MILLIS_PER_SECOND: f64 = 1000.0;
 const STEP_TARGET_TYPE: u8 = 3;
 const STEP_TARGET_VALUE: u8 = 4;
@@ -21,6 +26,7 @@ const STEP_SECONDARY_HIGH: u8 = 22;
 const STEP_INTENSITY: u8 = 7;
 const WORKOUT_STEP_COUNT: u8 = 6;
 const TIME_DURATION: f64 = 0.0;
+const DISTANCE_DURATION: f64 = 1.0;
 const CUSTOM_TARGET: f64 = 0.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FitInstructions {
@@ -43,7 +49,22 @@ pub struct FitInstructionStep {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FitInstructionTarget {
     Open,
-    PowerRange { low: f64, high: f64, unit: String },
+    PowerRange {
+        low: f64,
+        high: f64,
+        unit: String,
+    },
+    /// Explicit running speed bounds converted to seconds/km, without rounding.
+    PaceRange {
+        fast_seconds_per_km: f64,
+        slow_seconds_per_km: f64,
+    },
+    /// The unit is bpm or %HRmax; relative targets never imply an absolute HR.
+    HeartRateRange {
+        low: f64,
+        high: f64,
+        unit: String,
+    },
     Unsupported,
 }
 fn number(message: &FitDataMessage, field: u8) -> Option<f64> {
@@ -57,6 +78,7 @@ pub(super) fn index(message: &FitDataMessage, field: u8) -> Option<u16> {
 pub(super) fn decode(
     workout: Option<&FitDataMessage>,
     steps: &[FitDataMessage],
+    sport: FitSport,
 ) -> Option<FitInstructions> {
     if workout.is_none() && steps.is_empty() {
         return None;
@@ -66,6 +88,32 @@ pub(super) fn decode(
         .map(|s| {
             let target = match number(s, STEP_TARGET_TYPE) {
                 Some(OPEN_TARGET) => FitInstructionTarget::Open,
+                Some(SPEED_TARGET) if sport == FitSport::Running => {
+                    match custom_intensity_bounds(s) {
+                        Some((low, high)) if low > 0.0 => FitInstructionTarget::PaceRange {
+                            fast_seconds_per_km: MILLIMETERS_PER_KILOMETER / high,
+                            slow_seconds_per_km: MILLIMETERS_PER_KILOMETER / low,
+                        },
+                        _ => FitInstructionTarget::Unsupported,
+                    }
+                }
+                Some(HEART_RATE_TARGET) => match custom_intensity_bounds(s) {
+                    Some((low, high)) if high <= HEART_RATE_OFFSET => {
+                        FitInstructionTarget::HeartRateRange {
+                            low,
+                            high,
+                            unit: "%HRmax".into(),
+                        }
+                    }
+                    Some((low, high)) if low > HEART_RATE_OFFSET => {
+                        FitInstructionTarget::HeartRateRange {
+                            low: low - HEART_RATE_OFFSET,
+                            high: high - HEART_RATE_OFFSET,
+                            unit: "bpm".into(),
+                        }
+                    }
+                    _ => FitInstructionTarget::Unsupported,
+                },
                 Some(POWER_TARGET) if number(s, STEP_TARGET_VALUE) == Some(CUSTOM_TARGET) => {
                     match number(s, STEP_TARGET_LOW).zip(number(s, STEP_TARGET_HIGH)) {
                         Some((lo, hi)) if lo <= hi && hi <= WATTS_OFFSET => {
@@ -140,4 +188,21 @@ pub(super) fn decode(
         steps: decoded,
         limitations,
     })
+}
+
+fn custom_intensity_bounds(step: &FitDataMessage) -> Option<(f64, f64)> {
+    // Repetition controls overload target_value; do not read them as intensity.
+    if !matches!(
+        number(step, DURATION_TYPE),
+        Some(TIME_DURATION | DISTANCE_DURATION)
+    ) || number(step, STEP_TARGET_VALUE) != Some(CUSTOM_TARGET)
+    {
+        return None;
+    }
+    let low = number(step, STEP_TARGET_LOW)?;
+    let high = number(step, STEP_TARGET_HIGH)?;
+    // Standard bounds are uint32. Reject malformed numeric encodings as well as
+    // reversed ranges; a tiny fractional speed must not produce infinite pace.
+    (low <= high && low.fract() == 0.0 && high.fract() == 0.0 && high < f64::from(u32::MAX))
+        .then_some((low, high))
 }

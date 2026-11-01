@@ -11,7 +11,7 @@ use fitparser::{
 };
 use serde::{Deserialize, Serialize};
 
-pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/3;fitparser/0.11.0";
+pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/4;fitparser/0.11.0";
 const MIN_HEADER_SIZE: usize = 12;
 const CRC_HEADER_SIZE: usize = 14;
 const CRC_SIZE: usize = 2;
@@ -450,7 +450,7 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     // Stable order preserves multiple transitions at the same timestamp.
     timer_events.sort_by(|a, b| a.elapsed_seconds.total_cmp(&b.elapsed_seconds));
     Ok(DecodedActivity {
-        instructions: super::instructions::decode(workout.as_ref(), &steps),
+        instructions: super::instructions::decode(workout.as_ref(), &steps, sport),
         execution_ftp_watts: execution_ftp_watts
             .or_else(|| number(&session, SESSION_THRESHOLD_POWER)),
         rider_weight_kg,
