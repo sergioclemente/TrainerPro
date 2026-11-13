@@ -1569,6 +1569,7 @@ mod tests {
                 seconds: 60,
                 role: workouts::StepRole::Warmup,
                 target: workouts::RunningTarget::Open,
+                notes: None,
             }],
         }
     }
@@ -1952,6 +1953,7 @@ mod tests {
                     high: 160,
                 }),
                 cadence: None,
+                notes: None,
             }],
         });
         let (client, requests) = server(vec![("200 OK", json!({"workoutId":42}), "")]);

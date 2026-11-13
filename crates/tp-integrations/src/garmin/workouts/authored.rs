@@ -27,6 +27,9 @@ pub enum CyclingStep {
         seconds: u32,
         power: Option<CyclingPower>,
         cadence: Option<(u16, u16)>,
+        /// Garmin step notes; see `RunningStep::Timed`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        notes: Option<String>,
     },
     Repeat {
         count: u32,
@@ -69,6 +72,7 @@ impl CyclingStep {
                 seconds,
                 power,
                 cadence,
+                notes,
             } => {
                 if let Some(power) = power {
                     match power {
@@ -90,6 +94,7 @@ impl CyclingStep {
                     seconds: *seconds,
                     role: StepRole::Other,
                     target: RunningTarget::Open,
+                    notes: notes.clone(),
                 }
             }
             Self::Repeat { count, steps } => RunningStep::Repeat {
@@ -180,7 +185,7 @@ fn cycling_steps_match(expected: &Value, actual: &Value) -> bool {
                 || !close(&e["endConditionValue"], &a["endConditionValue"])
                 || a["smartRepeat"].as_bool() == Some(true)
                 || a["skipLastRestStep"].as_bool() == Some(true)
-                || a["description"].as_str().is_some_and(|s| !s.is_empty())
+                || !notes_match(&e["description"], &a["description"])
             {
                 return false;
             }

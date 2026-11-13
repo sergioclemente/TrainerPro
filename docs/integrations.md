@@ -123,10 +123,12 @@ calendar placement, discovery, and removal operations for Harness's administrato
 rehearsal. Workout authoring and calendar writes are not exposed by the desktop application;
 bounded schedule and definition reads also support desktop planning. The caller owns
 approval, persistent receipts, account coordination, and reconciliation; protocol
-writes are sent once. Timed steps, repeats, open targets, and custom pace ranges
-are supported for running; cycling authoring supports timed steady/free steps,
-fixed repeats, watt/%FTP ranges and optional cadence. Cycling authoring remains
-automatically tested but live-unverified. A bounded Harness live check verified running-workout creation/read-back and
+writes are sent once. Timed steps, repeats, open targets, custom pace ranges and
+custom heart-rate ranges are supported for running; cycling authoring supports
+timed steady/free steps, fixed repeats, watt/%FTP ranges and optional cadence.
+Any timed step may carry Garmin step notes of up to 512 characters, which
+read-back verification compares exactly. Cycling authoring, heart-rate targets
+and step notes remain automatically tested but live-unverified. A bounded Harness live check verified running-workout creation/read-back and
 calendar placement, and provider cleanup. Device receipt remains unverified because
 the test account had no paired device. Mocked tests do not establish provider
 availability or device receipt.

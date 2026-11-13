@@ -15,7 +15,11 @@ const RUNNING_SPORT_ID: u8 = 1;
 const TIME_CONDITION_ID: u8 = 2;
 const REPEAT_CONDITION_ID: u8 = 7;
 const OPEN_TARGET_ID: u8 = 1;
+const HEART_RATE_TARGET_ID: u8 = 4;
 const PACE_TARGET_ID: u8 = 6;
+/// Garmin Connect limits step notes to 512 characters.
+const MAX_STEP_NOTES_CHARS: usize = 512;
+const MAX_HEART_RATE_BPM: u16 = 255;
 const REPEAT_STEP_ID: u8 = 6;
 const MAX_STEPS: usize = 100;
 const MAX_REPEAT_DEPTH: usize = 3;
@@ -57,6 +61,10 @@ pub enum RunningStep {
         seconds: u32,
         role: StepRole,
         target: RunningTarget,
+        /// Garmin step notes. Watches display them at the step start; Edge
+        /// units do not display them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        notes: Option<String>,
     },
     Repeat {
         count: u32,
@@ -93,6 +101,11 @@ pub enum RunningTarget {
     PaceRange {
         slow_mps: f64,
         fast_mps: f64,
+    },
+    /// Garmin's custom heart-rate target, in beats per minute.
+    HeartRateRange {
+        low_bpm: u16,
+        high_bpm: u16,
     },
 }
 impl RunningWorkout {
@@ -148,6 +161,7 @@ fn encode_steps(
                 seconds,
                 role,
                 target,
+                notes,
             } => {
                 if *seconds == 0 {
                     return Err(GarminError::InvalidRequest);
@@ -157,6 +171,12 @@ fn encode_steps(
                     "stepType":{"stepTypeId":id,"stepTypeKey":key},
                     "endCondition":{"conditionTypeId":TIME_CONDITION_ID,"conditionTypeKey":"time"},
                     "endConditionValue":seconds});
+                if let Some(notes) = notes {
+                    if notes.trim().is_empty() || notes.chars().count() > MAX_STEP_NOTES_CHARS {
+                        return Err(GarminError::InvalidRequest);
+                    }
+                    value["description"] = json!(notes);
+                }
                 match target {
                     RunningTarget::Open => {
                         value["targetType"] = json!({"workoutTargetTypeId":OPEN_TARGET_ID,"workoutTargetTypeKey":"no.target"})
@@ -172,6 +192,14 @@ fn encode_steps(
                         value["targetType"] = json!({"workoutTargetTypeId":PACE_TARGET_ID,"workoutTargetTypeKey":"pace.zone"});
                         value["targetValueOne"] = json!(slow_mps);
                         value["targetValueTwo"] = json!(fast_mps);
+                    }
+                    RunningTarget::HeartRateRange { low_bpm, high_bpm } => {
+                        if *low_bpm == 0 || low_bpm > high_bpm || *high_bpm > MAX_HEART_RATE_BPM {
+                            return Err(GarminError::InvalidRequest);
+                        }
+                        value["targetType"] = json!({"workoutTargetTypeId":HEART_RATE_TARGET_ID,"workoutTargetTypeKey":"heart.rate.zone"});
+                        value["targetValueOne"] = json!(low_bpm);
+                        value["targetValueTwo"] = json!(high_bpm);
                     }
                 }
                 (value, *seconds, 1)
@@ -218,6 +246,10 @@ fn close(a: &Value, b: &Value) -> bool {
         _ => a == b,
     }
 }
+/// Absent and empty step notes are equivalent; any other text must match exactly.
+fn notes_match(expected: &Value, actual: &Value) -> bool {
+    expected.as_str().unwrap_or_default() == actual.as_str().unwrap_or_default()
+}
 fn steps_match(expected: &Value, actual: &Value) -> bool {
     let (Some(expected), Some(actual)) = (expected.as_array(), actual.as_array()) else {
         return false;
@@ -232,7 +264,7 @@ fn steps_match(expected: &Value, actual: &Value) -> bool {
                 || a["secondaryTargetType"]
                     .as_object()
                     .is_some_and(|t| t.get("workoutTargetTypeId") != Some(&json!(OPEN_TARGET_ID)))
-                || a["description"].as_str().is_some_and(|v| !v.is_empty())
+                || !notes_match(&e["description"], &a["description"])
             {
                 return false;
             }
@@ -521,11 +553,14 @@ mod tests {
                         slow_mps: 2.7,
                         fast_mps: 3.0,
                     },
+                    notes: None,
                 }],
             }],
         };
         let mut body = workout.payload().unwrap();
         body["workoutId"] = json!(41);
+        body["workoutSegments"][0]["workoutSteps"][0]["workoutSteps"][0]["description"] = json!("");
+        assert!(workout.matches(&body).unwrap());
         body["workoutSegments"][0]["workoutSteps"][0]["workoutSteps"][0]["targetValueOne"] =
             json!(2.700001);
         assert!(workout.matches(&body).unwrap());
@@ -538,9 +573,117 @@ mod tests {
             altered["workoutSegments"][0]["workoutSteps"][0][key] = value;
             assert!(!workout.matches(&altered).unwrap());
         }
-        let step = &mut body["workoutSegments"][0]["workoutSteps"][0]["workoutSteps"][0];
-        step["secondaryTargetType"] = json!({"workoutTargetTypeId":3});
+        let step = "workoutSegments";
+        body[step][0]["workoutSteps"][0]["workoutSteps"][0]["description"] =
+            json!("added remotely");
         assert!(!workout.matches(&body).unwrap());
+        body[step][0]["workoutSteps"][0]["workoutSteps"][0]["description"] = Value::Null;
+        body[step][0]["workoutSteps"][0]["workoutSteps"][0]["secondaryTargetType"] =
+            json!({"workoutTargetTypeId":3});
+        assert!(!workout.matches(&body).unwrap());
+    }
+    #[test]
+    fn step_notes_and_heart_rate_ranges_round_trip_through_readback() {
+        let workout = RunningWorkout {
+            name: "synthetic".into(),
+            description: "test".into(),
+            steps: vec![RunningStep::Timed {
+                seconds: 300,
+                role: StepRole::Work,
+                target: RunningTarget::HeartRateRange {
+                    low_bpm: 120,
+                    high_bpm: 140,
+                },
+                notes: Some("Relaxed shoulders\n2:00 Lift the cadence".into()),
+            }],
+        };
+        let mut body = workout.payload().unwrap();
+        let step = &body["workoutSegments"][0]["workoutSteps"][0];
+        assert_eq!(
+            step["targetType"]["workoutTargetTypeId"],
+            HEART_RATE_TARGET_ID
+        );
+        assert_eq!(
+            step["targetType"]["workoutTargetTypeKey"],
+            "heart.rate.zone"
+        );
+        assert_eq!(step["targetValueOne"], 120);
+        assert_eq!(step["targetValueTwo"], 140);
+        assert_eq!(
+            step["description"],
+            "Relaxed shoulders\n2:00 Lift the cadence"
+        );
+        assert!(workout.matches(&body).unwrap());
+        body["workoutSegments"][0]["workoutSteps"][0]["description"] = json!("Relaxed shoulders");
+        assert!(!workout.matches(&body).unwrap());
+        body["workoutSegments"][0]["workoutSteps"][0]["description"] =
+            json!("Relaxed shoulders\n2:00 Lift the cadence");
+        body["workoutSegments"][0]["workoutSteps"][0]["targetValueTwo"] = json!(150);
+        assert!(!workout.matches(&body).unwrap());
+        let stored: RunningWorkout = serde_json::from_str(
+            r#"{"name":"legacy","description":"","steps":[{"type":"timed","seconds":60,"role":"work","target":{"type":"open"}}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            stored.steps[0],
+            RunningStep::Timed { notes: None, .. }
+        ));
+        assert!(!serde_json::to_string(&stored).unwrap().contains("notes"));
+    }
+    #[test]
+    fn invalid_notes_and_heart_rate_ranges_are_rejected_before_writes() {
+        let base = RunningWorkout {
+            name: "test".into(),
+            description: "test".into(),
+            steps: vec![],
+        };
+        for step in [
+            RunningStep::Timed {
+                seconds: 60,
+                role: StepRole::Work,
+                target: RunningTarget::Open,
+                notes: Some("x".repeat(MAX_STEP_NOTES_CHARS + 1)),
+            },
+            RunningStep::Timed {
+                seconds: 60,
+                role: StepRole::Work,
+                target: RunningTarget::Open,
+                notes: Some("   ".into()),
+            },
+            RunningStep::Timed {
+                seconds: 60,
+                role: StepRole::Work,
+                target: RunningTarget::HeartRateRange {
+                    low_bpm: 150,
+                    high_bpm: 140,
+                },
+                notes: None,
+            },
+            RunningStep::Timed {
+                seconds: 60,
+                role: StepRole::Work,
+                target: RunningTarget::HeartRateRange {
+                    low_bpm: 0,
+                    high_bpm: 140,
+                },
+                notes: None,
+            },
+            RunningStep::Timed {
+                seconds: 60,
+                role: StepRole::Work,
+                target: RunningTarget::HeartRateRange {
+                    low_bpm: 100,
+                    high_bpm: MAX_HEART_RATE_BPM + 1,
+                },
+                notes: None,
+            },
+        ] {
+            let workout = RunningWorkout {
+                steps: vec![step],
+                ..base.clone()
+            };
+            assert_eq!(workout.payload(), Err(GarminError::InvalidRequest));
+        }
     }
     #[test]
     fn rejects_invalid_and_excessive_workouts_before_writes() {
@@ -554,6 +697,7 @@ mod tests {
             seconds: 60,
             role: StepRole::Other,
             target: RunningTarget::Open,
+            notes: None,
         };
         workout.steps = vec![RunningStep::Repeat {
             count: 101,
@@ -567,6 +711,7 @@ mod tests {
                 slow_mps: 3.0,
                 fast_mps: 2.0,
             },
+            notes: None,
         }];
         assert_eq!(workout.payload(), Err(GarminError::InvalidRequest));
         workout.steps = vec![RunningStep::Repeat {
