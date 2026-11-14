@@ -2,8 +2,13 @@
 // from WorkoutPlanner (public/countdown.wav and public/end.wav); voice-command
 // readiness and outcomes use short synthesized tones below.
 
-/** How far ahead of a segment boundary the countdown clip starts. */
-export const COUNTDOWN_LEAD_S = 3.5;
+/**
+ * How far ahead of a segment boundary the countdown clip starts. The clip is
+ * three low beeps at 0, 1 and 2 s and a high "go" beep at 3 s (ringing until
+ * 3.5 s), so this is the offset of the go beep, not the clip length: the go
+ * beep must land on the boundary itself.
+ */
+export const COUNTDOWN_LEAD_S = 3;
 
 const MUTE_KEY = "trainerpro.sounds.muted";
 const VOICE_CUE_GAIN = 0.08;
