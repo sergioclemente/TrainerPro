@@ -11,12 +11,11 @@ import { useStore } from "../state";
 import { createControllerInputHandler } from "../voice/controllerInput";
 import { ExpandIcon } from "../components/MetricIcons";
 import { hudView, type HudCell } from "../miniHud";
+import { useIntervalClock } from "../intervalClock";
 import { playerActions } from "./Player.actions";
 
 /** How long an action error stays in the bar slot. */
 const ERROR_DISPLAY_MS = 6_000;
-/** The interval clock's direction sticks across rides, like the Player's. */
-const INTERVAL_ELAPSED_KEY = "trainerpro.hud.intervalElapsed";
 
 interface Cue {
   message: string;
@@ -69,9 +68,7 @@ export default function MiniHud() {
   const [ftpW, setFtpW] = useState<number | null>(null);
   const [cue, setCue] = useState<Cue | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showIntervalElapsed, setShowIntervalElapsed] = useState(
-    () => localStorage.getItem(INTERVAL_ELAPSED_KEY) === "1",
-  );
+  const [showIntervalElapsed, toggleIntervalClock] = useIntervalClock();
   const [, setTick] = useState(0);
   const errorTimer = useRef<number | null>(null);
 
@@ -164,13 +161,6 @@ export default function MiniHud() {
 
   function hideHud() {
     void ipc.hideMiniHud().catch(() => undefined);
-  }
-
-  function toggleIntervalClock() {
-    setShowIntervalElapsed((v) => {
-      localStorage.setItem(INTERVAL_ELAPSED_KEY, v ? "0" : "1");
-      return !v;
-    });
   }
 
   useEffect(() => {

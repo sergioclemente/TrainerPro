@@ -96,6 +96,8 @@ Once a ride has started, **Mini** hides the main window and opens the HUD;
 minimizing the main window does the same while riding, and only then. The HUD
 is a small transparent window that stays above other apps and shows watts,
 rpm, bpm, and the interval clock, which clicks between remaining and elapsed.
+That direction is one preference shared with the Player's interval clock:
+changing it in either window changes both, and it sticks across rides.
 There is no target cell: a glyph before the watts says push, ease, or hold
 against the target (within 5 %), and the rpm cell does the same for a cadence
 target. ERG off and an open interval are named in the watts label; intensity

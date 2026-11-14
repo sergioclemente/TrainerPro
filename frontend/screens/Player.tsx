@@ -18,6 +18,7 @@ import type { ControllerInputEvent } from "../ipc";
 import { createControllerInputHandler, isPushToTalkKey, isInteractiveTarget } from "../voice/controllerInput";
 import { useVoice, useVoiceSurface } from "../voice/VoiceController";
 import { playerActions } from "./Player.actions";
+import { useIntervalClock } from "../intervalClock";
 import { createPlayerVoiceSurface } from "./Player.voice";
 
 const STATS_KEY = "trainerpro.player.stats";
@@ -70,9 +71,10 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
   useVoiceSurface(
     player !== null && player.phase !== "finished" ? PLAYER_VOICE_SURFACE : null,
   );
-  /** Both clocks show elapsed by default; clicking one toggles it to remaining. */
+  /** Both clocks show elapsed by default; clicking one toggles it to remaining.
+      The interval clock's direction is shared with the mini HUD. */
   const [showRemaining, setShowRemaining] = useState(false);
-  const [showIntervalRemaining, setShowIntervalRemaining] = useState(false);
+  const [showIntervalElapsed, toggleIntervalClock] = useIntervalClock();
   const [muted, setMutedState] = useState(isMuted);
   /** Detail stats are opt-in and the choice sticks across rides. */
   const [showStats, setShowStats] = useState(
@@ -263,7 +265,7 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
   const segElapsed_s = segment
     ? Math.max(0, segment.duration_s - player.seg_remaining_s)
     : null;
-  const showSegRemaining = showIntervalRemaining || segElapsed_s === null;
+  const showSegRemaining = !showIntervalElapsed || segElapsed_s === null;
   // Live EF, the same shape as the W/kg beside it: what the ratio is right now,
   // off the displayed (3 s smoothed) watts. The session figure — NP over average
   // HR — is the one in the stats strip.
@@ -380,7 +382,7 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
         <button
           className="clock clock-toggle"
           title="Click to switch between elapsed and remaining"
-          onClick={() => setShowIntervalRemaining((v) => !v)}
+          onClick={toggleIntervalClock}
           disabled={segElapsed_s === null}
         >
           <div className="countdown">
