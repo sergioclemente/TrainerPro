@@ -540,3 +540,46 @@ fn malformed_float_target_bounds_do_not_create_pace_or_hr_values() {
         }
     }
 }
+
+#[test]
+fn lap_and_session_totals_keep_recorded_zero_and_drop_invalid_sentinels() {
+    // Local message 15: lap with start_time, total_elapsed_time, max_heart_rate,
+    // max_power, total_ascent, total_descent and normalized_power.
+    let definition = [
+        0x4f, 0, 0, 19, 0, 7, 2, 4, 0x86, 7, 4, 0x86, 16, 1, 0x02, 20, 2, 0x84, 21, 2, 0x84, 22, 2,
+        0x84, 33, 2, 0x84,
+    ];
+    let fit_start: u32 = 1767225600 - 631065600;
+    let message = [
+        definition.as_slice(),
+        &[15],
+        &fit_start.to_le_bytes(),
+        &5_000u32.to_le_bytes(),
+        &[0xff],
+        &350u16.to_le_bytes(),
+        &120u16.to_le_bytes(),
+        &0u16.to_le_bytes(),
+        &0xffffu16.to_le_bytes(),
+    ]
+    .concat();
+    let activity = decode_activity(&append(CYCLING, &message)).unwrap();
+    assert_eq!(activity.laps.len(), 2);
+    let lap = &activity.laps[1].summary;
+    assert_eq!(lap.max_power_watts, Some(350.0));
+    assert_eq!(lap.total_ascent_meters, Some(120.0));
+    assert_eq!(
+        lap.total_descent_meters,
+        Some(0.0),
+        "recorded zero is evidence"
+    );
+    assert_eq!(lap.max_heart_rate_bpm, None, "invalid uint8 sentinel");
+    assert_eq!(lap.normalized_power_watts, None, "invalid uint16 sentinel");
+    for summary in [&activity.summary, &activity.laps[0].summary] {
+        assert_eq!(summary.mean_power_watts, Some(150.0));
+        assert_eq!(summary.normalized_power_watts, None);
+        assert_eq!(summary.max_power_watts, None);
+        assert_eq!(summary.max_heart_rate_bpm, None);
+        assert_eq!(summary.total_ascent_meters, None);
+        assert_eq!(summary.total_descent_meters, None);
+    }
+}
