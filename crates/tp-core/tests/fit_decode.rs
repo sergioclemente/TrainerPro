@@ -17,6 +17,9 @@ fn sdk_activity_preserves_units_invalid_values_zero_and_explicit_enhanced_speed(
     assert_eq!(activity.records[2].cadence, None);
     assert_eq!(activity.records[0].cadence, Some(90.5));
     assert_eq!(activity.records[0].speed_meters_per_second, Some(3.123));
+    // The SDK fixtures write neither distance nor altitude; absence stays unknown.
+    assert!(activity.records.iter().all(|r| r.distance_meters.is_none()));
+    assert!(activity.records.iter().all(|r| r.altitude_meters.is_none()));
     assert_eq!(activity.laps[0].start_seconds, Some(0.0));
     assert_eq!(activity.laps[0].end_seconds, Some(10.0));
     assert!(activity.laps[0].usable_window_bounds);

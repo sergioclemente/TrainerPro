@@ -104,8 +104,9 @@ fn nominal_one_hz_jitter_exports_latest_observation_once_per_fit_second() {
             "full-resolution source is immutable"
         );
         assert_eq!(decoded.duration_seconds, f64::from(totals.elapsed_s));
-        if trace.is_some() {
-            let expected = motion.records.last().unwrap().speed_m_s;
+        assert!(decoded.records.iter().all(|r| r.altitude_meters.is_none()));
+        if let Some(trace) = trace {
+            let expected = trace.records.last().unwrap().speed_m_s;
             assert!(
                 (decoded
                     .records
@@ -117,6 +118,16 @@ fn nominal_one_hz_jitter_exports_latest_observation_once_per_fit_second() {
                     .abs()
                     <= 0.001
             );
+            // Cumulative distance round-trips at centimetre precision and never decreases.
+            let distances: Vec<f64> = decoded
+                .records
+                .iter()
+                .map(|r| r.distance_meters.expect("motion writes distance"))
+                .collect();
+            assert!(distances.windows(2).all(|p| p[0] <= p[1]));
+            assert!((distances.last().unwrap() - trace.session.distance_m).abs() <= 0.01);
+        } else {
+            assert!(decoded.records.iter().all(|r| r.distance_meters.is_none()));
         }
     }
 }
