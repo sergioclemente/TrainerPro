@@ -104,8 +104,9 @@ fn nominal_one_hz_jitter_exports_latest_observation_once_per_fit_second() {
             "full-resolution source is immutable"
         );
         assert_eq!(decoded.duration_seconds, f64::from(totals.elapsed_s));
-        if trace.is_some() {
-            let expected = motion.records.last().unwrap().speed_m_s;
+        assert!(decoded.records.iter().all(|r| r.altitude_meters.is_none()));
+        if let Some(trace) = trace {
+            let expected = trace.records.last().unwrap().speed_m_s;
             assert!(
                 (decoded
                     .records
@@ -117,6 +118,16 @@ fn nominal_one_hz_jitter_exports_latest_observation_once_per_fit_second() {
                     .abs()
                     <= 0.001
             );
+            // Cumulative distance round-trips at centimetre precision and never decreases.
+            let distances: Vec<f64> = decoded
+                .records
+                .iter()
+                .map(|r| r.distance_meters.expect("motion writes distance"))
+                .collect();
+            assert!(distances.windows(2).all(|p| p[0] <= p[1]));
+            assert!((distances.last().unwrap() - trace.session.distance_m).abs() <= 0.01);
+        } else {
+            assert!(decoded.records.iter().all(|r| r.distance_meters.is_none()));
         }
     }
 }
@@ -274,5 +285,70 @@ fn watt_and_open_targets_round_trip_without_linking_a_partial_lap() {
                 .iter()
                 .all(|lap| lap.workout_step_index.is_none()));
         }
+    }
+}
+
+#[test]
+fn exported_session_and_lap_totals_decode_as_reported_summary_fields() {
+    const STEPS: u64 = 60;
+    let mut samples = Vec::new();
+    for i in 0..STEPS {
+        samples.push(sample(
+            i * MS_PER_SECOND,
+            Some(if i < STEPS / 2 { 150 } else { 250 }),
+        ));
+    }
+    let data = SessionRecording {
+        header: header("Reported totals"),
+        samples,
+        events: vec![
+            SessionEvent {
+                t_ms: 0,
+                kind: SessionEventKind::Start,
+                segment_index: None,
+            },
+            SessionEvent {
+                t_ms: STEPS * MS_PER_SECOND,
+                kind: SessionEventKind::End,
+                segment_index: None,
+            },
+        ],
+    };
+    let laps = compute_activity_segments(&data);
+    let totals = session_totals(&data, FTP_W);
+    let bytes = encode_activity(&FitActivity {
+        header: &data.header,
+        samples: &data.samples,
+        events: &data.events,
+        laps: &laps,
+        totals: &totals,
+        motion: None,
+        workout: None,
+    })
+    .unwrap();
+    let decoded = decode_activity(&bytes).unwrap();
+    let watts = |value: Option<u16>| value.map(f64::from);
+    assert_eq!(decoded.summary.max_power_watts, Some(250.0));
+    assert_eq!(
+        decoded.summary.normalized_power_watts,
+        watts(totals.normalized_power_w)
+    );
+    assert!(decoded.summary.normalized_power_watts.is_some());
+    assert_eq!(
+        decoded.summary.max_heart_rate_bpm, None,
+        "no heart-rate samples"
+    );
+    assert_eq!(
+        decoded.summary.total_ascent_meters, None,
+        "indoor export has no ascent"
+    );
+    assert_eq!(decoded.laps.len(), laps.len());
+    for (decoded_lap, lap) in decoded.laps.iter().zip(&laps) {
+        assert_eq!(decoded_lap.summary.max_power_watts, watts(lap.max_power_w));
+        assert_eq!(
+            decoded_lap.summary.normalized_power_watts,
+            watts(lap.normalized_power_w)
+        );
+        assert_eq!(decoded_lap.summary.max_heart_rate_bpm, None);
     }
 }

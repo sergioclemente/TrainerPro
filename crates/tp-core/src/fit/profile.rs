@@ -207,6 +207,7 @@ pub const EVENT_TYPE_STOP_ALL: u8 = 4;
 // ---------------------------------------------------------------------------
 
 pub const RECORD_TIMESTAMP: u8 = 253; // uint32 (date_time)
+pub const RECORD_ALTITUDE: u8 = 2; // uint16, scale 5, offset 500 (m)
 pub const RECORD_HEART_RATE: u8 = 3; // uint8, bpm
 pub const RECORD_CADENCE: u8 = 4; // uint8, rpm
 pub const RECORD_DISTANCE: u8 = 5; // uint32, scale 100 (m)
@@ -217,6 +218,9 @@ pub const RECORD_POWER: u8 = 7; // uint16, W
 pub const DISTANCE_SCALE: f64 = 100.0;
 /// record.speed scale: stored value = m/s × 1000.
 pub const SPEED_SCALE: f64 = 1000.0;
+/// record.altitude scale and offset: metres = stored value ÷ 5 − 500.
+pub const ALTITUDE_SCALE: f64 = 5.0;
+pub const ALTITUDE_OFFSET_METERS: f64 = 500.0;
 
 // ---------------------------------------------------------------------------
 // lap (19)
@@ -237,6 +241,8 @@ pub const LAP_AVG_CADENCE: u8 = 17; // uint8
 pub const LAP_MAX_CADENCE: u8 = 18; // uint8
 pub const LAP_AVG_POWER: u8 = 19; // uint16
 pub const LAP_MAX_POWER: u8 = 20; // uint16
+pub const LAP_TOTAL_ASCENT: u8 = 21; // uint16, m
+pub const LAP_TOTAL_DESCENT: u8 = 22; // uint16, m
 pub const LAP_INTENSITY: u8 = 23; // enum
 pub const LAP_LAP_TRIGGER: u8 = 24; // enum
 pub const LAP_SPORT: u8 = 25; // enum
@@ -270,6 +276,8 @@ pub const SESSION_AVG_CADENCE: u8 = 18; // uint8
 pub const SESSION_MAX_CADENCE: u8 = 19; // uint8
 pub const SESSION_AVG_POWER: u8 = 20; // uint16
 pub const SESSION_MAX_POWER: u8 = 21; // uint16
+pub const SESSION_TOTAL_ASCENT: u8 = 22; // uint16, m
+pub const SESSION_TOTAL_DESCENT: u8 = 23; // uint16, m
 pub const SESSION_FIRST_LAP_INDEX: u8 = 25; // uint16
 pub const SESSION_NUM_LAPS: u8 = 26; // uint16
 pub const SESSION_NORMALIZED_POWER: u8 = 34; // uint16, W
