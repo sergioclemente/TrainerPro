@@ -11,7 +11,7 @@ use fitparser::{
 };
 use serde::{Deserialize, Serialize};
 
-pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/5;fitparser/0.11.0";
+pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/6;fitparser/0.11.0";
 const MIN_HEADER_SIZE: usize = 12;
 const CRC_HEADER_SIZE: usize = 14;
 const CRC_SIZE: usize = 2;
@@ -26,6 +26,7 @@ const TIMESTAMP: u8 = 253;
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 const SPORT_RUNNING: f64 = 1.0;
 const ENHANCED_SPEED: u8 = 73;
+const ENHANCED_ALTITUDE: u8 = 78;
 const FRACTIONAL_CADENCE: u8 = 53;
 const FRACTIONAL_CADENCE_SCALE: f64 = 128.0;
 const MSG_FIELD_DESCRIPTION: u16 = 206;
@@ -118,6 +119,12 @@ pub struct DecodedRecord {
     pub speed_meters_per_second: Option<f64>,
     /// Cycling revolutions/minute or running steps/minute (both feet).
     pub cadence: Option<f64>,
+    /// Device-recorded cumulative distance from the session start.
+    #[serde(default)]
+    pub distance_meters: Option<f64>,
+    /// Device-recorded altitude, preferring the explicit enhanced field.
+    #[serde(default)]
+    pub altitude_meters: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -413,6 +420,10 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
                     .or_else(|| number(message, RECORD_SPEED))
                     .map(|v| v / SPEED_SCALE),
                 cadence,
+                distance_meters: number(message, RECORD_DISTANCE).map(|v| v / DISTANCE_SCALE),
+                altitude_meters: number(message, ENHANCED_ALTITUDE)
+                    .or_else(|| number(message, RECORD_ALTITUDE))
+                    .map(|v| v / ALTITUDE_SCALE - ALTITUDE_OFFSET_METERS),
             })
         })
         .collect::<Result<Vec<_>, FitDecodeError>>()?;
