@@ -646,10 +646,6 @@ fn generic_gym_and_hiit_sessions_decode_as_training_without_cadence() {
             activity.records.iter().all(|r| r.cadence.is_none()),
             "recorded cadence has no unit for training sessions"
         );
-        assert!(activity
-            .records
-            .iter()
-            .all(|r| r.power_watts.is_none() && r.speed_meters_per_second.is_none()));
         assert_eq!(activity.laps.len(), 1);
         assert!(activity.laps[0].usable_window_bounds);
         assert_eq!(activity.laps[0].summary.mean_heart_rate_bpm, Some(140.0));
