@@ -586,3 +586,87 @@ fn lap_and_session_totals_keep_recorded_zero_and_drop_invalid_sentinels() {
         assert_eq!(summary.total_descent_meters, None);
     }
 }
+
+/// Independent wire fixture for a gym session: heart rate and cadence records,
+/// one lap and a timer stop, with the session sport supplied by the caller.
+fn training_fixture(sport: u8) -> Vec<u8> {
+    const FIT_START: u32 = 1_136_160_000;
+    const DURATION_MS: u32 = 10_000;
+    let mut data = vec![0x40, 0, 0, 0, 0, 1, 0, 1, 0, 0, 4]; // file_id: activity
+                                                             // session: start_time, total_elapsed_time, sport, avg_heart_rate
+    data.extend([
+        0x41, 0, 0, 18, 0, 4, 2, 4, 0x86, 7, 4, 0x86, 5, 1, 0, 16, 1, 0x02, 1,
+    ]);
+    data.extend(FIT_START.to_le_bytes());
+    data.extend(DURATION_MS.to_le_bytes());
+    data.extend([sport, 140]);
+    // record: timestamp, heart_rate, cadence
+    data.extend([0x42, 0, 0, 20, 0, 3, 253, 4, 0x86, 3, 1, 0x02, 4, 1, 0x02]);
+    for (offset, heart_rate) in [(0_u32, 120_u8), (5, 0xff), (10, 160)] {
+        data.push(2);
+        data.extend((FIT_START + offset).to_le_bytes());
+        data.extend([heart_rate, 30]);
+    }
+    // lap: start_time, total_elapsed_time, avg_heart_rate
+    data.extend([0x43, 0, 0, 19, 0, 3, 2, 4, 0x86, 7, 4, 0x86, 15, 1, 0x02, 3]);
+    data.extend(FIT_START.to_le_bytes());
+    data.extend(DURATION_MS.to_le_bytes());
+    data.push(140);
+    // timer stop_all event: timestamp, event, event_type
+    data.extend([0x44, 0, 0, 21, 0, 3, 253, 4, 0x86, 0, 1, 0, 1, 1, 0, 4]);
+    data.extend((FIT_START + 10).to_le_bytes());
+    data.extend([0, 4]);
+    let mut bytes = vec![12, 0x20, 0, 0];
+    bytes.extend((data.len() as u32).to_le_bytes());
+    bytes.extend(b".FIT");
+    bytes.extend(data);
+    bytes.extend(checksum(&bytes).to_le_bytes());
+    bytes
+}
+
+#[test]
+fn generic_gym_and_hiit_sessions_decode_as_training_without_cadence() {
+    const GENERIC: u8 = 0;
+    const FITNESS_EQUIPMENT: u8 = 4;
+    const TRAINING: u8 = 10;
+    const HIIT: u8 = 62;
+    for sport in [GENERIC, FITNESS_EQUIPMENT, TRAINING, HIIT] {
+        let activity = decode_activity(&training_fixture(sport))
+            .unwrap_or_else(|e| panic!("sport {sport}: {e}"));
+        assert_eq!(activity.sport, FitSport::Training);
+        assert_eq!(serde_json::to_value(activity.sport).unwrap(), "training");
+        assert_eq!(activity.duration_seconds, 10.0);
+        assert_eq!(activity.summary.mean_heart_rate_bpm, Some(140.0));
+        // Absent totals stay unknown; nothing is derived for a session without them.
+        assert_eq!(activity.summary.distance_meters, None);
+        assert_eq!(activity.summary.mean_power_watts, None);
+        let heart_rates: Vec<_> = activity.records.iter().map(|r| r.heart_rate_bpm).collect();
+        assert_eq!(heart_rates, [Some(120.0), None, Some(160.0)]);
+        assert!(
+            activity.records.iter().all(|r| r.cadence.is_none()),
+            "recorded cadence has no unit for training sessions"
+        );
+        assert_eq!(activity.laps.len(), 1);
+        assert!(activity.laps[0].usable_window_bounds);
+        assert_eq!(activity.laps[0].summary.mean_heart_rate_bpm, Some(140.0));
+        assert_eq!(activity.timer_events.len(), 1);
+        assert_eq!(activity.timer_events[0].state, TimerState::Paused);
+        assert!(activity.instructions.is_none());
+    }
+}
+
+#[test]
+fn sports_outside_cycling_running_and_training_stay_unsupported() {
+    const SWIMMING: u8 = 5;
+    const WALKING: u8 = 11;
+    const INVALID: u8 = 0xff;
+    for sport in [SWIMMING, WALKING, INVALID] {
+        assert!(
+            matches!(
+                decode_activity(&training_fixture(sport)),
+                Err(FitDecodeError::UnsupportedActivity)
+            ),
+            "sport {sport}"
+        );
+    }
+}

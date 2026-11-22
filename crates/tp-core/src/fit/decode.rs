@@ -11,7 +11,7 @@ use fitparser::{
 };
 use serde::{Deserialize, Serialize};
 
-pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/6;fitparser/0.11.0";
+pub const FIT_DECODER_VERSION: &str = "tp-fit-activity/7;fitparser/0.11.0";
 const MIN_HEADER_SIZE: usize = 12;
 const CRC_HEADER_SIZE: usize = 14;
 const CRC_SIZE: usize = 2;
@@ -25,6 +25,11 @@ const RUNNING_STEPS_PER_CYCLE: f64 = 2.0;
 const TIMESTAMP: u8 = 253;
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 const SPORT_RUNNING: f64 = 1.0;
+// Sessions without cycling or running semantics: gym, class and catch-all profiles.
+const SPORT_GENERIC: f64 = 0.0;
+const SPORT_FITNESS_EQUIPMENT: f64 = 4.0;
+const SPORT_TRAINING: f64 = 10.0;
+const SPORT_HIIT: f64 = 62.0;
 const ENHANCED_SPEED: u8 = 73;
 const ENHANCED_ALTITUDE: u8 = 78;
 const FRACTIONAL_CADENCE: u8 = 53;
@@ -47,7 +52,7 @@ pub enum FitDecodeError {
     InvalidEncoding,
     #[error("FIT activity exceeds decoding limits")]
     LimitExceeded,
-    #[error("Expected one cycling or running FIT activity session")]
+    #[error("Expected one cycling, running or training FIT activity session")]
     UnsupportedActivity,
     #[error("FIT message is missing a required timestamp")]
     MissingTimestamp,
@@ -88,6 +93,9 @@ impl FitDecodeError {
 pub enum FitSport {
     Cycling,
     Running,
+    /// FIT generic, fitness equipment, training or HIIT session. Cadence has no
+    /// agreed unit here and is not decoded.
+    Training,
 }
 
 /// Device-reported session or lap totals. Reported values are evidence written by
@@ -117,7 +125,8 @@ pub struct DecodedRecord {
     pub power_watts: Option<f64>,
     pub heart_rate_bpm: Option<f64>,
     pub speed_meters_per_second: Option<f64>,
-    /// Cycling revolutions/minute or running steps/minute (both feet).
+    /// Cycling revolutions/minute or running steps/minute (both feet). Absent
+    /// for training sessions.
     pub cadence: Option<f64>,
     /// Device-recorded cumulative distance from the session start.
     #[serde(default)]
@@ -380,6 +389,9 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
     let sport = match number(&session, SESSION_SPORT) {
         Some(v) if v == f64::from(SPORT_CYCLING) => FitSport::Cycling,
         Some(SPORT_RUNNING) => FitSport::Running,
+        Some(SPORT_GENERIC | SPORT_FITNESS_EQUIPMENT | SPORT_TRAINING | SPORT_HIIT) => {
+            FitSport::Training
+        }
         _ => return Err(UnsupportedActivity),
     };
     let start = timestamp(&session, SESSION_START_TIME).ok_or(MissingTimestamp)?;
@@ -404,12 +416,13 @@ pub fn decode_activity(bytes: &[u8]) -> Result<DecodedActivity, FitDecodeError> 
                 return Err(BackwardsRecordTimestamp);
             }
             previous = offset;
-            let cadence = number(message, RECORD_CADENCE).map(|v| {
+            let cadence = number(message, RECORD_CADENCE).and_then(|v| {
                 let cycles = v + number(message, FRACTIONAL_CADENCE).unwrap_or(0.0)
                     / FRACTIONAL_CADENCE_SCALE;
                 match sport {
-                    FitSport::Cycling => cycles,
-                    FitSport::Running => cycles * RUNNING_STEPS_PER_CYCLE,
+                    FitSport::Cycling => Some(cycles),
+                    FitSport::Running => Some(cycles * RUNNING_STEPS_PER_CYCLE),
+                    FitSport::Training => None,
                 }
             });
             Ok(DecodedRecord {
