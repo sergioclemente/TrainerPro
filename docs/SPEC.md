@@ -122,7 +122,8 @@ ends. A coaching cue appears in a caption below the strip for its display
 time; the caption does not move above the strip when the HUD is parked at the
 bottom of the screen. When the workout completes, the HUD turns green with
 ride totals for 4 seconds and then gives way to the full window on the
-summary; **Open summary** goes there at once.
+summary; **Open summary** goes there at once. If the activity cannot be saved,
+the HUD still gives way to the full window, where the error is shown.
 Amber marks something the rider changed (pause, intensity, ERG off), red marks
 a sensor problem, and the zone colour appears only on the power number.
 Escape, `m`, a double-click, or the bar's back button closes the HUD and

@@ -332,7 +332,8 @@ export default function MiniHud() {
               {view.status?.text}
             </span>
             <button className="hud-btn hud-primary hud-primary-done" type="button" onClick={backToPlayer}>
-              Open summary
+              {/* Until the activity is recorded there is no summary to promise. */}
+              {player === null ? "Open summary" : "Open Player"}
             </button>
           </>
         ) : (
