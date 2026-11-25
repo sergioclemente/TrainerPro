@@ -107,9 +107,10 @@ That direction is one preference shared with the Player's interval clock:
 changing it in either window changes both, and it sticks across rides.
 There is no target cell: a glyph before the watts says push, ease, or hold
 against the target (within 5 %), and the rpm cell does the same for a cadence
-target. Clicking the watts or rpm cell shows its target for 3 seconds. When a
+target. Clicking the watts or rpm cell shows its target for 1.5 seconds. When a
 new interval or an intensity change moves a target, that cell shows the new
-target for 5 seconds; a ramp shows it once, at its start. ERG off and an open interval are named in the watts label; intensity
+target for up to 1.5 seconds, and not at all once the reading is on it; a
+ramp shows it once, at its start. ERG off and an open interval are named in the watts label; intensity
 shows in the control bar. It parks in the screen's top-right corner and can be dragged. The HUD
 is a mode, not a second app: closing either window closes or restores the
 other, the Dock icon always brings the full window back, and a paired

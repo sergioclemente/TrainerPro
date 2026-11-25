@@ -13,8 +13,7 @@ import { createControllerInputHandler } from "../voice/controllerInput";
 import { ExpandIcon } from "../components/MetricIcons";
 import {
   HUD_DONE_HOLD_S,
-  HUD_TARGET_FLASH_S,
-  HUD_TARGET_PEEK_S,
+  HUD_TARGET_REVEAL_S,
   changedTargets,
   hudView,
   type HudCell,
@@ -30,10 +29,6 @@ const MS_PER_S = 1_000;
 
 type TargetCell = "power" | "cadence";
 type TargetReveals = Record<TargetCell, HudTargetReveal | null>;
-const REVEAL_DURATION_S: Record<HudTargetReveal, number> = {
-  new: HUD_TARGET_FLASH_S,
-  peek: HUD_TARGET_PEEK_S,
-};
 
 interface Cue {
   message: string;
@@ -193,7 +188,7 @@ export default function MiniHud() {
     revealTimers.current[cell] = window.setTimeout(() => {
       revealTimers.current[cell] = null;
       setTargetReveals((current) => ({ ...current, [cell]: null }));
-    }, REVEAL_DURATION_S[reveal] * MS_PER_S);
+    }, HUD_TARGET_REVEAL_S * MS_PER_S);
   }
 
   // A new interval or an intensity change that moves a target flashes it.

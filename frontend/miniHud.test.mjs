@@ -194,7 +194,8 @@ test("a cue goes to the caption and leaves the bar to the controls and errors", 
 });
 
 test("a revealed power target replaces the reading and says why", () => {
-  const flashed = hudView(input({ powerTargetReveal: "new" }));
+  const offTarget = { power_w: 150, cadence_rpm: 92, heart_rate_bpm: 152, power_smoothed_3s_w: 150 };
+  const flashed = hudView(input({ measurement: offTarget, powerTargetReveal: "new" }));
   assert.equal(flashed.cells[0].value, "230");
   assert.equal(flashed.cells[0].label, "new target");
   assert.equal(flashed.cells[0].showsTarget, true);
@@ -205,6 +206,29 @@ test("a revealed power target replaces the reading and says why", () => {
   assert.equal(peeked.cells[0].label, "target");
   // The other cells keep their readings.
   assert.equal(peeked.cells[1].value, "92");
+});
+
+test("a new target is not flashed once the reading is on it", () => {
+  // 238 W against 230 W and 92 rpm against 95 rpm are both within 5 %.
+  const onTarget = hudView(input({
+    player: player({ target_cadence_rpm: 95 }),
+    powerTargetReveal: "new",
+    cadenceTargetReveal: "new",
+  }));
+  assert.equal(onTarget.cells[0].value, "238");
+  assert.equal(onTarget.cells[0].showsTarget, undefined);
+  assert.equal(onTarget.cells[1].value, "92");
+  assert.equal(onTarget.cells[1].showsTarget, undefined);
+  // Off the cadence target, the rpm cell flashes it.
+  const spinning = hudView(input({
+    player: player({ target_cadence_rpm: 110 }),
+    cadenceTargetReveal: "new",
+  }));
+  assert.equal(spinning.cells[1].value, "110");
+  assert.equal(spinning.cells[1].label, "new target");
+  // A click asks for the target, so a peek shows it even when on target.
+  const peeked = hudView(input({ powerTargetReveal: "peek" }));
+  assert.equal(peeked.cells[0].value, "230");
 });
 
 test("the rpm cell reveals a cadence target the same way", () => {

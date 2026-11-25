@@ -15,10 +15,9 @@ import { zoneColor } from "./zones";
 export const HUD_ENDING_LEAD_S = 5;
 /** A reading within this fraction of its target is "hold", as in the Player. */
 export const HUD_ON_TARGET_TOLERANCE = 0.05;
-/** How long a changed target replaces the live reading in its cell. */
-export const HUD_TARGET_FLASH_S = 5;
-/** How long a clicked cell shows its target before the reading returns. */
-export const HUD_TARGET_PEEK_S = 3;
+/** How long a cell shows its target, flashed or clicked, before the reading
+    returns. A flash also ends as soon as the reading is on target. */
+export const HUD_TARGET_REVEAL_S = 1.5;
 /** How long the finished HUD holds the totals before the summary opens. */
 export const HUD_DONE_HOLD_S = 4;
 /** Colours shared with the app theme (`styles.css` tokens). */
@@ -148,6 +147,12 @@ export function guidance(reading: number | null, target: number | null): HudGuid
   if (reading < target - tolerance) return "up";
   if (reading > target + tolerance) return "down";
   return "hold";
+}
+
+/** A clicked peek always shows; a flashed new target is only worth the
+    cell while the rider still has to move to it. */
+function showsReveal(reveal: HudTargetReveal | null, current: HudGuidance | undefined): boolean {
+  return reveal === "peek" || (reveal === "new" && current !== "hold");
 }
 
 const REVEAL_LABELS: Record<HudTargetReveal, string> = { new: "new target", peek: "target" };
@@ -321,7 +326,7 @@ export function hudView(input: HudInput): HudView {
   const cells: HudCell[] = [
     reconnecting
       ? { value: "–", label: powerLabel, color: HUD_COLOR_MUTED, labelColor: HUD_COLOR_FAULT, fault: true }
-      : powerPeek !== undefined && powerTargetReveal !== null
+      : powerPeek !== undefined && powerTargetReveal !== null && showsReveal(powerTargetReveal, powerGuidance)
         ? {
             value: String(target),
             label: REVEAL_LABELS[powerTargetReveal],
@@ -338,7 +343,7 @@ export function hudView(input: HudInput): HudView {
             dimmed: paused,
             peek: powerPeek,
           },
-    cadencePeek !== undefined && cadenceTargetReveal !== null
+    cadencePeek !== undefined && cadenceTargetReveal !== null && showsReveal(cadenceTargetReveal, cadenceGuidance)
       ? {
           value: String(cadenceTarget),
           label: REVEAL_LABELS[cadenceTargetReveal],
