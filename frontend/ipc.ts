@@ -375,6 +375,9 @@ export const ipc = {
   closeMiniHud: () => invoke<void>("close_mini_hud"),
   /** Hide the mini HUD too; the Dock icon brings TrainerPro back. */
   hideMiniHud: () => invoke<void>("hide_mini_hud"),
+  /** Grow the HUD window for a workout text caption, or shrink it back. */
+  setMiniHudCaptionVisible: (visible: boolean) =>
+    invoke<void>("set_mini_hud_caption_visible", { visible }),
   getPlayerWorkoutProfile: (workoutSessionId: string) =>
     invoke<PlayerWorkoutProfile | null>("get_player_workout_profile", { workoutSessionId }),
 

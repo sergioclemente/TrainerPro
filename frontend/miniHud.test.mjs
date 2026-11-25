@@ -3,12 +3,13 @@ import { build } from "esbuild";
 import { before, test } from "node:test";
 
 let hudView;
+let changedTargets;
 before(async () => {
   const result = await build({
     entryPoints: [new URL("./miniHud.ts", import.meta.url).pathname],
     bundle: true, format: "esm", platform: "node", write: false,
   });
-  ({ hudView } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`));
+  ({ hudView, changedTargets } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`));
 });
 
 const AMBER = "#d29922";
@@ -52,6 +53,9 @@ function input(overrides = {}) {
     cue: null,
     error: null,
     showIntervalElapsed: false,
+    powerTargetReveal: null,
+    cadenceTargetReveal: null,
+    doneHoldRemainingS: null,
     ...overrides,
   };
 }
@@ -177,12 +181,99 @@ test("trainer reconnecting: red accent, status line, bar pinned, paused label", 
   assert.equal(v.progress.color, RED);
 });
 
-test("a cue borrows the bar slot; an action error outranks it", () => {
+test("a cue goes to the caption and leaves the bar to the controls and errors", () => {
   const cue = hudView(input({ cue: "Hold steady" }));
-  assert.equal(cue.status.text, "Hold steady");
+  assert.equal(cue.caption, "Hold steady");
+  assert.equal(cue.status, null);
+  assert.equal(cue.barPinned, false);
   const err = hudView(input({ cue: "Hold steady", error: "Command failed" }));
+  assert.equal(err.caption, "Hold steady");
   assert.equal(err.status.text, "Command failed");
   assert.equal(err.status.color, RED);
+  assert.equal(hudView(input()).caption, null);
+});
+
+test("a revealed power target replaces the reading and says why", () => {
+  const flashed = hudView(input({ powerTargetReveal: "new" }));
+  assert.equal(flashed.cells[0].value, "230");
+  assert.equal(flashed.cells[0].label, "new target");
+  assert.equal(flashed.cells[0].showsTarget, true);
+  assert.equal(flashed.cells[0].guidance, undefined);
+  // 230 W of a 250 W FTP is threshold, the same colour rule as the reading.
+  assert.equal(flashed.cells[0].color, AMBER);
+  const peeked = hudView(input({ powerTargetReveal: "peek" }));
+  assert.equal(peeked.cells[0].label, "target");
+  // The other cells keep their readings.
+  assert.equal(peeked.cells[1].value, "92");
+});
+
+test("the rpm cell reveals a cadence target the same way", () => {
+  const withTarget = input({
+    player: player({ target_cadence_rpm: 95 }),
+    cadenceTargetReveal: "peek",
+  });
+  const v = hudView(withTarget);
+  assert.equal(v.cells[1].value, "95");
+  assert.equal(v.cells[1].label, "target");
+  assert.equal(v.cells[1].showsTarget, true);
+  assert.equal(v.cells[0].value, "238");
+});
+
+test("only a live cell with a target can be peeked", () => {
+  const both = hudView(input({ player: player({ target_cadence_rpm: 95 }) }));
+  assert.equal(both.cells[0].peek, "power");
+  assert.equal(both.cells[1].peek, "cadence");
+  assert.equal(both.cells[2].peek, undefined);
+  // No cadence target, and an open interval has no power target.
+  const open = hudView(input({ player: player({ target_power_w: null }), powerTargetReveal: "peek" }));
+  assert.equal(open.cells[0].peek, undefined);
+  assert.equal(open.cells[0].showsTarget, undefined);
+  assert.equal(open.cells[1].peek, undefined);
+  // Paused readings are not being steered by, so nothing is revealed.
+  const paused = hudView(input({ player: player({ phase: "paused" }), powerTargetReveal: "new" }));
+  assert.equal(paused.cells[0].peek, undefined);
+  assert.equal(paused.cells[0].showsTarget, undefined);
+});
+
+const targets = (overrides = {}) => ({
+  riding: true, segIdx: 3, intensity: 1, targetPowerW: 230, targetCadenceRpm: null, ...overrides,
+});
+
+test("a new interval flashes the targets it changed", () => {
+  const next = targets({ segIdx: 4, targetPowerW: 180, targetCadenceRpm: 95 });
+  assert.deepEqual(changedTargets(targets(), next), { power: true, cadence: true });
+  // Same watts in the next interval is not news; an open one has no target.
+  assert.deepEqual(changedTargets(targets(), targets({ segIdx: 4 })), { power: false, cadence: false });
+  assert.deepEqual(
+    changedTargets(targets(), targets({ segIdx: 4, targetPowerW: null })),
+    { power: false, cadence: false },
+  );
+});
+
+test("an intensity change flashes the power target only", () => {
+  const before = targets({ targetCadenceRpm: 95 });
+  const after = targets({ intensity: 1.01, targetPowerW: 232, targetCadenceRpm: 95 });
+  assert.deepEqual(changedTargets(before, after), { power: true, cadence: false });
+});
+
+test("a ramp moving its target inside an interval does not flash", () => {
+  assert.deepEqual(changedTargets(targets(), targets({ targetPowerW: 231 })), { power: false, cadence: false });
+});
+
+test("nothing flashes on the first state or while not riding", () => {
+  const next = targets({ segIdx: 4, targetPowerW: 180 });
+  assert.deepEqual(changedTargets(null, next), { power: false, cadence: false });
+  assert.deepEqual(changedTargets(targets(), { ...next, riding: false }), { power: false, cadence: false });
+});
+
+test("finished but not yet recorded: live totals, green, counting down to the summary", () => {
+  const v = hudView(input({ player: player({ phase: "finished" }), doneHoldRemainingS: 3 }));
+  assert.equal(v.mode, "done");
+  assert.equal(v.accent, GREEN);
+  assert.equal(v.barPinned, true);
+  assert.deepEqual(v.cells.map((c) => c.value), ["210", "220", "30:28", "30"]);
+  assert.equal(v.status.text, "Workout complete · summary in 3 s");
+  assert.equal(v.caption, null);
 });
 
 test("done: totals replace the live cells and the bar pins green", () => {
@@ -201,7 +292,8 @@ test("done: totals replace the live cells and the bar pins green", () => {
   assert.equal(v.barPinned, true);
   assert.deepEqual(v.cells.map((c) => c.value), ["212", "224", "59:50", "147", "55"]);
   assert.equal(v.cells[4].label, "tss · done");
-  assert.match(v.status.text, /FIT saved/);
+  assert.equal(v.status.text, "Workout complete");
+  assert.equal(v.status.color, GREEN);
 });
 
 test("no ride loaded", () => {

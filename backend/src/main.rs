@@ -88,6 +88,7 @@ fn main() {
             commands::mini_hud::open_mini_hud,
             commands::mini_hud::close_mini_hud,
             commands::mini_hud::hide_mini_hud,
+            commands::mini_hud::set_mini_hud_caption_visible,
             commands::providers::list_provider_connections,
             commands::providers::refresh_provider_plans,
             commands::providers::disconnect_provider,

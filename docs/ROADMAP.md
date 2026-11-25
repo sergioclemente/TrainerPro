@@ -12,6 +12,9 @@ Manual checks below remain open until supported by live evidence.
 - Validate Zwift Ride controls on physical hardware, including pairing, button
   mappings, interrupted holds, recovery, and firmware compatibility.
 - Verify the estimated speed/distance Settings option in packaged TrainerPro QA.
+- Run the [mini HUD finish and cues](../backend/tests/e2e/scenarios/mini-hud-finish-and-cues.md)
+  scenario in packaged TrainerPro QA; the HUD caption resize and the end chime
+  from a hidden main window are unverified, and Windows is untested.
 - Validate estimated indoor speed/distance with a disposable Garmin upload,
   including speed graphs, lap totals, and pause timing.
 - Complete Windows BLE and packaged-app validation, including Garmin browser sign-in.

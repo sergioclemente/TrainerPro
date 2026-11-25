@@ -7,7 +7,9 @@
 //! main window, closing it brings the main window back, and the two windows
 //! close together.
 
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    AppHandle, LogicalSize, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 
 use crate::app_error::AppError;
 
@@ -22,6 +24,9 @@ const HUD_ROUTE: &str = "index.html?view=hud";
 /// Logical size of the HUD, matching the design's 400×100 strip.
 const HUD_WIDTH_PX: f64 = 400.0;
 const HUD_HEIGHT_PX: f64 = 100.0;
+/// Extra height below the strip while a workout text cue is captioned: the
+/// gap and the two-line caption box (`.hud-caption` in `styles.css`).
+const HUD_CAPTION_HEIGHT_PX: f64 = 54.0;
 /// Gap from the screen's top-right corner on first open.
 const HUD_SCREEN_MARGIN_PX: f64 = 24.0;
 
@@ -92,6 +97,23 @@ pub async fn close_mini_hud(app: AppHandle) -> R<()> {
 pub async fn hide_mini_hud(app: AppHandle) -> R<()> {
     if let Some(hud) = app.get_webview_window(HUD_WINDOW_LABEL) {
         hud.hide().map_err(window_error)?;
+    }
+    Ok(())
+}
+
+/// Make room below the strip for a workout text cue, or take it back. The
+/// window only ever paints the strip and the caption, so it grows downward
+/// and the strip stays where the rider parked it.
+#[tauri::command]
+pub async fn set_mini_hud_caption_visible(app: AppHandle, visible: bool) -> R<()> {
+    if let Some(hud) = app.get_webview_window(HUD_WINDOW_LABEL) {
+        let height_px = if visible {
+            HUD_HEIGHT_PX + HUD_CAPTION_HEIGHT_PX
+        } else {
+            HUD_HEIGHT_PX
+        };
+        hud.set_size(LogicalSize::new(HUD_WIDTH_PX, height_px))
+            .map_err(window_error)?;
     }
     Ok(())
 }

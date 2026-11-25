@@ -1535,6 +1535,50 @@ button.big {
    quiet: these are reference numbers you glance at, not the live figures you
    ride to, so they stay a tier below the metrics and clocks above in both size
    and colour. */
+/* The stats row opens the strip it sits on; collapsed it carries the same
+   figures on one quiet line. */
+.stats-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.stats-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.stats-disclosure:hover {
+  background: var(--bg2);
+  color: var(--fg);
+}
+.stats-chevron {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  fill: currentColor;
+  transition: transform 120ms ease;
+}
+.stats-disclosure[aria-expanded="true"] .stats-chevron {
+  transform: rotate(90deg);
+}
+.stats-peek {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0 14px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.stats-peek-label {
+  color: var(--muted);
+}
 .stats-strip {
   display: flex;
   justify-content: center;
@@ -1961,10 +2005,18 @@ html.hud-window #root {
   width: 100vw;
   height: 100vh;
 }
+.hud-window-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+}
 .hud {
   position: relative;
   width: 100%;
-  height: 100%;
+  /* The strip keeps its height when the window grows for a caption. */
+  flex: 0 0 100px;
   box-sizing: border-box;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -2140,6 +2192,31 @@ html.hud-window #root {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Workout text cue. Gap plus height match HUD_CAPTION_HEIGHT_PX in
+   backend/src/commands/mini_hud.rs, which sizes the window for it. */
+.hud-caption {
+  flex: 0 0 48px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(13, 17, 23, 0.78);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  font-family: -apple-system, "SF Pro Display", "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--fg);
+}
+.hud-caption-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .hud-progress {
   position: absolute;
