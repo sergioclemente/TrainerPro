@@ -266,27 +266,25 @@ test("nothing flashes on the first state or while not riding", () => {
   assert.deepEqual(changedTargets(targets(), { ...next, riding: false }), { power: false, cadence: false });
 });
 
-test("finished but not yet recorded: live totals, green, counting down to the summary", () => {
+test("finished but not yet recorded: live totals, green, no summary promised yet", () => {
   const v = hudView(input({ player: player({ phase: "finished" }), doneHoldRemainingS: 3 }));
   assert.equal(v.mode, "done");
   assert.equal(v.accent, GREEN);
   assert.equal(v.barPinned, true);
   assert.deepEqual(v.cells.map((c) => c.value), ["210", "220", "30:28", "30"]);
-  assert.equal(v.status.text, "Workout complete · summary in 3 s");
+  assert.equal(v.status.text, "Workout complete");
   assert.equal(v.caption, null);
 });
 
 test("done: totals replace the live cells and the bar pins green", () => {
-  const v = hudView(input({
-    player: null,
-    summary: {
-      activity_id: "a", scheduled_workout_id: null, workout_name: "Sweet Spot 3x10",
-      started_at_unix_ms: 0, elapsed_s: 3600, timer_s: 3590, average_power_w: 212,
-      max_power_w: 300, normalized_power_w: 224, intensity_factor: 0.9,
-      training_stress_score: 54.8, average_heart_rate_bpm: 147, max_heart_rate_bpm: 170,
-      work_kj: 760, completed_pct: 100, fit_path: "/x.fit", activity_segments: [],
-    },
-  }));
+  const summary = {
+    activity_id: "a", scheduled_workout_id: null, workout_name: "Sweet Spot 3x10",
+    started_at_unix_ms: 0, elapsed_s: 3600, timer_s: 3590, average_power_w: 212,
+    max_power_w: 300, normalized_power_w: 224, intensity_factor: 0.9,
+    training_stress_score: 54.8, average_heart_rate_bpm: 147, max_heart_rate_bpm: 170,
+    work_kj: 760, completed_pct: 100, fit_path: "/x.fit", activity_segments: [],
+  };
+  const v = hudView(input({ player: null, summary }));
   assert.equal(v.mode, "done");
   assert.equal(v.accent, GREEN);
   assert.equal(v.barPinned, true);
@@ -294,6 +292,8 @@ test("done: totals replace the live cells and the bar pins green", () => {
   assert.equal(v.cells[4].label, "tss · done");
   assert.equal(v.status.text, "Workout complete");
   assert.equal(v.status.color, GREEN);
+  const counting = hudView(input({ player: null, summary, doneHoldRemainingS: 3 }));
+  assert.equal(counting.status.text, "Workout complete · summary in 3 s");
 });
 
 test("no ride loaded", () => {

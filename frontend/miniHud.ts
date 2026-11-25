@@ -236,7 +236,9 @@ export function hudView(input: HudInput): HudView {
     return doneView(recordedCells(summary), doneHoldRemainingS);
   }
   if (player !== null && player.phase === "finished") {
-    return doneView(finishedCells(player), doneHoldRemainingS);
+    // No summary is promised until the activity is recorded: saving may
+    // still fail, and the full window is then where the error shows.
+    return doneView(finishedCells(player), null);
   }
   if (player === null) {
     return {

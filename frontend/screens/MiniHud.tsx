@@ -131,7 +131,7 @@ export default function MiniHud() {
     };
   }, [workoutSessionId]);
 
-  // Workout text cues borrow the bar slot for their display time.
+  // Workout text cues show in the caption for their display time.
   useEffect(() => {
     let disposed = false;
     let timer: number | null = null;
@@ -210,7 +210,9 @@ export default function MiniHud() {
       targetCadenceRpm: player.target_cadence_rpm,
     };
     const changed = changedTargets(lastTargets.current, next);
-    lastTargets.current = next;
+    // Compare against the last state the rider was riding to, so an
+    // interval skipped while paused still flashes its target on resume.
+    if (next.riding) lastTargets.current = next;
     if (changed.power) revealTarget("power", "new");
     if (changed.cadence) revealTarget("cadence", "new");
   }, [player]);

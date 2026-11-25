@@ -124,9 +124,9 @@ bottom of the screen. When the workout completes, the HUD turns green with
 ride totals for 4 seconds and then gives way to the full window on the
 summary; **Open summary** goes there at once.
 Amber marks something the rider changed (pause, intensity, ERG off), red marks
-a sensor problem, and the zone colour appears only on the power number. Workout
-cues show in the bar for their display time. Escape, `m`, a double-click, or
-the bar's back button closes the HUD and brings the main window back.
+a sensor problem, and the zone colour appears only on the power number.
+Escape, `m`, a double-click, or the bar's back button closes the HUD and
+brings the main window back.
 The Player shows interval and ride clocks, targets, power, cadence, heart rate,
 work, average/normalized power, intensity factor, and training stress.
 
