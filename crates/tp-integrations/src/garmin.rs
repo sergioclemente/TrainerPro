@@ -476,6 +476,25 @@ impl GarminClient {
         Ok(bytes)
     }
 
+    /// Read the account's total activity count once. The total covers every
+    /// activity type and changes when an activity is added or deleted, so an
+    /// unchanged total does not prove an unchanged history.
+    pub async fn count_activities(&self, tokens: &Tokens) -> Result<u64, GarminError> {
+        let response = native_headers(self.http.get(format!(
+            "{}/activitylist-service/activities/count",
+            self.api_base
+        )))
+        .bearer_auth(&tokens.access_token)
+        .send()
+        .await
+        .map_err(|_| GarminError::Network)?;
+        json_response(response)
+            .await?
+            .get("totalCount")
+            .and_then(Value::as_u64)
+            .ok_or(GarminError::Protocol)
+    }
+
     pub async fn account(&self, tokens: &Tokens) -> Result<Account, GarminError> {
         let response = native_headers(self.http.get(format!(
             "{}/userprofile-service/socialProfile",
@@ -1937,6 +1956,46 @@ mod tests {
                 client.read_vo2_max(&tokens(), "2026-10-23").await,
                 Err(error)
             );
+            assert_eq!(requests.join().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn activity_count_reads_the_total_once_and_rejects_other_shapes() {
+        let (client, requests) = server(vec![(
+            "200 OK",
+            json!({"totalCount":5820,"multisportParentCount":3,"nonMultisportCount":5817}),
+            "",
+        )]);
+        assert_eq!(client.count_activities(&tokens()).await, Ok(5820));
+        let requests = requests.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /activitylist-service/activities/count "));
+        assert!(requests[0]
+            .to_lowercase()
+            .contains("authorization: bearer test-access"));
+        for body in [
+            json!({}),
+            json!({"totalCount":null}),
+            json!({"totalCount":-1}),
+            json!({"totalCount":"5820"}),
+            json!([5820]),
+        ] {
+            let (client, requests) = server(vec![("200 OK", body, "")]);
+            assert_eq!(
+                client.count_activities(&tokens()).await,
+                Err(GarminError::Protocol)
+            );
+            assert_eq!(requests.join().unwrap().len(), 1);
+        }
+        for (status, error) in [
+            ("401 Unauthorized", GarminError::Authentication),
+            ("403 Forbidden", GarminError::Challenge),
+            ("429 Too Many Requests", GarminError::RateLimited),
+            ("404 Not Found", GarminError::Protocol),
+        ] {
+            let (client, requests) = server(vec![(status, json!({"private":"hidden"}), "")]);
+            assert_eq!(client.count_activities(&tokens()).await, Err(error));
             assert_eq!(requests.join().unwrap().len(), 1);
         }
     }
