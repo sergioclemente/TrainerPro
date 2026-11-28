@@ -15,6 +15,11 @@ import { zoneColor } from "./zones";
 export const HUD_ENDING_LEAD_S = 5;
 /** A reading within this fraction of its target is "hold", as in the Player. */
 export const HUD_ON_TARGET_TOLERANCE = 0.05;
+/** How long a cell shows its target, flashed or clicked, before the reading
+    returns. A flash also ends as soon as the reading is on target. */
+export const HUD_TARGET_REVEAL_S = 1.5;
+/** How long the finished HUD holds the totals before the summary opens. */
+export const HUD_DONE_HOLD_S = 4;
 /** Colours shared with the app theme (`styles.css` tokens). */
 export const HUD_COLOR_NEUTRAL = "#e6edf3";
 export const HUD_COLOR_MUTED = "#8b949e";
@@ -27,6 +32,41 @@ export type HudMode = "empty" | "ready" | "riding" | "paused" | "reconnecting" |
 
 /** What the rider should do to meet the target: more, less, or stay. */
 export type HudGuidance = "up" | "down" | "hold";
+
+/** Why a cell shows its target instead of the live reading: the target
+    just changed, or the rider clicked the cell to check it. */
+export type HudTargetReveal = "new" | "peek";
+
+/** The parts of the player state that decide whether a target changed. */
+export interface HudTargetSnapshot {
+  riding: boolean;
+  segIdx: number | null;
+  intensity: number;
+  targetPowerW: number | null;
+  targetCadenceRpm: number | null;
+}
+
+/** Which cells should flash a new target. A target counts as new only when
+    the interval or the intensity changed with it, so a ramp, whose target
+    moves every second, flashes once at its start and not again. */
+export function changedTargets(
+  previous: HudTargetSnapshot | null,
+  next: HudTargetSnapshot,
+): { power: boolean; cadence: boolean } {
+  if (previous === null || !next.riding) return { power: false, cadence: false };
+  const prescriptionChanged =
+    next.segIdx !== previous.segIdx || next.intensity !== previous.intensity;
+  return {
+    power:
+      prescriptionChanged &&
+      next.targetPowerW !== null &&
+      next.targetPowerW !== previous.targetPowerW,
+    cadence:
+      prescriptionChanged &&
+      next.targetCadenceRpm !== null &&
+      next.targetCadenceRpm !== previous.targetCadenceRpm,
+  };
+}
 
 export interface HudCell {
   value: string;
@@ -41,6 +81,10 @@ export interface HudCell {
   dimmed?: boolean;
   /** A red dot before the label marks a sensor fault. */
   fault?: boolean;
+  /** The value is the target, not a reading; an arrow glyph marks it. */
+  showsTarget?: boolean;
+  /** Clicking the cell peeks at this target. Absent when there is none. */
+  peek?: "power" | "cadence";
 }
 
 export interface HudStatus {
@@ -58,6 +102,8 @@ export interface HudView {
   barPinned: boolean;
   /** Text for the bar slot, replacing the controls while present. */
   status: HudStatus | null;
+  /** Workout text cue for the caption below the strip. */
+  caption: string | null;
   intensityPct: number;
   ergEnabled: boolean;
   paused: boolean;
@@ -80,6 +126,12 @@ export interface HudInput {
   error: string | null;
   /** Interval clock counts up instead of down (click to toggle). */
   showIntervalElapsed: boolean;
+  /** Set while the watts cell shows its target instead of the reading. */
+  powerTargetReveal: HudTargetReveal | null;
+  /** The same for the rpm cell and the cadence target. */
+  cadenceTargetReveal: HudTargetReveal | null;
+  /** Whole seconds until the finished HUD opens the summary. */
+  doneHoldRemainingS: number | null;
 }
 
 const EMPTY_PROGRESS = { fraction: 0, color: HUD_COLOR_MUTED, dashed: false };
@@ -97,6 +149,13 @@ export function guidance(reading: number | null, target: number | null): HudGuid
   return "hold";
 }
 
+/** A clicked peek always shows; a flashed new target is only worth the
+    cell while the rider still has to move to it. */
+function showsReveal(reveal: HudTargetReveal | null, current: HudGuidance | undefined): boolean {
+  return reveal === "peek" || (reveal === "new" && current !== "hold");
+}
+
+const REVEAL_LABELS: Record<HudTargetReveal, string> = { new: "new target", peek: "target" };
 const POWER_WORDS: Record<HudGuidance, string> = { up: "push", down: "ease", hold: "hold" };
 const CADENCE_WORDS: Record<HudGuidance, string> = { up: "spin up", down: "slow", hold: "hold" };
 
@@ -106,30 +165,60 @@ function powerColor(power: number | null, ftpW: number | null): string {
   return zoneColor((power / ftpW) * PERCENT_SCALE);
 }
 
-function doneView(summary: ActivitySummary): HudView {
-  const tss = summary.training_stress_score;
+function doneStatus(doneHoldRemainingS: number | null): HudStatus {
+  return {
+    text:
+      doneHoldRemainingS === null
+        ? "Workout complete"
+        : `Workout complete · summary in ${doneHoldRemainingS} s`,
+    color: HUD_COLOR_DONE,
+  };
+}
+
+function tssCell(tss: number | null): HudCell {
+  return {
+    value: tss === null ? "–" : String(Math.round(tss)),
+    label: "tss · done",
+    color: HUD_COLOR_DONE,
+    labelColor: HUD_COLOR_DONE,
+  };
+}
+
+function doneView(cells: HudCell[], doneHoldRemainingS: number | null): HudView {
   return {
     mode: "done",
     accent: HUD_COLOR_DONE,
-    cells: [
-      { value: dash(summary.average_power_w), label: "avg watts", color: HUD_COLOR_NEUTRAL },
-      { value: dash(summary.normalized_power_w), label: "np", color: HUD_COLOR_NEUTRAL },
-      { value: fmtDuration(summary.timer_s), label: "ride time", color: HUD_COLOR_NEUTRAL },
-      { value: dash(summary.average_heart_rate_bpm), label: "avg bpm", color: HUD_COLOR_NEUTRAL },
-      {
-        value: tss === null ? "–" : String(Math.round(tss)),
-        label: "tss · done",
-        color: HUD_COLOR_DONE,
-        labelColor: HUD_COLOR_DONE,
-      },
-    ],
+    cells,
     progress: { fraction: 1, color: HUD_COLOR_DONE, dashed: false },
     barPinned: true,
-    status: { text: `${fmtDuration(summary.elapsed_s)} · ${summary.workout_name} · FIT saved`, color: HUD_COLOR_MUTED },
+    status: doneStatus(doneHoldRemainingS),
+    caption: null,
     intensityPct: PERCENT_SCALE,
     ergEnabled: true,
     paused: false,
   };
+}
+
+/** Totals of the recorded activity. */
+function recordedCells(summary: ActivitySummary): HudCell[] {
+  return [
+    { value: dash(summary.average_power_w), label: "avg watts", color: HUD_COLOR_NEUTRAL },
+    { value: dash(summary.normalized_power_w), label: "np", color: HUD_COLOR_NEUTRAL },
+    { value: fmtDuration(summary.timer_s), label: "ride time", color: HUD_COLOR_NEUTRAL },
+    { value: dash(summary.average_heart_rate_bpm), label: "avg bpm", color: HUD_COLOR_NEUTRAL },
+    tssCell(summary.training_stress_score),
+  ];
+}
+
+/** Live totals of a finished ride whose activity is not recorded yet, or
+    could not be. The player state has no average heart rate. */
+function finishedCells(player: PlayerState): HudCell[] {
+  return [
+    { value: dash(player.average_power_w), label: "avg watts", color: HUD_COLOR_NEUTRAL },
+    { value: dash(player.normalized_power_w), label: "np", color: HUD_COLOR_NEUTRAL },
+    { value: fmtDuration(player.ride_s), label: "ride time", color: HUD_COLOR_NEUTRAL },
+    tssCell(player.training_stress_score),
+  ];
 }
 
 export function hudView(input: HudInput): HudView {
@@ -144,8 +233,18 @@ export function hudView(input: HudInput): HudView {
     cue,
     error,
     showIntervalElapsed,
+    powerTargetReveal,
+    cadenceTargetReveal,
+    doneHoldRemainingS,
   } = input;
-  if (summary !== null && player === null) return doneView(summary);
+  if (summary !== null && player === null) {
+    return doneView(recordedCells(summary), doneHoldRemainingS);
+  }
+  if (player !== null && player.phase === "finished") {
+    // No summary is promised until the activity is recorded: saving may
+    // still fail, and the full window is then where the error shows.
+    return doneView(finishedCells(player), null);
+  }
   if (player === null) {
     return {
       mode: "empty",
@@ -154,6 +253,7 @@ export function hudView(input: HudInput): HudView {
       progress: EMPTY_PROGRESS,
       barPinned: true,
       status: { text: "No ride loaded", color: HUD_COLOR_MUTED },
+      caption: null,
       intensityPct: PERCENT_SCALE,
       ergEnabled: true,
       paused: false,
@@ -218,24 +318,47 @@ export function hudView(input: HudInput): HudView {
         ? `rpm · ${cadenceTarget} target`
         : "rpm";
 
+  // A target is on offer only while the ride is live; paused and
+  // reconnecting cells are not readings the rider is steering by.
+  const powerPeek = live && target !== null ? ("power" as const) : undefined;
+  const cadencePeek = live && cadenceTarget !== null ? ("cadence" as const) : undefined;
+
   const cells: HudCell[] = [
     reconnecting
       ? { value: "–", label: powerLabel, color: HUD_COLOR_MUTED, labelColor: HUD_COLOR_FAULT, fault: true }
+      : powerPeek !== undefined && powerTargetReveal !== null && showsReveal(powerTargetReveal, powerGuidance)
+        ? {
+            value: String(target),
+            label: REVEAL_LABELS[powerTargetReveal],
+            color: powerColor(target, ftpW),
+            showsTarget: true,
+            peek: powerPeek,
+          }
+        : {
+            value: dash(power),
+            label: powerLabel,
+            guidance: powerGuidance,
+            color: zone,
+            labelColor: !player.erg_enabled && !open ? HUD_COLOR_CHANGED : undefined,
+            dimmed: paused,
+            peek: powerPeek,
+          },
+    cadencePeek !== undefined && cadenceTargetReveal !== null && showsReveal(cadenceTargetReveal, cadenceGuidance)
+      ? {
+          value: String(cadenceTarget),
+          label: REVEAL_LABELS[cadenceTargetReveal],
+          color: HUD_COLOR_NEUTRAL,
+          showsTarget: true,
+          peek: cadencePeek,
+        }
       : {
-          value: dash(power),
-          label: powerLabel,
-          guidance: powerGuidance,
-          color: zone,
-          labelColor: !player.erg_enabled && !open ? HUD_COLOR_CHANGED : undefined,
+          value: dash(cadence),
+          label: cadenceLabel,
+          guidance: cadenceGuidance,
+          color: cadence === null ? HUD_COLOR_MUTED : HUD_COLOR_NEUTRAL,
           dimmed: paused,
+          peek: cadencePeek,
         },
-    {
-      value: dash(cadence),
-      label: cadenceLabel,
-      guidance: cadenceGuidance,
-      color: cadence === null ? HUD_COLOR_MUTED : HUD_COLOR_NEUTRAL,
-      dimmed: paused,
-    },
     hrmLost
       ? { value: "–", label: "hrm lost", color: HUD_COLOR_MUTED, labelColor: HUD_COLOR_FAULT, fault: true }
       : { value: dash(heartRate), label: "bpm", color: heartRate === null ? HUD_COLOR_MUTED : HUD_COLOR_NEUTRAL, dimmed: paused },
@@ -269,9 +392,7 @@ export function hudView(input: HudInput): HudView {
     ? { text: `Reconnecting to ${trainer?.name ?? "trainer"}…`, color: HUD_COLOR_FAULT }
     : error !== null
       ? { text: error, color: HUD_COLOR_FAULT }
-      : cue !== null
-        ? { text: cue, color: HUD_COLOR_NEUTRAL }
-        : null;
+      : null;
 
   return {
     mode,
@@ -280,6 +401,7 @@ export function hudView(input: HudInput): HudView {
     progress: { fraction, color: progressColor, dashed: open },
     barPinned: reconnecting || paused || mode === "ready",
     status,
+    caption: cue,
     intensityPct,
     ergEnabled: player.erg_enabled,
     paused,

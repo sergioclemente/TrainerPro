@@ -76,7 +76,8 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
   const [showRemaining, setShowRemaining] = useState(false);
   const [showIntervalElapsed, toggleIntervalClock] = useIntervalClock();
   const [muted, setMutedState] = useState(isMuted);
-  /** Detail stats are opt-in and the choice sticks across rides. */
+  /** The large stats strip is opt-in and the choice sticks across rides;
+      collapsed, the same figures stay on one line. */
   const [showStats, setShowStats] = useState(
     () => localStorage.getItem(STATS_KEY) === "1",
   );
@@ -282,6 +283,23 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
           // one; the generic line only when there is nothing better.
           `open · ${segment?.note ?? "ride as you like"}`;
 
+  // One list feeds both the collapsed line and the expanded strip. Session
+  // EF is named apart from the live EF under the heart rate: same units,
+  // different question, NP over average HR for the ride so far.
+  const rideStats: {
+    value: number | null;
+    unit?: string;
+    label: string;
+    peekLabel: string;
+    digits: number;
+  }[] = [
+    { value: player.average_power_w, unit: "W", label: "avg power", peekLabel: "W avg", digits: 0 },
+    { value: player.normalized_power_w, unit: "W", label: "NP", peekLabel: "W NP", digits: 0 },
+    { value: player.training_stress_score, label: "TSS", peekLabel: "TSS", digits: 0 },
+    { value: player.ef, label: "session EF", peekLabel: "EF", digits: 2 },
+    { value: player.kcal, unit: "kcal", label: "calories", peekLabel: "kcal", digits: 0 },
+  ];
+
   async function endRide() {
     if (
       player!.phase !== "finished" &&
@@ -394,17 +412,44 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
         </button>
       </div>
 
-      {showStats && (
-        <div className="stats-strip">
-          <Stat value={player.average_power_w} unit="W" label="avg power" />
-          <Stat value={player.normalized_power_w} unit="W" label="NP" />
-          <Stat value={player.training_stress_score} label="TSS" digits={0} />
-          {/* Named apart from the live EF under the heart rate — same units,
-              different question: NP over average HR for the ride so far. */}
-          <Stat value={player.ef} label="session EF" digits={2} />
-          <Stat value={player.kcal} unit="kcal" label="calories" />
-        </div>
-      )}
+      <div className="stats-panel">
+        <button
+          className="stats-disclosure"
+          type="button"
+          aria-expanded={showStats}
+          onClick={toggleStats}
+          title="Average power, NP, TSS, EF and calories for the ride so far (d)"
+        >
+          <svg className="stats-chevron" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M3 1l5 4-5 4z" />
+          </svg>
+          {showStats ? (
+            <span>Ride stats</span>
+          ) : (
+            <span className="stats-peek">
+              {rideStats.map((stat) => (
+                <span key={stat.label} className="stats-peek-item">
+                  {stat.value === null ? "–" : stat.value.toFixed(stat.digits)}
+                  <span className="stats-peek-label"> {stat.peekLabel}</span>
+                </span>
+              ))}
+            </span>
+          )}
+        </button>
+        {showStats && (
+          <div className="stats-strip">
+            {rideStats.map((stat) => (
+              <Stat
+                key={stat.label}
+                value={stat.value}
+                unit={stat.unit}
+                label={stat.label}
+                digits={stat.digits}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="player-controls">
         {player.phase === "ready" && (
@@ -451,13 +496,6 @@ export default function Player({ workout }: { workout: PlayerWorkoutProfile | nu
           onClick={() => settlePlayerAction(playerActions.setIntensity(player.intensity + 0.01))}
         >
           +1%
-        </button>
-        <button
-          className="stats-toggle"
-          onClick={toggleStats}
-          title="Show average power, NP, TSS, EF and calories for the ride so far"
-        >
-          Stats
         </button>
         <button
           className={`sound-toggle ${muted ? "off" : "on"}`}

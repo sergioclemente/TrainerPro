@@ -87,8 +87,15 @@ an interval and passing over others records skips; revisiting records another
 attempt and, when ridden, another activity segment.
 
 Keyboard controls: hold Space to talk, `s` to skip, `e` to toggle ERG, `d` to
-show/hide detailed stats, `m` for the mini HUD, and Up/Down for intensity.
+expand or collapse ride stats, `m` for the mini HUD, and Up/Down for intensity.
 Space never starts, pauses, or resumes a ride.
+
+Ride stats (average power, NP, TSS, session EF, calories) sit in one row under
+the clocks. Collapsed, the row shows them on a single line; clicking it or
+pressing `d` expands it into the large strip, and the choice sticks across
+rides.
+
+When the workout completes, the end chime plays and the summary opens.
 
 ### Mini HUD
 
@@ -100,7 +107,10 @@ That direction is one preference shared with the Player's interval clock:
 changing it in either window changes both, and it sticks across rides.
 There is no target cell: a glyph before the watts says push, ease, or hold
 against the target (within 5 %), and the rpm cell does the same for a cadence
-target. ERG off and an open interval are named in the watts label; intensity
+target. Clicking the watts or rpm cell shows its target for 1.5 seconds. When a
+new interval or an intensity change moves a target, that cell shows the new
+target for up to 1.5 seconds, and not at all once the reading is on it; a
+ramp shows it once, at its start. ERG off and an open interval are named in the watts label; intensity
 shows in the control bar. It parks in the screen's top-right corner and can be dragged. The HUD
 is a mode, not a second app: closing either window closes or restores the
 other, the Dock icon always brings the full window back, and a paired
@@ -109,11 +119,16 @@ the full Player. The bar's hide button puts the HUD away as well, for riders
 who want TrainerPro out of sight entirely. Hovering reveals a
 control bar: back to the Player, pause or resume, skip, intensity, and ERG. The
 bar stays up while paused, while the trainer reconnects, and after the ride
-ends, when the cells switch to ride totals and the bar offers the summary.
+ends. A coaching cue appears in a caption below the strip for its display
+time; the caption does not move above the strip when the HUD is parked at the
+bottom of the screen. When the workout completes, the HUD turns green with
+ride totals for 4 seconds and then gives way to the full window on the
+summary; **Open summary** goes there at once. If the activity cannot be saved,
+the HUD still gives way to the full window, where the error is shown.
 Amber marks something the rider changed (pause, intensity, ERG off), red marks
-a sensor problem, and the zone colour appears only on the power number. Workout
-cues show in the bar for their display time. Escape, `m`, a double-click, or
-the bar's back button closes the HUD and brings the main window back.
+a sensor problem, and the zone colour appears only on the power number.
+Escape, `m`, a double-click, or the bar's back button closes the HUD and
+brings the main window back.
 The Player shows interval and ride clocks, targets, power, cadence, heart rate,
 work, average/normalized power, intensity factor, and training stress.
 

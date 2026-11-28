@@ -407,7 +407,11 @@ impl Runtime {
                         }
                         PlayerCommand::SkipSegment => {
                             let actions = self.engine.step(EngineEvent::SkipSegment);
-                            self.apply_engine_actions(actions).await;
+                            // Skipping the last interval completes the workout;
+                            // the ride is finalized and nothing may follow
+                            // `activity_recorded`.
+                            let finished = self.apply_engine_actions(actions).await;
+                            if finished { break; }
                         }
                         PlayerCommand::GoToSegment(index) => {
                             let actions = self.engine.step(EngineEvent::GoToSegment(index));
@@ -610,6 +614,11 @@ impl Runtime {
             .any(|action| matches!(action, EngineAction::CompleteWorkout));
         self.execute_engine_actions(&actions).await;
         if complete {
+            // The finished state goes out before `activity_recorded`: that
+            // event unmounts the Player and clears the frontend's player, so
+            // a state sent after it would arrive too late for the end chime
+            // and would bring a finished player back into the store.
+            self.push_state();
             match self.finalize().await {
                 Ok(summary) => {
                     let _ = self.app.emit("activity_recorded", &summary);
@@ -626,7 +635,6 @@ impl Runtime {
                     );
                 }
             }
-            self.push_state();
             return true;
         }
         self.push_state();
